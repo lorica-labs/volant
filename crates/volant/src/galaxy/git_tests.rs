@@ -81,7 +81,7 @@ fn a_missing_git_says_so() {
     {
         return;
     }
-    let failure = checkout("git+https://user:secret@host/demo.git", "*", false, 0)
+    let failure = checkout("git+https://user:secret@host/demo.git", "*", false)
         .err()
         .expect("no git");
     assert_eq!(

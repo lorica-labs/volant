@@ -57,12 +57,7 @@ pub fn redact(url: &str) -> String {
 }
 
 /// Clones `source` and checks out its ref.
-pub fn checkout(
-    source: &str,
-    version: &str,
-    ignore_certs: bool,
-    verbose: u8,
-) -> Result<Checkout, Failure> {
+pub fn checkout(source: &str, version: &str, ignore_certs: bool) -> Result<Checkout, Failure> {
     let (name, version, url, fragment) = parse(source, version);
     let shown = redact(&url);
     let Some(git) = find("git") else {
@@ -90,14 +85,14 @@ pub fn checkout(
     if ignore_certs {
         argv.extend(["-c".to_string(), "http.sslVerify=false".to_string()]);
     }
-    run(&argv, None, verbose).map_err(|status| {
+    run(&argv, None).map_err(|status| {
         Failure::caused(
             format!("Failed to clone a Git repository from `{shown}`"),
             exit_text(&argv, status, &url, &shown, false),
         )
     })?;
     let switch = vec![git_text, "checkout".to_string(), version.clone()];
-    run(&switch, Some(clone.path()), verbose).map_err(|status| {
+    run(&switch, Some(clone.path())).map_err(|status| {
         Failure::caused(
             format!(
                 "Failed to switch a cloned Git repo `{shown}` to the requested revision `{version}`"
@@ -113,13 +108,11 @@ pub fn checkout(
     Ok(Checkout { clone, collection })
 }
 
-/// Runs `argv`, its output shown at `-vvv` only; `Err` holds the exit code.
-fn run(argv: &[String], cwd: Option<&Path>, verbose: u8) -> Result<(), i32> {
+/// Runs `argv` with the terminal's output, as the reference's `check_call` does, so `git`'s own
+/// error reaches the user; `Err` holds the exit code.
+fn run(argv: &[String], cwd: Option<&Path>) -> Result<(), i32> {
     let mut command = Command::new(&argv[0]);
     command.args(&argv[1..]).stdin(Stdio::null());
-    if verbose < 3 {
-        command.stdout(Stdio::null()).stderr(Stdio::null());
-    }
     if let Some(dir) = cwd {
         command.current_dir(dir);
     }

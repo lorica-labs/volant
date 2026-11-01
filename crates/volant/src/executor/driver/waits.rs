@@ -271,53 +271,6 @@ impl Driver<'_> {
         }
     }
 
-    /// A fork for the batch at `pos`, `Some(None)` when the forks are gone. With a place in the
-    /// queue, taken once every live host before this one has taken its own for that step or moved
-    /// past it, as the reference hands its forks out in the play's host order. A throttled batch
-    /// waits for its throttle first and is not ordered, so the two waits never hold each other up.
-    /// `None` when the run is interrupted on the way.
-    pub(super) async fn fork_for(
-        &mut self,
-        forks: &Arc<Semaphore>,
-        pos: usize,
-        ordered: bool,
-    ) -> Option<Option<OwnedSemaphorePermit>> {
-        let Some(mine) = self.place else {
-            return Some(Arc::clone(forks).acquire_owned().await.ok());
-        };
-        let mut places = self.plan.turns.places.subscribe();
-        while ordered && !self.queued_before(&places.borrow_and_update(), mine, pos) {
-            tokio::select! {
-                _ = places.changed() => {}
-                // The coordinator is gone: nobody leaves the batch any more, and waiting on it
-                // would never end.
-                changed = self.progress.changed() => if changed.is_err() {
-                    break;
-                },
-                res = self.stop.changed(), if !self.stop_broken => {
-                    if res.is_err() {
-                        self.stop_broken = true;
-                    } else {
-                        return None;
-                    }
-                }
-            }
-        }
-        let permit = Arc::clone(forks).acquire_owned().await.ok();
-        self.plan.turns.reach(mine, pos + 1);
-        Some(permit)
-    }
-
-    /// Whether every host in front of `mine` has queued for the step at `pos`, moved past it, or
-    /// left the batch.
-    fn queued_before(&self, places: &[usize], mine: usize, pos: usize) -> bool {
-        let live = Arc::clone(&self.progress.borrow().live_hosts);
-        (0..mine).all(|host| {
-            places.get(host).is_some_and(|&reached| reached > pos)
-                || !live.contains(&self.plan.queue[host])
-        })
-    }
-
     /// A permit of `gate`, or `None` when the run is interrupted before one is free.
     pub(super) async fn acquire(&mut self, gate: Arc<Semaphore>) -> Option<OwnedSemaphorePermit> {
         loop {

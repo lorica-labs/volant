@@ -27,17 +27,15 @@ const LAST_RESORT: &str = "/usr/bin/python3";
 /// The batch number a probe goes out under, never one the driver numbers its batches with.
 const PROBE_BATCH: u64 = u64::MAX;
 
-/// How the host of a step finds its interpreter, when it set its own list.
+/// The list a step's host set for itself, and what an earlier discovery over it found, as the
+/// host's variables show it.
 #[derive(Debug, Clone, PartialEq)]
-pub(in crate::executor) enum Fallback {
-    /// What an earlier discovery over the list found, kept as the host's fact.
-    Known(String),
-    /// The names to probe for, in order.
-    Probe(Vec<String>),
+pub(in crate::executor) struct Fallback {
+    list: Vec<String>,
+    known: Option<String>,
 }
 
-/// The host's own list, or what discovering over it already found. `None` for a host that kept
-/// the reference's default list.
+/// The host's own list, `None` for a host that kept the reference's default list.
 pub(in crate::executor) fn fallback<V: HostSettings + ?Sized>(vars: &V) -> Option<Fallback> {
     let list: Vec<String> = match host_setting(vars, "ansible_interpreter_python_fallback")? {
         Value::Array(items) => items
@@ -57,9 +55,10 @@ pub(in crate::executor) fn fallback<V: HostSettings + ?Sized>(vars: &V) -> Optio
     let known = host_setting(vars, "ansible_facts")
         .and_then(|facts| facts.get(DISCOVERED_INTERPRETER))
         .and_then(Value::as_str);
-    Some(known.map_or(Fallback::Probe(list), |path| {
-        Fallback::Known(path.to_string())
-    }))
+    Some(Fallback {
+        list,
+        known: known.map(str::to_string),
+    })
 }
 
 /// What discovering over a host's own list found: the interpreter, the warning the probe gave
@@ -81,13 +80,16 @@ pub(in crate::executor) struct Found {
 
 impl Found {
     /// Probes, once per list, for every step of the batch whose host set its own list and has
-    /// not discovered over it yet; a step whose fact already answers gets that. A replayed run
-    /// reaches no host, and probes nothing.
+    /// not discovered over it yet; a step whose fact already answers gets that.
+    ///
+    /// `(live, discovered)`: a replayed run reaches no host and probes nothing, and only a host
+    /// the fact store holds the discovered interpreter for is taken at its variables' word -
+    /// those can still show a fact `meta: clear_facts` removed.
     pub(in crate::executor) async fn probe<'a, C: AgentChannel>(
         link: &mut C,
         host: &str,
         steps: impl Iterator<Item = (usize, Option<&'a Fallback>)>,
-        live: bool,
+        (live, discovered): (bool, bool),
         stop: (&mut watch::Receiver<bool>, &mut bool),
     ) -> Found {
         let mut found = Found {
@@ -97,14 +99,16 @@ impl Found {
         let (stop, stop_broken) = stop;
         let mut lists: Vec<(Vec<String>, Probed)> = Vec::new();
         for (index, fallback) in steps.filter(|_| live) {
-            let probed = match fallback {
-                None => continue,
-                Some(Fallback::Known(path)) => Probed {
+            let Some(Fallback { list, known }) = fallback else {
+                continue;
+            };
+            let probed = match known.as_ref().filter(|_| discovered) {
+                Some(path) => Probed {
                     interpreter: path.clone(),
                     note: None,
                     announced: true,
                 },
-                Some(Fallback::Probe(list)) => {
+                None => {
                     if let Some((_, done)) = lists.iter().find(|(l, _)| l == list) {
                         done.clone()
                     } else {

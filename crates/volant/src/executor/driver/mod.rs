@@ -1746,12 +1746,17 @@ pub(super) async fn drive_host(
             // plugin and retry paths send one step, so an empty list means `batch[0]`.
             let mut flat_steps: Vec<usize> = Vec::new();
             let own = |i: &usize| (*i, discovering.get(i).and_then(|d| d.1.as_ref()));
+            let ran = [batch_delegate.clone().unwrap_or_else(|| name.clone())];
+            let known = store
+                .lock()
+                .expect("vars lock")
+                .all_gathered(&ran, DISCOVERED_INTERPRETER);
             let (stop, live) = (
                 (&mut driver.stop, &mut driver.stop_broken),
                 options.replay.is_none(),
             );
-            let found =
-                Found::probe(link, &name, batch.iter().map(|b| own(&b.0)), live, stop).await;
+            let steps = batch.iter().map(|b| own(&b.0));
+            let found = Found::probe(link, &name, steps, (live, known), stop).await;
             // First, so a task a plugin backs can never fall into a path below that would send
             // the plugin's own name to the agent as a module.
             let ended = if let Some(PluginBatch {

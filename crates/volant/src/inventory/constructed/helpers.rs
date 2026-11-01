@@ -14,7 +14,7 @@ use crate::playbook::python_repr;
 
 /// The variables a host's expressions see: its groups' and its own, and the magic ones.
 pub(super) fn host_vars(inv: &Inventory, host: &str) -> Map<String, Value> {
-    let mut vars: Map<String, Value> = inv.host_with_vars(host).vars.into_iter().collect();
+    let mut vars: Map<String, Value> = inv.host_with_vars(host).vars.into_values();
     vars.insert("inventory_hostname".into(), host.into());
     vars.insert(
         "inventory_hostname_short".into(),
@@ -55,7 +55,7 @@ pub(super) fn set_var(
         inv.unsafe_vars.insert(key, computed);
     }
     if let Some(h) = inv.hosts.iter_mut().find(|h| h.name == host) {
-        h.vars.insert(name.to_string(), value);
+        h.vars.insert(name.to_string(), value, None);
     }
 }
 
@@ -175,7 +175,7 @@ pub(super) struct PluginVars {
     dirs: Vec<(FileVars, FileVars)>,
 }
 
-type FileVars = std::collections::BTreeMap<String, Map<String, Value>>;
+type FileVars = std::collections::BTreeMap<String, crate::tags::Tagged>;
 
 impl PluginVars {
     pub(super) fn read(inv: &Inventory, own: &crate::inventory::Source) -> anyhow::Result<Self> {

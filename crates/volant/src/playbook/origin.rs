@@ -54,6 +54,23 @@ impl Drop for OriginScope {
     }
 }
 
+/// The tags of `node`, a node of the file being parsed: where each part was written, and trust
+/// for its strings, as playbook content always has. Outside a file, the trust alone.
+pub(crate) fn tree_of(node: &Yaml<'_>) -> Option<crate::tags::TagTree> {
+    ORIGINS.with(|o| match o.borrow().as_ref() {
+        Some((path, origins)) => crate::yaml::tags_of(node, origins, Some(path), true),
+        None => crate::yaml::tags_of(node, &crate::yaml::Origins::default(), None, true),
+    })
+}
+
+/// `values`, the mapping `node` holds, with the tags of each of its entries.
+pub(crate) fn tagged_vars(
+    node: &Yaml<'_>,
+    values: serde_json::Map<String, serde_json::Value>,
+) -> crate::tags::Tagged {
+    crate::tags::Tagged::new(values, crate::tags::top_level(tree_of(node)))
+}
+
 /// Where `value` was written, when it is a mapping entry's value in the file being parsed.
 pub(super) fn value_origin(value: &Yaml<'_>) -> Option<Origin> {
     ORIGINS.with(|o| {

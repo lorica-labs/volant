@@ -43,7 +43,7 @@ pub(super) fn validation(
     args.insert("argument_spec".to_string(), Value::Object(spec));
     args.insert(
         "provided_arguments".to_string(),
-        Value::Object(entry.params.clone()),
+        Value::Object(entry.params.as_map().clone()),
     );
     args.insert(
         "validate_args_context".to_string(),
@@ -126,7 +126,7 @@ pub(super) fn import_role_entry(task: &PlayTask) -> anyhow::Result<RoleEntry> {
         // An `import_role` takes no free keys: everything it says is an argument of the
         // statement, and what it hands the role travels in the task's own `vars:`, which the
         // merge already carries down to every task of the role.
-        params: Map::new(),
+        params: crate::tags::Tagged::default(),
         keywords: PlayTask::empty(),
         // An import lends its variables unless it says otherwise.
         public: role_flag(
@@ -203,7 +203,7 @@ pub(crate) fn compile_with(
     selection: &TagSelection,
     extra: &Map<String, Value>,
 ) -> anyhow::Result<Compiled> {
-    let mut static_vars = play.vars.clone();
+    let mut static_vars = play.vars.as_map().clone();
     static_vars.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
     static_vars.insert(
         "playbook_dir".into(),

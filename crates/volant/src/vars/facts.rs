@@ -8,6 +8,7 @@ use serde_json::{Map, Value};
 
 use super::{VarStore, holds_template};
 use crate::inventory::is_localhost;
+use crate::tags::TagTree;
 /// The connection plugins ansible-core 2.19.12 ships, as its `connection_loader.all()` lists
 /// them on a host with no collection installed.
 const CONNECTION_PLUGINS: [&str; 6] = [
@@ -98,7 +99,12 @@ const RESTRICTED_FACTS: [&str; 39] = [
 ///
 /// `ansible_python_module_rlimit_nofile` sets the open file limit every module starts with: a
 /// host that named its own could starve the modules the play runs there.
-const ENGINE_RESTRICTED_FACTS: [&str; 17] = [
+///
+/// `ansible_interpreter_python_fallback` is the list of names a discovery probes through a shell
+/// line on the host: a host that named its own would choose the interpreter every module runs
+/// under.
+const ENGINE_RESTRICTED_FACTS: [&str; 18] = [
+    "ansible_interpreter_python_fallback",
     "ansible_host_key_checking",
     "ansible_python_module_rlimit_nofile",
     "ansible_ssh_host_key_checking",
@@ -208,15 +214,22 @@ impl VarStore {
     ///
     /// A value still holding a template is rendered again by every task that reads it, and what
     /// it names can be another host's variable; see [`VarStore::templated_facts`].
-    pub fn set_fact(&mut self, host: &str, key: &str, value: Value) {
+    pub fn set_fact(&mut self, host: &str, key: &str, value: Value, tree: Option<TagTree>) {
         self.templated_facts |= holds_template(&value);
-        self.write_fact(host, key, value);
+        self.write_fact(host, key, value, tree);
     }
 
     /// Writes a variable `include_vars` read, `data` when the file held what a managed host
     /// returned. It lands under the `set_fact` layer, see `VarStore::included`, and a name that
     /// layer holds keeps the trust it has there, since that layer is the one that answers.
-    pub fn set_included(&mut self, host: &str, key: &str, value: Value, data: bool) {
+    pub fn set_included(
+        &mut self,
+        host: &str,
+        key: &str,
+        value: Value,
+        tree: Option<TagTree>,
+        data: bool,
+    ) {
         self.templated_facts |= !data && holds_template(&value);
         let shadowed = self.facts.get(host).is_some_and(|f| f.contains_key(key));
         if !shadowed {
@@ -230,7 +243,7 @@ impl VarStore {
         self.included
             .entry(host.to_string())
             .or_default()
-            .insert(key.to_string(), value);
+            .insert(key.to_string(), value, tree);
         self.forget_host(host);
     }
 
@@ -241,14 +254,14 @@ impl VarStore {
         self.templated_facts
     }
 
-    fn write_fact(&mut self, host: &str, key: &str, value: Value) {
+    fn write_fact(&mut self, host: &str, key: &str, value: Value, tree: Option<TagTree>) {
         if let Some(names) = self.untrusted.get_mut(host) {
             names.remove(key);
         }
         self.facts
             .entry(host.to_string())
             .or_default()
-            .insert(key.to_string(), value);
+            .insert(key.to_string(), value, tree);
         self.forget_host(host);
     }
 
@@ -259,7 +272,7 @@ impl VarStore {
         // source gives the trust back. The cache `write_fact` dropped covers this write too,
         // because nothing can read it between the two lines. Not `set_fact`: a template a host
         // returned is data and is never rendered, so it reads nothing.
-        self.write_fact(host, key, value);
+        self.write_fact(host, key, value, None);
         self.untrusted
             .entry(host.to_string())
             .or_default()

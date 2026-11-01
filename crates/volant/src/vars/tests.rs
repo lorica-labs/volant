@@ -42,7 +42,7 @@ fn store(dir: &Path) -> (Inventory, VarStore) {
         &inv,
         Some(&dir.join("inventory/hosts.ini")),
         &dir.join("play"),
-        Map::new(),
+        Tagged::from(Map::new()),
     )
     .unwrap();
     (inv, store)
@@ -96,20 +96,22 @@ fn directory_and_run_layers_stack_in_the_reference_order() {
             &inv,
             Some(&dir.join("inventory/hosts.ini")),
             &dir.join("play"),
-            extra,
+            Tagged::from(extra),
         )
         .unwrap();
         let mut sc = scope(&["web1"]);
-        sc.play_vars = json!({"layer": "play", "p": 1})
-            .as_object()
-            .unwrap()
-            .clone();
-        sc.vars_files = Arc::new(VarsFiles::new(&[Arc::new(
+        sc.play_vars = Tagged::from(
+            json!({"layer": "play", "p": 1})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        sc.vars_files = Arc::new(VarsFiles::new(&[Arc::new(Tagged::from(
             json!({"p": 2, "f": 1}).as_object().unwrap().clone(),
-        )]));
-        sc.task_vars = json!({"f": 2, "t": 1}).as_object().unwrap().clone();
-        store.set_fact("web1", "t", json!(2));
-        store.set_fact("web1", "fact", json!("set"));
+        ))]));
+        sc.task_vars = Tagged::from(json!({"f": 2, "t": 1}).as_object().unwrap().clone());
+        store.set_fact("web1", "t", json!(2), None);
+        store.set_fact("web1", "fact", json!("set"), None);
         let v = store.for_host("web1", &sc);
         assert_eq!(v["layer"], json!("extra"), "extra vars beat everything");
         assert_eq!(v["p"], json!(2), "vars_files beat play vars");
@@ -189,19 +191,24 @@ fn every_host_setting_is_stripped_from_gathered_facts() {
 fn facts_and_role_layers_rank_as_the_reference_ranks_them() {
     {
         let inv = Inventory::parse_ini("h1 ansible_inv=from-inventory\n").unwrap();
-        let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
-        store.set_fact("h1", "ansible_kept", json!("from-set-fact"));
+        let mut store =
+            VarStore::new(&inv, None, Path::new("."), Tagged::from(Map::new())).unwrap();
+        store.set_fact("h1", "ansible_kept", json!("from-set-fact"), None);
         let facts = json!({"ansible_inv": "Ubuntu", "ansible_play": "Ubuntu", "ansible_task": "Ubuntu", "ansible_kept": "Ubuntu"});
         store.gather_facts("h1", facts.as_object().unwrap());
         let mut sc = scope(&["h1"]);
-        sc.play_vars = json!({"ansible_play": "from-play"})
-            .as_object()
-            .unwrap()
-            .clone();
-        sc.task_vars = json!({"ansible_task": "from-task"})
-            .as_object()
-            .unwrap()
-            .clone();
+        sc.play_vars = Tagged::from(
+            json!({"ansible_play": "from-play"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        sc.task_vars = Tagged::from(
+            json!({"ansible_task": "from-task"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
         let v = store.for_host("h1", &sc);
         assert_eq!(
             v["ansible_inv"],
@@ -243,14 +250,15 @@ fn facts_and_role_layers_rank_as_the_reference_ranks_them() {
     {
         // ansible-core's vars cache: above a task's `vars:`, under `set_fact` in either order.
         let inv = Inventory::parse_ini("h1\n").unwrap();
-        let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
-        store.set_fact("h1", "before", json!("set_fact"));
-        store.set_included("h1", "before", json!("include"), false);
-        store.set_included("h1", "after", json!("include"), false);
-        store.set_fact("h1", "after", json!("set_fact"));
-        store.set_included("h1", "task", json!("include"), false);
+        let mut store =
+            VarStore::new(&inv, None, Path::new("."), Tagged::from(Map::new())).unwrap();
+        store.set_fact("h1", "before", json!("set_fact"), None);
+        store.set_included("h1", "before", json!("include"), None, false);
+        store.set_included("h1", "after", json!("include"), None, false);
+        store.set_fact("h1", "after", json!("set_fact"), None);
+        store.set_included("h1", "task", json!("include"), None, false);
         let mut sc = scope(&["h1"]);
-        sc.task_vars = json!({"task": "task"}).as_object().unwrap().clone();
+        sc.task_vars = Tagged::from(json!({"task": "task"}).as_object().unwrap().clone());
         let v = store.for_host("h1", &sc);
         assert_eq!(v["before"], json!("set_fact"));
         assert_eq!(v["after"], json!("set_fact"));
@@ -263,22 +271,27 @@ fn facts_and_role_layers_rank_as_the_reference_ranks_them() {
     {
         let inv = Inventory::parse_ini("h1 d=inv-host\n").unwrap();
         let role = |extra: Map<String, Value>| Scope {
-            role_defaults: json!({"d": "role-default", "shared": "role-default"})
-                .as_object()
-                .unwrap()
-                .clone(),
-            role_vars: json!({"v": "role-var", "shared": "role-var"})
-                .as_object()
-                .unwrap()
-                .clone(),
-            role_params: json!({"p": "param"}).as_object().unwrap().clone(),
-            play_vars: json!({"shared": "play-var"}).as_object().unwrap().clone(),
-            task_vars: extra,
+            role_defaults: Tagged::from(
+                json!({"d": "role-default", "shared": "role-default"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+            role_vars: Tagged::from(
+                json!({"v": "role-var", "shared": "role-var"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+            role_params: Tagged::from(json!({"p": "param"}).as_object().unwrap().clone()),
+            play_vars: Tagged::from(json!({"shared": "play-var"}).as_object().unwrap().clone()),
+            task_vars: Tagged::from(extra),
             ..Scope::default()
         };
 
-        let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
-        store.set_fact("h1", "p", json!("fact"));
+        let mut store =
+            VarStore::new(&inv, None, Path::new("."), Tagged::from(Map::new())).unwrap();
+        store.set_fact("h1", "p", json!("fact"), None);
         let v = store.for_host("h1", &role(Map::new()));
         assert_eq!(
             v["d"],
@@ -310,7 +323,7 @@ fn facts_and_role_layers_rank_as_the_reference_ranks_them() {
         );
 
         let extra: Map<String, Value> = json!({"p": "extra"}).as_object().unwrap().clone();
-        let mut store = VarStore::new(&inv, None, Path::new("."), extra).unwrap();
+        let mut store = VarStore::new(&inv, None, Path::new("."), Tagged::from(extra)).unwrap();
         let v = store.for_host("h1", &role(Map::new()));
         assert_eq!(
             v["p"],
@@ -352,7 +365,7 @@ fn the_magic_variables_follow_the_batch_and_the_play() {
         // Asking the host's variables by name, which is what an argument spec does, answers for
         // the five as well: they are somewhere else, not gone.
         let host = HostVars {
-            map: v.clone(),
+            map: Tagged::from(v.clone()),
             hostvars: Arc::default(),
             shared,
             ..HostVars::default()
@@ -379,7 +392,8 @@ fn the_magic_variables_follow_the_batch_and_the_play() {
     }
     {
         let inv = Inventory::parse_ini("[web]\nh1\nh2\nh3\n").unwrap();
-        let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
+        let mut store =
+            VarStore::new(&inv, None, Path::new("."), Tagged::from(Map::new())).unwrap();
         let v = store.shared_values(&Scope {
             play_hosts: vec!["h2".into(), "h3".into()].into(),
             batch_hosts: vec!["h2".into()].into(),
@@ -407,7 +421,8 @@ fn the_magic_variables_follow_the_batch_and_the_play() {
 #[test]
 fn the_run_s_tag_lists_decide_the_kubeconfig_block() {
     let inventory = Inventory::parse_ini("h1\n").unwrap();
-    let mut store = VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
+    let mut store =
+        VarStore::new(&inventory, None, Path::new("."), Tagged::from(Map::new())).unwrap();
     let templar = Templar::new(PathBuf::from("."));
     let condition = "kubectl_installed.rc == 0 and (k3s_server_copy_yaml.changed or 'kubeconfig' in ansible_run_tags)";
     let holds = |store: &mut VarStore| {
@@ -461,7 +476,7 @@ fn hostvars_answers_for_every_spelling_of_the_controller(
         &inv,
         Some(&dir.join("inventory/hosts.ini")),
         &dir.join("play"),
-        Map::new(),
+        Tagged::from(Map::new()),
     )
     .unwrap();
     crate::runtime::resolve::set_test_python(Some("/ctl/python3"));
@@ -501,7 +516,7 @@ fn the_implicit_hosts_interpreter_is_looked_up_when_its_entry_is_read(
         &inv,
         Some(&dir.join("inventory/hosts.ini")),
         &dir.join("play"),
-        Map::new(),
+        Tagged::from(Map::new()),
     )
     .unwrap();
     crate::runtime::resolve::set_test_python(controller);
@@ -535,7 +550,7 @@ fn the_controller_s_text_is_data_under_every_spelling(
         &format!("[web]\nweb1\n{listed}"),
     );
     let inv = Inventory::load(&dir.join("inventory/hosts.ini")).unwrap();
-    let mut store = VarStore::new(&inv, None, &dir.join("play"), Map::new()).unwrap();
+    let mut store = VarStore::new(&inv, None, &dir.join("play"), Tagged::from(Map::new())).unwrap();
     store.set_untrusted_fact(ran_as, "r", json!({"stdout": "text"}));
     let held = store.untrusted_hosts();
     for spelling in crate::inventory::LOCALHOST_NAMES {
@@ -555,9 +570,9 @@ fn a_spelling_of_the_controller_follows_its_host() {
     let dir = tmp.path();
     write(dir, "inventory/hosts.ini", "[web]\nweb1\nlocalhost\n");
     let inv = Inventory::load(&dir.join("inventory/hosts.ini")).unwrap();
-    let mut store = VarStore::new(&inv, None, &dir.join("play"), Map::new()).unwrap();
+    let mut store = VarStore::new(&inv, None, &dir.join("play"), Tagged::from(Map::new())).unwrap();
     assert!(store.hostvars_shared("web1")["::1"]["marker"].is_null());
-    store.set_fact("localhost", "marker", json!("set"));
+    store.set_fact("localhost", "marker", json!("set"), None);
     let view = store.hostvars_shared("web1");
     assert_eq!(view["localhost"]["marker"], json!("set"));
     assert_eq!(view["127.0.0.1"]["marker"], json!("set"));
@@ -672,16 +687,16 @@ impl Rng {
     }
     fn scope(&mut self) -> Scope {
         Scope {
-            play_vars: self.map(2),
+            play_vars: Tagged::from(self.map(2)),
             vars_files: Arc::new(VarsFiles::new(
                 &(0..self.below(3))
-                    .map(|_| Arc::new(self.map(2)))
+                    .map(|_| Arc::new(Tagged::from(self.map(2))))
                     .collect::<Vec<_>>(),
             )),
-            task_vars: self.map(2),
-            role_defaults: self.map(2),
-            role_vars: self.map(2),
-            role_params: self.map(2),
+            task_vars: Tagged::from(self.map(2)),
+            role_defaults: Tagged::from(self.map(2)),
+            role_vars: Tagged::from(self.map(2)),
+            role_params: Tagged::from(self.map(2)),
             play_hosts: self.hosts().into(),
             batch_hosts: self.hosts().into(),
             all_play_hosts: vec!["h1".into(), "h2".into()].into(),
@@ -694,8 +709,8 @@ impl Rng {
             0 => {
                 store.gather_facts(host, &self.map(2));
             }
-            1 => store.set_fact(host, &self.name(), self.value(2)),
-            2 => store.set_included(host, &self.name(), self.value(2), false),
+            1 => store.set_fact(host, &self.name(), self.value(2), None),
+            2 => store.set_included(host, &self.name(), self.value(2), None, false),
             _ => store.set_untrusted_fact(host, &self.name(), self.value(2)),
         }
     }
@@ -715,7 +730,8 @@ fn the_layered_view_reads_like_the_merged_one() {
         )
         .unwrap();
         let extra = rng.map(1);
-        let mut store = VarStore::new(&inventory, None, Path::new("."), extra).unwrap();
+        let mut store =
+            VarStore::new(&inventory, None, Path::new("."), Tagged::from(extra)).unwrap();
         let scope = rng.scope();
         for round in 0..2 {
             for _ in 0..rng.below(4) {
@@ -742,13 +758,14 @@ fn the_layered_view_reads_like_the_merged_one() {
 fn a_write_or_a_leaving_host_rebuilds_only_its_own_entries() {
     {
         let inventory = Inventory::parse_ini("h1\nh2\nh3\n").unwrap();
-        let mut store = VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
+        let mut store =
+            VarStore::new(&inventory, None, Path::new("."), Tagged::from(Map::new())).unwrap();
         for host in ["h1", "h2", "h3"] {
             store.gather_facts(
                 host,
                 json!({"ansible_x": 1, "ansible_y": 2}).as_object().unwrap(),
             );
-            store.set_fact(host, "ansible_x", json!("author"));
+            store.set_fact(host, "ansible_x", json!("author"), None);
         }
         let all = scope(&["h1", "h2", "h3"]);
         for host in ["h1", "h2", "h3"] {
@@ -778,14 +795,15 @@ fn a_write_or_a_leaving_host_rebuilds_only_its_own_entries() {
         let hosts: Vec<String> = (0..50).map(|i| format!("h{i:02}")).collect();
         let text = hosts.join("\n");
         let inventory = Inventory::parse_ini(&format!("[web]\n{text}\n[db]\n{text}\n")).unwrap();
-        let mut store = VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
+        let mut store =
+            VarStore::new(&inventory, None, Path::new("."), Tagged::from(Map::new())).unwrap();
         let names: Vec<&str> = hosts.iter().map(String::as_str).collect();
         let play = scope(&names);
         let facts = json!({"ansible_x": 1, "ansible_y": 2});
         for host in &names {
             store.gather_facts(host, facts.as_object().unwrap());
         }
-        store.set_fact("h01", "ansible_x", json!("author"));
+        store.set_fact("h01", "ansible_x", json!("author"), None);
         let plain = store.layered_for_host("h00", &play);
         assert!(
             Arc::ptr_eq(&plain.facts, &store.gathered["h00"]),
@@ -811,7 +829,8 @@ fn a_write_or_a_leaving_host_rebuilds_only_its_own_entries() {
     }
     {
         let inventory = Inventory::parse_ini("h1\nh2\n").unwrap();
-        let mut store = VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
+        let mut store =
+            VarStore::new(&inventory, None, Path::new("."), Tagged::from(Map::new())).unwrap();
         let built = |store: &VarStore, host: &str| store.views_built.get(host).copied();
         let first = store.hostvars_shared("h1");
         assert_eq!(
@@ -832,7 +851,7 @@ fn a_write_or_a_leaving_host_rebuilds_only_its_own_entries() {
         );
 
         store.gather_facts("h2", json!({"ansible_x": 1}).as_object().unwrap());
-        store.set_fact("h2", "y", json!(2));
+        store.set_fact("h2", "y", json!(2), None);
         let third = store.hostvars_shared("h1");
         assert_eq!(third["h2"]["ansible_x"], json!(1));
         assert_eq!(third["h2"]["y"], json!(2));
@@ -863,25 +882,25 @@ fn every_layer_keeps_its_trust_through_the_layered_view() {
         [(name.to_string(), payload.clone())].into_iter().collect()
     };
     let extra = one("e");
-    let mut store = VarStore::new(&inventory, None, Path::new("."), extra).unwrap();
+    let mut store = VarStore::new(&inventory, None, Path::new("."), Tagged::from(extra)).unwrap();
     store.gather_facts(
         "h1",
         json!({"g": "{{ 1 + 1 }}", "gp": "{{ 1 + 1 }}", "groups": "{{ 1 + 1 }}"})
             .as_object()
             .unwrap(),
     );
-    store.set_fact("h1", "sf", payload.clone());
+    store.set_fact("h1", "sf", payload.clone(), None);
     store.set_untrusted_fact("h1", "su", payload.clone());
     let mut play_vars = one("p");
     play_vars.insert("gp".into(), json!("author"));
     play_vars.insert("built".into(), json!("{{ g }}"));
     let scope = Scope {
-        play_vars,
-        vars_files: Arc::new(VarsFiles::new(&[Arc::new(one("f"))])),
-        task_vars: one("t"),
-        role_defaults: one("d"),
-        role_vars: one("rv"),
-        role_params: one("rp"),
+        play_vars: Tagged::from(play_vars),
+        vars_files: Arc::new(VarsFiles::new(&[Arc::new(Tagged::from(one("f")))])),
+        task_vars: Tagged::from(one("t")),
+        role_defaults: Tagged::from(one("d")),
+        role_vars: Tagged::from(one("rv")),
+        role_params: Tagged::from(one("rp")),
         ..scope(&["h1"])
     };
     let templar = Templar::new(PathBuf::from("."));
@@ -971,7 +990,7 @@ fn a_gathered_fact_reaches_a_template_lookup() {
     let dir = tmp.path();
     write(dir, "t.j2", "{{ ansible_x }} {{ template_path }}");
     let inventory = Inventory::parse_ini("h1\n").unwrap();
-    let mut store = VarStore::new(&inventory, None, dir, Map::new()).unwrap();
+    let mut store = VarStore::new(&inventory, None, dir, Tagged::from(Map::new())).unwrap();
     store.gather_facts(
         "h1",
         json!({"ansible_x": "hello", "template_path": "/from/a/host"})
@@ -1010,14 +1029,16 @@ fn a_gathered_fact_reaches_a_template_lookup() {
 fn a_short_hostname_drops_the_domain_and_a_homonym_keeps_its_variables() {
     {
         let inv = Inventory::parse_ini("web1.example.com\n").unwrap();
-        let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
+        let mut store =
+            VarStore::new(&inv, None, Path::new("."), Tagged::from(Map::new())).unwrap();
         let v = store.for_host("web1.example.com", &scope(&["web1.example.com"]));
         assert_eq!(v["inventory_hostname_short"], json!("web1"));
     }
     {
         // Ansible warns "Found both group and host with same name" and runs the host.
         let inv = Inventory::parse_ini("[web]\ndb x=1\n[db]\n[web:vars]\nfrom=group\n").unwrap();
-        let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
+        let mut store =
+            VarStore::new(&inv, None, Path::new("."), Tagged::from(Map::new())).unwrap();
         let v = store.for_host("db", &scope(&["db"]));
         assert_eq!(v["inventory_hostname"], json!("db"));
         assert_eq!(v["x"], json!(1));
@@ -1067,7 +1088,7 @@ fn extra_vars_and_vars_files_are_read_or_refused_by_name() {
             &inv,
             Some(&dir.join("inventory/hosts.ini")),
             &dir.join("play"),
-            Map::new(),
+            Tagged::from(Map::new()),
         )
         .unwrap_err();
         assert!(format!("{err:#}").contains("all.yml"));
@@ -1081,7 +1102,11 @@ fn extra_vars_and_vars_files_are_read_or_refused_by_name() {
         ] {
             let file = dir.join("main.yml");
             std::fs::write(&file, text).unwrap();
-            assert_eq!(load_vars_file(&file).unwrap(), Map::new(), "{text:?}");
+            assert_eq!(
+                load_vars_file(&file).unwrap(),
+                Tagged::from(Map::new()),
+                "{text:?}"
+            );
         }
         for text in ["42\n", "\"x\"\n", "---\n''\n"] {
             let file = dir.join("main.yml");
@@ -1106,10 +1131,10 @@ h1
 ",
     )
     .unwrap();
-    let mut store = VarStore::new(&inv, None, tmp.path(), Map::new()).unwrap();
+    let mut store = VarStore::new(&inv, None, tmp.path(), Tagged::from(Map::new())).unwrap();
     let gathered = json!({"ansible_os_family": "Debian"});
     store.gather_facts("h1", gathered.as_object().unwrap());
-    store.set_fact("h1", "mine", json!(1));
+    store.set_fact("h1", "mine", json!(1), None);
     let at = scope(&["h1"]);
     let before = store.for_host("h1", &at);
     assert_eq!(before["ansible_os_family"], "Debian");
@@ -1143,7 +1168,7 @@ h1
 ",
     )
     .unwrap();
-    let mut store = VarStore::new(&inv, None, tmp.path(), Map::new()).unwrap();
+    let mut store = VarStore::new(&inv, None, tmp.path(), Tagged::from(Map::new())).unwrap();
     store.add_host("dyn", &["g_dyn".to_string()], &Map::new());
     let fresh = Inventory::parse_ini(
         "[g]
@@ -1169,7 +1194,7 @@ h1
 ",
     )
     .unwrap();
-    let mut store = VarStore::new(&inv, None, tmp.path(), Map::new()).unwrap();
+    let mut store = VarStore::new(&inv, None, tmp.path(), Tagged::from(Map::new())).unwrap();
     let at = scope(&["h1"]);
     assert!(store.hostvars_shared("h1").contains_key("h1"));
     assert_eq!(store.shared_values(&at)["groups"]["g"], json!(["h1"]));
@@ -1213,7 +1238,7 @@ h1
 ",
     )
     .unwrap();
-    let mut store = VarStore::new(&inv, None, tmp.path(), Map::new()).unwrap();
+    let mut store = VarStore::new(&inv, None, tmp.path(), Tagged::from(Map::new())).unwrap();
     let vars =
         json!({"note": "{{ lookup('pipe','id') }}", "plain": "x", "ansible_host": "10.0.0.9"});
     store.add_host("n1", &[], vars.as_object().unwrap());
@@ -1361,7 +1386,7 @@ fn an_add_host_name_that_holds_a_template_is_data_wherever_it_is_read() {
     for row in NAME_ROWS {
         let tmp = scratch();
         let inv = Inventory::parse_ini("[g]\nh1\n").unwrap();
-        let mut store = VarStore::new(&inv, None, tmp.path(), Map::new()).unwrap();
+        let mut store = VarStore::new(&inv, None, tmp.path(), Tagged::from(Map::new())).unwrap();
         let strings = |v: &[&str]| v.iter().map(ToString::to_string).collect::<Vec<_>>();
         store.add_host(row.name, &strings(row.groups), &Map::new());
         let at = Scope {
@@ -1394,7 +1419,7 @@ fn a_group_by_name_that_holds_a_template_is_data_wherever_it_is_read() {
     for (group, parents) in [(evil, vec![]), ("kind", vec![evil]), ("kind", vec!["a"])] {
         let tmp = scratch();
         let inv = Inventory::parse_ini("[g]\nh1\n").unwrap();
-        let mut store = VarStore::new(&inv, None, tmp.path(), Map::new()).unwrap();
+        let mut store = VarStore::new(&inv, None, tmp.path(), Tagged::from(Map::new())).unwrap();
         let parents: Vec<String> = parents.iter().map(ToString::to_string).collect();
         store.add_to_group("h1", group, &parents);
         let data = store.untrusted_of("h1", &scope(&["h1"]));
@@ -1442,10 +1467,10 @@ fn an_inventory_name_that_holds_template_syntax_is_data() {
         let tmp = scratch();
         let mut inv = Inventory::parse_ini("[g]\nh1\n").unwrap();
         inv.add_member(host, group);
-        let mut store = VarStore::new(&inv, None, tmp.path(), Map::new()).unwrap();
+        let mut store = VarStore::new(&inv, None, tmp.path(), Tagged::from(Map::new())).unwrap();
         assert_eq!(reads(&mut store), expected, "{what}: on load");
         let clean = Inventory::parse_ini("[g]\nh1\n").unwrap();
-        let mut store = VarStore::new(&clean, None, tmp.path(), Map::new()).unwrap();
+        let mut store = VarStore::new(&clean, None, tmp.path(), Tagged::from(Map::new())).unwrap();
         assert_eq!(
             reads(&mut store),
             (false, false, false, false),
@@ -1472,7 +1497,7 @@ n: 5
     std::fs::write(&file, sealed).unwrap();
     crate::vault::install(crate::vault::Secrets::new(vec![b"pw".to_vec()]));
     assert_eq!(
-        load_vars_file(&file).unwrap(),
+        load_vars_file(&file).unwrap().into_values(),
         json!({"a": "{{ b }}", "n": 5})
             .as_object()
             .cloned()
@@ -1518,16 +1543,18 @@ fn the_implicit_localhost_runs_under_the_controller_python(
         &inv,
         Some(&dir.join("inventory/hosts.ini")),
         &dir.join("play"),
-        Map::new(),
+        Tagged::from(Map::new()),
     )
     .unwrap();
     crate::runtime::resolve::set_test_python(controller);
     let mut sc = scope(&["localhost"]);
     if play_var {
-        sc.play_vars = json!({"ansible_python_interpreter": "/play/python"})
-            .as_object()
-            .unwrap()
-            .clone();
+        sc.play_vars = Tagged::from(
+            json!({"ansible_python_interpreter": "/play/python"})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
     }
     let got = store
         .for_host("localhost", &sc)
@@ -1551,7 +1578,7 @@ fn an_extra_var_beats_the_controller_python_of_the_implicit_localhost() {
         &inv,
         Some(&dir.join("inventory/hosts.ini")),
         &dir.join("play"),
-        extra,
+        Tagged::from(extra),
     )
     .unwrap();
     crate::runtime::resolve::set_test_python(Some("/ctl/python3"));
@@ -1567,10 +1594,12 @@ fn a_role_default_loses_to_the_controller_python_of_the_implicit_localhost() {
     let (_, mut store) = store(dir);
     crate::runtime::resolve::set_test_python(Some("/ctl/python3"));
     let mut sc = scope(&["localhost"]);
-    sc.role_defaults = json!({"ansible_python_interpreter": "/role/python"})
-        .as_object()
-        .unwrap()
-        .clone();
+    sc.role_defaults = Tagged::from(
+        json!({"ansible_python_interpreter": "/role/python"})
+            .as_object()
+            .unwrap()
+            .clone(),
+    );
     let v = store.for_host("localhost", &sc);
     assert_eq!(v["ansible_python_interpreter"], json!("/ctl/python3"));
 }
@@ -1580,9 +1609,10 @@ fn a_role_default_loses_to_the_controller_python_of_the_implicit_localhost() {
 #[test]
 fn the_variables_items_share_keep_templates_apart_and_stay_readable() {
     let mut vars = HostVars::default();
-    vars.map.insert("plain".into(), json!(1));
-    vars.map.insert("built".into(), json!("{{ item }}"));
-    vars.map.insert("printed".into(), json!("{{ 7 * 6 }}"));
+    vars.map.insert("plain".into(), json!(1), None);
+    vars.map.insert("built".into(), json!("{{ item }}"), None);
+    vars.map
+        .insert("printed".into(), json!("{{ 7 * 6 }}"), None);
     vars.untrusted.insert("printed".into());
     let mut vars = vars.shared_by_items();
     assert!(vars.map.contains_key("built") && vars.map.len() == 1);
@@ -1606,7 +1636,7 @@ fn the_variables_items_share_keep_templates_apart_and_stay_readable() {
     let (map, untrusted) = templar.resolve_vars_tainted(&vars);
     assert_eq!(map["built"], json!("a"));
     assert!(untrusted.contains("echo") && !untrusted.contains("built"));
-    vars.map = map;
+    vars.map = Tagged::from(map);
     vars.untrusted = untrusted;
     assert_eq!(
         templar.render("{{ echo }}", &vars).unwrap(),
@@ -1826,7 +1856,7 @@ fn the_store_of_an_inventory_grows_linearly_with_its_hosts() {
         (0..5)
             .map(|_| {
                 let start = std::time::Instant::now();
-                VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
+                VarStore::new(&inventory, None, Path::new("."), Tagged::default()).unwrap();
                 start.elapsed()
             })
             .min()

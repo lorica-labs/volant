@@ -2,11 +2,12 @@
 //! One role entry read into the play: its dependencies, what it inherits along their chain, its
 //! handlers, its argument-spec check and its tasks.
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use crate::playbook::PlayTask;
 use crate::roles::{RoleEntry, RoleKind, RoleVars};
 use crate::stats::Refusal;
+use crate::tags::Tagged;
 
 use super::builder::{Builder, DEPTH, RECURSION, Seen, identity};
 use super::flatten::validation;
@@ -16,9 +17,9 @@ use super::model::{Section, Step, StepKind};
 /// One role of a dependency chain: its own `defaults` and `vars`, and its parameters over those
 /// of the roles above it.
 pub(super) struct ChainLink {
-    defaults: Map<String, Value>,
-    vars: Map<String, Value>,
-    params: Map<String, Value>,
+    defaults: Tagged,
+    vars: Tagged,
+    params: Tagged,
 }
 
 impl ChainLink {
@@ -40,19 +41,19 @@ impl ChainLink {
         Self {
             defaults,
             vars,
-            params: Map::new(),
+            params: Tagged::default(),
         }
     }
 }
 
 /// A role's `defaults` and `vars` as it lends them to the roles that depend on it.
-pub(super) type Lent = (Map<String, Value>, Map<String, Value>);
+pub(super) type Lent = (Tagged, Tagged);
 
 impl Builder<'_> {
     /// What a role whose dependencies were just read inherits, see [`RoleVars::inherited_vars`],
     /// and what it lends in turn, kept under its identity `key`.
     fn inherit(&mut self, key: (String, Value), role: &crate::roles::LoadedRole) -> Lent {
-        let (mut lent_defaults, mut lent_vars) = (Map::new(), Map::new());
+        let (mut lent_defaults, mut lent_vars) = (Tagged::default(), Tagged::default());
         for dependency in &role.dependencies {
             let key = identity(dependency);
             if let Some((_, (defaults, vars))) = self.exports.iter().rev().find(|(k, _)| *k == key)
@@ -62,7 +63,7 @@ impl Builder<'_> {
             }
         }
         let mut inherited_defaults = lent_defaults.clone();
-        let mut inherited_vars = Map::new();
+        let mut inherited_vars = Tagged::default();
         for link in &self.role_chain {
             extend(&mut inherited_defaults, &link.defaults);
             extend(&mut inherited_vars, &link.vars);

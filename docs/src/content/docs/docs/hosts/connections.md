@@ -191,7 +191,7 @@ With `-vvvv` the first line is `ESTABLISH PARAMIKO SSH CONNECTION FOR USER: <use
 
 ## Connections only ansible-core has
 
-Volant reaches a host one of two ways. For `ssh`, `local` and the connections listed above, it runs its agent on the host and sends it the tasks. For any other connection plugin the controller's ansible-core can load, no agent runs: each task that needs the host goes to Volant's Python helper, which loads the connection plugin, connects, runs the task's action plugin over it as `ansible-playbook` would, and closes the connection again. ansible-core reads every option of the plugin from the host's variables, `ansible.cfg` and the environment, as it always does.
+Volant reaches a host one of two ways. For `ssh`, `local` and the connections listed above, it runs its agent on the host and sends it the tasks. For any other connection plugin the controller's ansible-core can load, no agent runs: each task that needs the host goes to Volant's Python helper, which loads the connection plugin, connects, runs the task's action plugin over it as `ansible-playbook` would, and closes the connection once the task is done. The items of a loop share one connection, as they do under `ansible-playbook`. ansible-core reads every option of the plugin from the host's variables, `ansible.cfg` and the environment, as it always does.
 
 Everything else about the run is unchanged: loops, `when`, `register`, `changed_when`, `failed_when`, `until` and `retries`, `ignore_errors`, `no_log`, `serial`, `delegate_to`, handlers, `async` with `poll: 0` and `async_status`, check mode and the recap. A task that runs on the controller, such as `debug` or `set_fact`, runs there as before.
 

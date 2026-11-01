@@ -123,7 +123,7 @@ pub(in crate::executor) fn failed_task_value(task: &PlayTask) -> Value {
             "remote_user" => json!(task.connect.remote_user),
             "tags" => strings(&task.tags),
             "timeout" => json!(task.timeout),
-            "vars" => Value::Object(task.vars.clone()),
+            "vars" => Value::Object(task.vars.as_map().clone()),
             "when" => strings(&task.when),
             _ => Value::Null,
         };

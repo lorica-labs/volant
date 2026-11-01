@@ -313,6 +313,7 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
             }
             "fact_caching_prefix" => config.fact_caching_prefix = value.trim().to_string(),
             "gathering" => config.gathering = gathering(value, origin)?,
+            "playbook_dir" => config.playbook_dir = Some(expand_home(value.trim(), base)),
             "roles_path" => {
                 let list = path_list(value, base);
                 if !list.is_empty() {

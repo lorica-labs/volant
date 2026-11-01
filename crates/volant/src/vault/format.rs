@@ -202,12 +202,9 @@ pub fn encrypt(plain: &[u8], secret: &[u8], id: Option<&str>) -> Result<String, 
     Ok(encrypt_with_salt(plain, secret, id, &salt))
 }
 
-pub(super) fn encrypt_with_salt(
-    plain: &[u8],
-    secret: &[u8],
-    id: Option<&str>,
-    salt: &[u8; 32],
-) -> String {
+/// Encrypts `plain` with the salt given: the same input always gives the same text, which is
+/// what the `vault` filter's `salt=` is for.
+pub fn encrypt_with_salt(plain: &[u8], secret: &[u8], id: Option<&str>, salt: &[u8]) -> String {
     let (key, mac_key, iv) = keys(secret, salt);
     let pad = 16 - plain.len() % 16;
     let mut buf = plain.to_vec();

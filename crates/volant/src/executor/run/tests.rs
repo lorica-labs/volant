@@ -699,10 +699,11 @@ fn the_argument_check_speaks_the_reference_s_sentences() {
         json!({"zeta": "z", "alpha_req": "a", "count": 2, "flag": false, "pick": "beta"}),
     );
     assert!(!from_host.failed(), "{:?}", from_host.0);
-    // A host variable the spec never heard of is not an unknown argument.
+    // A host variable the spec never heard of is not an unknown argument. `~` on a required `str`
+    // is there, read as the empty string, and on an optional `int` is left alone.
     let noise = check(
         json!({}),
-        json!({"zeta": "z", "alpha_req": "a", "ansible_forks": 5}),
+        json!({"zeta": null, "alpha_req": "a", "count": null, "ansible_forks": 5}),
     );
     assert!(!noise.failed(), "{:?}", noise.0);
 

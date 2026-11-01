@@ -638,3 +638,39 @@ fn int_strips_and_refuses_as_python_does() {
         assert!(err.contains(reason), "{template}: {err}");
     }
 }
+
+/// `subelements` pairs each element with each value its path reaches, as tuples, and refuses a
+/// path through something that is not a mapping in the reference's words.
+#[test]
+fn subelements_gives_tuples_and_the_references_errors() {
+    let vars = serde_json::json!({"d": [{"n": "a", "g": ["x", "y"]}]});
+    let map = vars.as_object().unwrap();
+    let t = crate::template::Templar::new(PathBuf::new());
+    assert_eq!(
+        t.render(
+            "{{ (d | subelements('g')) == [(d[0], 'x'), (d[0], 'y')] }}",
+            map
+        )
+        .unwrap(),
+        serde_json::json!(true)
+    );
+    let err = t
+        .render("{{ d | subelements(['g', 'k']) }}", map)
+        .unwrap_err();
+    assert!(
+        err.0
+            .contains("the key k should point to a dictionary, got '['x', 'y']'"),
+        "{}",
+        err.0
+    );
+}
+
+/// The fixture of ansible-core's own `filter_encryption` target: a salt makes the text fixed.
+#[test]
+fn a_salted_vault_gives_ansible_s_text() {
+    let want = "$ANSIBLE_VAULT;1.2;AES256;filter_default\n\
+        33370a34333734353636633035656232613935353432656132646533346233326431346232616261\n\
+        6133383034376566366261316365633931356133633337396363370a376664386236313834326561\n\
+        6338373864623763613165366636633031303739\n";
+    assert_eq!(text("{{ 'secret' | vault('test', salt=7) }}"), want);
+}

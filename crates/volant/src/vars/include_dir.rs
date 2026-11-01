@@ -269,7 +269,7 @@ fn first_line(text: &str) -> String {
 /// a playbook most often has: a parenthesis never closed or never opened, a character set never
 /// closed, and a repeat with nothing in front of it. `None` for a pattern this finds nothing
 /// wrong with. Positions count characters, as Python's do.
-pub(super) fn python_regex_error(pattern: &str) -> Option<String> {
+pub fn python_regex_error(pattern: &str) -> Option<String> {
     let chars: Vec<char> = pattern.chars().collect();
     let mut open = Vec::new();
     let mut i = 0;

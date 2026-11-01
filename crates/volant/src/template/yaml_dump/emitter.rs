@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The dump itself: the emitter state and the node writers.
 
-use minijinja::value::{Kwargs, ValueKind};
-use minijinja::{Error, ErrorKind, Value};
+use minijinja::Value;
+use minijinja::value::ValueKind;
 
 use super::scalar::{analyze, is_break, is_collection, is_printable, scalar_text};
 
@@ -10,39 +10,8 @@ mod anchors;
 use anchors::Anchors;
 mod block;
 use block::lossy;
-
-pub(super) fn dump(
-    value: &Value,
-    indent: Option<usize>,
-    kwargs: Kwargs,
-    default_indent: usize,
-    default_flow: Option<bool>,
-) -> Result<String, Error> {
-    if crate::template::holds_undefined(value) {
-        return Err(Error::from(ErrorKind::UndefinedError));
-    }
-    if super::super::pymethods::bytes::holds(value) {
-        return Err(Error::new(
-            ErrorKind::InvalidOperation,
-            "to_yaml does not write bytes yet",
-        ));
-    }
-    let indent = kwargs
-        .get::<Option<usize>>("indent")?
-        .or(indent)
-        .unwrap_or(default_indent);
-    let width = kwargs.get::<Option<usize>>("width")?;
-    let flow_style = if kwargs.has("default_flow_style") {
-        kwargs.get::<Option<bool>>("default_flow_style")?
-    } else {
-        default_flow
-    };
-    let sort_keys = kwargs.get::<Option<bool>>("sort_keys")?.unwrap_or(true);
-    kwargs.assert_all_used()?;
-    Ok(emit(
-        value, indent, width, flow_style, sort_keys, None, false,
-    ))
-}
+mod options;
+pub(super) use options::dump;
 
 /// The dump of `value` with the settings read. `literal` is the callbacks' dumper
 /// (`_AnsibleCallbackDumper`): a string holding a line break is written as a literal block, and
@@ -56,10 +25,23 @@ pub(super) fn emit(
     literal: Option<bool>,
     inventory: bool,
 ) -> String {
+    let e = emitter(indent, width, flow_style, sort_keys, literal, inventory);
+    run(value, e)
+}
+
+/// An emitter with the settings read and nothing written yet.
+fn emitter(
+    indent: usize,
+    width: Option<usize>,
+    flow_style: Option<bool>,
+    sort_keys: bool,
+    literal: Option<bool>,
+    inventory: bool,
+) -> Emitter {
     // PyYAML's own bounds on the two settings: anything outside them is its default.
     let best_indent = if (2..10).contains(&indent) { indent } else { 2 };
     let best_width = width.filter(|w| *w > best_indent * 2).unwrap_or(80);
-    let mut e = Emitter {
+    Emitter {
         out: String::new(),
         column: 0,
         whitespace: true,
@@ -74,8 +56,13 @@ pub(super) fn emit(
         literal,
         inventory,
         anchors: Anchors::default(),
-    };
-    if inventory {
+        style: None,
+    }
+}
+
+/// The document `e` writes for `value`.
+fn run(value: &Value, mut e: Emitter) -> String {
+    if e.inventory {
         e.anchor_node(value);
     }
     // The value itself, not its JSON form: JSON has no `inf` or `nan`, and no integer keys.
@@ -109,6 +96,8 @@ struct Emitter {
     /// text, text marked unsafe written as the text.
     inventory: bool,
     anchors: Anchors,
+    /// `default_style`, the style every scalar asks for.
+    style: Option<char>,
 }
 
 impl Emitter {
@@ -269,7 +258,9 @@ impl Emitter {
     }
 
     fn scalar(&mut self, v: &Value, simple_key: bool) {
-        if !(self.inventory && self.tagged_scalar(v, simple_key)) {
+        if let Some(style) = self.style {
+            self.styled_scalar(v, simple_key, style);
+        } else if !(self.inventory && self.tagged_scalar(v, simple_key)) {
             self.scalar_text(v, simple_key);
         }
     }

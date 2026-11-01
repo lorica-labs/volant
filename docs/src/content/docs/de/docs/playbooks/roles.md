@@ -1,5 +1,5 @@
 ---
-sourceHash: 053a11b38c33
+sourceHash: bca51b95b831
 title: Rollen, Includes und Imports
 description: Wo Volant nach Rollen sucht, wie Abhängigkeiten, Argument-Specs und Rollenvariablen funktionieren und wie Imports und Includes andere Dateien in ein Play holen.
 ---
@@ -43,7 +43,7 @@ roles:
 
 ## Argument-Specs
 
-`meta/argument_specs.yml` wird zu einem eigenen Task. Er läuft nach den Abhängigkeiten der Rolle und vor ihrem ersten Task und prüft die Argumente der Rolle gegen den Spec-Eintrag, der nach ihrer Tasks-Datei benannt ist.
+`meta/argument_specs.yml` wird zu einem eigenen Task. Er läuft nach den Abhängigkeiten der Rolle und vor ihrem ersten Task und prüft die Argumente der Rolle gegen den Spec-Eintrag, der nach ihrer Tasks-Datei benannt ist. Eine Rolle ohne diese Datei kann ihre `argument_specs` in `meta/main.yml` ablegen, wie in Ansible.
 
 Der Task trägt die `short_description` der Rolle nach einem Bindestrich, sodass `--list-tasks` `Validating arguments against arg spec 'main' - The spec role` zeigt. Er ist mit `always` getaggt, daher entfernt ihn keine Auswahl mit `--tags`.
 

@@ -42,7 +42,7 @@ roles:
 
 ## Argument specs
 
-`meta/argument_specs.yml` becomes a task of its own. It runs after the role's dependencies and before the role's first task, and it checks the role's arguments against the spec entry named after its tasks file.
+`meta/argument_specs.yml` becomes a task of its own. It runs after the role's dependencies and before the role's first task, and it checks the role's arguments against the spec entry named after its tasks file. A role with no such file can keep its `argument_specs` in `meta/main.yml`, as in Ansible.
 
 The task carries the role's `short_description` after a dash, so `--list-tasks` shows `Validating arguments against arg spec 'main' - The spec role`. It is tagged `always`, so no `--tags` selection drops it.
 

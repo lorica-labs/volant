@@ -473,7 +473,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `strftime` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `string` | <span class="kw kw-runs">runs</span> |  |
 | `striptags` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
-| `subelements` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
+| `subelements` | <span class="kw kw-runs">runs</span> |  |
 | `sum` | <span class="kw kw-runs">runs</span> |  |
 | `symmetric_difference` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `ternary` | <span class="kw kw-runs">runs</span> |  |

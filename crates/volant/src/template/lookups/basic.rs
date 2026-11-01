@@ -60,9 +60,11 @@ pub(super) fn varnames(state: &State, terms: &[Value]) -> Result<Vec<Value>, Err
                 python_type(term)
             )));
         };
+        // Python's sentence for the pattern, which the target asserts on.
         let regex = regex::Regex::new(pattern).map_err(|e| {
+            let why = crate::vars::python_regex_error(pattern).unwrap_or_else(|| e.to_string());
             invalid(format!(
-                "Unable to use \"{pattern}\" as a search parameter: {e}"
+                "Unable to use \"{pattern}\" as a search parameter: {why}"
             ))
         })?;
         found.extend(

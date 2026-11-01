@@ -69,7 +69,7 @@ Ein Modul aus einer installierten Collection, etwa `ansible.posix.sysctl` oder `
 
 Vor der ersten Verbindung fragt Volant das ansible-core des Controllers, was jeder Punktname ist. ansible-core sucht in den Collection-Pfaden, mit denen es konfiguriert ist, etwa `ANSIBLE_COLLECTIONS_PATH`, und dann im Verzeichnis `collections/` der verwalteten Runtime, wohin `volant runtime install --collections` sie legt. Volant installiert während eines Laufs nichts, und zur Antwort wird nichts geholt.
 
-Ein Name außerhalb von `ansible.builtin` und `ansible.legacy` bekommt eine von fünf Antworten:
+Ein Name, der keines der eigenen Module von ansible-core ist, bekommt eine von fünf Antworten. Dazu gehört ein `ansible.builtin.`-Name, den die `ansible_builtin_runtime.yml` von ansible-core an eine Collection weiterleitet:
 
 | Was ansible-core findet | Was Volant tut |
 |---|---|
@@ -92,7 +92,7 @@ task 'Forward': couldn't resolve module/action 'ns.coll.mod'. This often indicat
 task 'Forward': module 'ns.coll.mod' cannot run: <reason>
 ```
 
-Der Installationshinweis erscheint nur, wenn die Collection selbst fehlt. Ein Modul, das in einer installierten Collection fehlt, bekommt nur den ersten Satz. Auch `ansible.builtin.nosuch` bekommt nur ihn, weil keine Collection einen Namen im Namensraum liefern kann, den ansible-core besitzt. Ohne ansible-core auf dem Controller wird ein Name außerhalb von `ansible.builtin` mit demselben ersten Satz abgelehnt, ergänzt um den Grund, warum nichts nachgeschlagen werden konnte.
+Der Installationshinweis erscheint nur, wenn die Collection selbst fehlt. Ein Modul, das in einer installierten Collection fehlt, bekommt nur den ersten Satz. Auch `ansible.builtin.nosuch` bekommt nur ihn: Was aus einem solchen Namen wird, entscheidet das Routing von ansible-core, und es gibt keine Collection zu installieren. Ohne ansible-core auf dem Controller wird ein Name, der keines der eigenen Module von ansible-core ist, mit demselben ersten Satz abgelehnt, ergänzt um den Grund, warum nichts nachgeschlagen werden konnte.
 
 Ein Collection-Modul, das nur in der Datei einer Rolle für eine andere Plattform genannt wird, wird ebenfalls aufgelöst. Lässt es sich bauen, kommt es in die Union. Alles andere bleibt draußen, ohne den Lauf zu stoppen, und das Include, das es erreicht, schlägt für diesen Host fehl, bevor ein Task der Datei läuft:
 

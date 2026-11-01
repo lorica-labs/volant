@@ -43,7 +43,8 @@ pub fn given(
     let configured = settings.collection_skeleton();
     let cwd = std::env::current_dir().map_err(|e| io(&e))?;
     let extra_vars = crate::vars::parse_extra_vars(extra_vars, &cwd)
-        .map_err(|e| Failure::error(format!("{e:#}")))?;
+        .map_err(|e| Failure::error(format!("{e:#}")))?
+        .into_values();
     collection(&Init {
         name,
         init_path: init_path.unwrap_or("./"),

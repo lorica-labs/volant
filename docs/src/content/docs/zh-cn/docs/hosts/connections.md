@@ -1,5 +1,5 @@
 ---
-sourceHash: 864ee37f7fcb
+sourceHash: 559a3a1df643
 title: 连接与 become
 description: Volant 如何连接到主机、它读取的主机变量和 ansible.cfg 设置，以及 become 如何通过 sudo 和 su 工作。
 ---
@@ -247,7 +247,8 @@ Volant 为每台主机从 inventory 或任何其他变量来源读取这些变�
 | `ansible_become_password`、`ansible_become_pass`、`ansible_sudo_pass`、`ansible_su_pass` | 提权密码 |
 | `ansible_become_exe`、`ansible_sudo_exe`、`ansible_su_exe` | 提权所用的程序 |
 | `ansible_become_flags`、`ansible_sudo_flags`、`ansible_su_flags` | 它的标志 |
-| `ansible_su_prompt_l10n` | `su` 可能打印的提示列表。它会替换内置的提示。 |
+| `ansible_su_prompt_l10n` | `su` 可能打印的提示列表，或用逗号分隔这些提示的字符串。它会替换内置的提示。 |
+| `ansible_sudo_chdir` | 启动 `sudo` 时所在的目录。目录不存在时 task 会失败。 |
 
 当一台主机同时设置了某个变量和它的别名时，生效的是 Ansible 让其获胜的那个。下表按从强到弱的顺序列出它们，以及设置同一内容的关键字：
 
@@ -372,7 +373,7 @@ Volant 会询问 `sudo` 该用哪种形式，而不是假设其中一种。它�
 
 `su` 没有在没有终端的情况下读取密码的标志，所以 Volant 改为回答它的提示。密码只会写入提示一次，绝不会放进命令行、日志或 `-vvv` 输出。密码错误会让 task 失败，并给出 `Incorrect su password`。提示始终不出现时，task 会以 `Timeout (12s) waiting for privilege escalation prompt` 结束，与 ansible-core 一致。
 
-在 `local` 连接上，`su` 运行在它自己的终端上。密码错误会让 task 失败，并给出 `Premature end of stream waiting for become success.` 以及 `su` 打印的内容，与 ansible-core 在那里的做法一致。在本地连接上，等待提示的时间始终是 12 秒，不论 `-T` 设为多少。
+在 `local` 连接上，`su` 运行在它自己的终端上。密码错误会让 task 失败，并给出 `Premature end of stream waiting for become success.` 以及 `su` 打印的内容，与 ansible-core 在那里的做法一致。在本地连接上，等待提示的时间始终是 12 秒，不论 `-T` 设为多少。如果提示始终没有出现，主机会变为不可达，并给出 `Timed out waiting for become success or become password prompt.`
 
 ## 尚未支持
 

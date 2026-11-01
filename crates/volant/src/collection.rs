@@ -208,6 +208,21 @@ pub(crate) fn actions_named<'a>(tasks: impl IntoIterator<Item = &'a PlayTask>) -
         .collect()
 }
 
+/// The modules of the tasks of `tasks` that have `module_defaults`, when only ansible-core can
+/// resolve them: measured on ansible-core 2.19.12, a task gets the defaults of the action plugin
+/// its name resolves to, a `runtime.yml` redirect of actions included, and not those of the
+/// module that plugin runs.
+fn modules_named<'a>(
+    tasks: impl IntoIterator<Item = &'a PlayTask>,
+) -> impl Iterator<Item = String> {
+    tasks
+        .into_iter()
+        .filter(|task| {
+            !task.module_defaults.is_empty() && !volant_protocol::modules::is_builtin(&task.module)
+        })
+        .map(|task| task.module.clone())
+}
+
 /// The lookup names the `with_<lookup>` loops of `tasks` hold that only the controller's
 /// ansible-core can place: every name but the lookups `ansible.builtin` ships, which have a row
 /// in the keyword table. A collection's lookup, one a `lookup_plugins/` directory holds and a
@@ -241,7 +256,7 @@ pub(crate) fn unresolved_action(name: &str) -> String {
 #[derive(Debug, Default)]
 pub(crate) struct Resolved {
     groups: Mutex<BTreeMap<String, Vec<String>>>,
-    actions: Mutex<BTreeSet<String>>,
+    actions: Mutex<BTreeMap<String, String>>,
     lookups: Mutex<BTreeSet<String>>,
 }
 
@@ -275,25 +290,43 @@ impl Resolved {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .extend(missing_lookups);
+        let keys = actions_named(tasks.clone());
         let missing_actions: Vec<String> = {
             let known = self.actions.lock().unwrap_or_else(PoisonError::into_inner);
-            actions_named(tasks.clone())
+            let asked: BTreeSet<String> = keys
+                .iter()
+                .cloned()
+                .chain(modules_named(tasks.clone()))
+                .collect();
+            asked
                 .into_iter()
-                .filter(|name| !known.contains(name))
+                .filter(|name| !known.contains_key(name))
                 .collect()
         };
-        if let Some(first) = missing_actions.first() {
-            let bridge = bridge.ok_or_else(|| unresolved_action(first))?;
-            let found = bridge
-                .actions_resolve(&missing_actions)
-                .map_err(|e| e.to_string())?;
-            if let Some((name, _)) = found.iter().find(|(_, resolved)| !**resolved) {
-                return Err(unresolved_action(name));
+        // A task's own module is asked about only to follow its redirect: without a helper, it
+        // keeps its name, and only a key nothing resolves is refused.
+        match bridge {
+            _ if missing_actions.is_empty() => {}
+            None => {
+                if let Some(key) = missing_actions.iter().find(|name| keys.contains(*name)) {
+                    return Err(unresolved_action(key));
+                }
             }
-            self.actions
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .extend(missing_actions);
+            Some(bridge) => {
+                let found = bridge
+                    .actions_resolve(&missing_actions)
+                    .map_err(|e| e.to_string())?;
+                let mut known = self.actions.lock().unwrap_or_else(PoisonError::into_inner);
+                for (name, resolved) in found {
+                    match resolved {
+                        Some(full) => {
+                            known.insert(name, full);
+                        }
+                        None if keys.contains(&name) => return Err(unresolved_action(&name)),
+                        None => {}
+                    }
+                }
+            }
         }
         let missing_groups: Vec<String> = {
             let known = self.groups.lock().unwrap_or_else(PoisonError::into_inner);
@@ -318,6 +351,17 @@ impl Resolved {
         Ok(())
     }
 
+    /// The full name of the action or module ansible-core resolved `name` to: a key of
+    /// `module_defaults`, a short one under `ansible.legacy.`, or the module of a task that has
+    /// some.
+    pub(crate) fn action(&self, name: &str) -> Option<String> {
+        let known = self.actions.lock().unwrap_or_else(PoisonError::into_inner);
+        known
+            .get(name)
+            .or_else(|| known.get(&format!("ansible.legacy.{name}")))
+            .cloned()
+    }
+
     /// The groups resolved so far, by full name.
     pub(crate) fn groups(&self) -> BTreeMap<String, Vec<String>> {
         self.groups
@@ -336,8 +380,9 @@ pub(crate) fn unresolved_group(group: &str) -> String {
 pub(crate) type Rendered = Result<Map<String, Value>, String>;
 
 /// What `module_defaults` gives the call to `module`, before the task's own arguments are laid
-/// over it. `resolve` gives the name a module resolves to, when a redirect leads elsewhere: the
-/// task's module and each key are compared by that name. `groups` maps a group's full name to
+/// over it. `resolve` gives the name ansible-core resolves a module or a key to, its action
+/// plugin first, when a redirect leads elsewhere: the task's module and each key are compared by
+/// that name. `groups` maps a group's full name to
 /// the modules it holds; `render` turns the value a key holds into the mapping it stands for.
 ///
 /// # Errors

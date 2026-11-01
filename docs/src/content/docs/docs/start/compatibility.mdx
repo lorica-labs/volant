@@ -80,7 +80,7 @@ The pre-flight check stops the run before the first connection, before any banne
 
 | What | Message shape | Exit code |
 |---|---|---|
-| A `strategy` other than `linear`, `free`, `host_pinned` and `debug` | `strategy 'x' is not supported yet` | 4 |
+| A `strategy` other than `linear`, `free`, `host_pinned` and `debug`, from the play or from `ANSIBLE_STRATEGY` | ansible-core's deprecation of strategy plugins outside `ansible.builtin`, then `strategy 'x' is not supported yet` | 4 |
 | `until`, `retries` or `delay` on `include_tasks` or `include_role` | `keyword 'until' is not supported yet on 'include_tasks'` | 4 |
 | A `pause` with a `prompt` and `seconds` or `minutes`, when standard input is a terminal | `pause cannot wait for a prompt and a duration together on a terminal ...` | 4 |
 | A module argument that ansible-core has and this release does not act on | `argument 'x' is not supported yet on 'module'`, with ` with 'v'` when only that value is refused | 4 |

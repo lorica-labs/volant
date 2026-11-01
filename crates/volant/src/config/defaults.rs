@@ -57,6 +57,7 @@ impl Default for Config {
             fact_caching_timeout: 86400,
             fact_caching_prefix: String::new(),
             gathering: "implicit".to_string(),
+            strategy: None,
             playbook_dir: None,
             galaxy: Vec::new(),
         }

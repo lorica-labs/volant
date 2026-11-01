@@ -167,6 +167,7 @@ fn sudo() -> Option<Escalation> {
         exe: Vec::new(),
         flags: None,
         prompt_l10n: Vec::new(),
+        chdir: None,
     })
 }
 
@@ -276,6 +277,7 @@ async fn su_is_refused_until_a_runtime_can_give_it_a_terminal() {
             exe: Vec::new(),
             flags: None,
             prompt_l10n: Vec::new(),
+            chdir: None,
         })
     };
     match runtime
@@ -354,6 +356,7 @@ async fn become_on_a_target_with_no_shell_says_why_it_cannot() {
         exe: Vec::new(),
         flags: None,
         prompt_l10n: Vec::new(),
+        chdir: None,
     };
     match runtime
         .target("nosh")

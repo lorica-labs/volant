@@ -46,6 +46,24 @@ pub(crate) use resolved::{
 /// differently.
 pub const STRATEGIES: [&str; 4] = ["linear", "free", "host_pinned", "debug"];
 
+/// The builtin strategy `name` spells, short or under `ansible.builtin.` or `ansible.legacy.`.
+pub fn builtin_strategy(name: &str) -> Option<&'static str> {
+    let short = name
+        .strip_prefix("ansible.builtin.")
+        .or_else(|| name.strip_prefix("ansible.legacy."))
+        .unwrap_or(name);
+    STRATEGIES.into_iter().find(|known| *known == short)
+}
+
+/// The refusal of a strategy that is none of [`STRATEGIES`], after the deprecation ansible-core
+/// 2.19.12 prints as it loads any strategy outside `ansible.builtin`, a missing one included.
+pub fn unsupported_strategy(name: &str) -> String {
+    crate::playbook::print_deprecation_line(
+        "Use of strategy plugins not included in ansible.builtin are deprecated and do not carry any backwards compatibility guarantees. No alternative for third party strategy plugins is currently planned. This feature will be removed from ansible-core in a future release.",
+    );
+    format!("strategy '{name}' is not supported yet")
+}
+
 /// Exit 4 for the refusals raised here: the reference exits 4 for a playbook it cannot load,
 /// and a playbook this release cannot run is the same event from the operator's chair, refused
 /// at the same moment. [`Refusal::or`] leaves a member refusal its own code, which is how the
@@ -64,9 +82,9 @@ fn check_play(play: &Play) -> anyhow::Result<()> {
     // A template is rendered and checked when the play starts (`render_play_names`).
     if let Some(strategy) = &play.strategy
         && !Templar::is_template(strategy)
-        && !STRATEGIES.contains(&strategy.as_str())
+        && builtin_strategy(strategy).is_none()
     {
-        bail!("strategy '{strategy}' is not supported yet");
+        bail!(unsupported_strategy(strategy));
     }
     // A handler is a task the play wrote, so the first pass refuses what it carries too. Only
     // the `notify` names wait for the second pass, because resolving one needs the whole

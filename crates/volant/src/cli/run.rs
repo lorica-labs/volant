@@ -125,6 +125,9 @@ async fn run_all(
     executor::command_line_modes(args.check, args.diff);
     for play in playbooks.iter_mut().flat_map(|pb| pb.plays.iter_mut()) {
         play.take_defaults(args.check, args.diff, config.gathering == "explicit");
+        if play.strategy.is_none() {
+            play.strategy.clone_from(&config.strategy);
+        }
     }
     let plays_of = playbooks.iter().flat_map(|pb| &pb.plays);
     crate::action_plugins::facts_modules::configure(&config, plays_of, &inventory);

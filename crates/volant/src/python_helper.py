@@ -710,9 +710,9 @@ def own_plugins():
 
 
 def actions(names):
-    """Whether each name a `module_defaults` key spells resolves to an action or a module."""
+    """The full name of the action or module each `module_defaults` key spells, or None."""
     loaders()
-    return {name: resolve_action(name) is not None for name in names}
+    return {name: resolve_action(name) for name in names}
 
 
 def connections(names):

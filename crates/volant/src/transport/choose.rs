@@ -315,6 +315,14 @@ impl Transport {
                     Some(e) if e.method == BecomeMethod::Su => {
                         return local_su(&agent, e).await;
                     }
+                    // `sudo_chdir` to a directory that is not there: the reference's `cd` fails
+                    // before `sudo` starts, a task failure with the shell's complaint.
+                    Some(e) if e.chdir.as_deref().is_some_and(|d| !Path::new(d).is_dir()) => {
+                        return Err(ConnectError::Become(format!(
+                            "cd: {}: No such file or directory",
+                            e.chdir.as_deref().unwrap_or_default()
+                        )));
+                    }
                     Some(e) => Some((e, check_local_escalation(&agent, e).await?)),
                     None => None,
                 };
@@ -334,6 +342,10 @@ impl Transport {
                     ]);
                 }
                 let mut command = Command::new(&argv[0]);
+                // `sudo_chdir`: `sudo` is started from there, as the reference's `cd` does.
+                if let Some(dir) = escalated.and_then(|(e, _)| e.chdir.as_deref()) {
+                    command.current_dir(dir);
+                }
                 let child = command
                     .args(&argv[1..])
                     .stdin(Stdio::piped())

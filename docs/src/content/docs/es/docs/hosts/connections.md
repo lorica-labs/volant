@@ -1,5 +1,5 @@
 ---
-sourceHash: 31bbd0638724
+sourceHash: 8baaf4b329f9
 title: Conexiones y become
 description: Cómo llega Volant a un host, las variables de host y los ajustes de ansible.cfg que lee, y cómo funciona become mediante sudo y su.
 ---
@@ -192,7 +192,7 @@ Con `-vvvv`, la primera línea es `ESTABLISH PARAMIKO SSH CONNECTION FOR USER: <
 
 ## Conexiones que solo tiene ansible-core
 
-Volant llega a un host por una de dos vías. Para `ssh`, `local` y las conexiones de la lista anterior, ejecuta su agente en el host y le envía las tareas. Para cualquier otro plugin de conexión que el ansible-core del controlador pueda cargar, no hay agente: cada tarea que necesita el host va al ayudante Python de Volant, que carga el plugin de conexión, se conecta, ejecuta por ella el plugin de acción de la tarea como lo haría `ansible-playbook` y vuelve a cerrar la conexión. ansible-core lee cada opción del plugin de las variables del host, de `ansible.cfg` y del entorno, como siempre.
+Volant llega a un host por una de dos vías. Para `ssh`, `local` y las conexiones de la lista anterior, ejecuta su agente en el host y le envía las tareas. Para cualquier otro plugin de conexión que el ansible-core del controlador pueda cargar, no hay agente: cada tarea que necesita el host va al ayudante Python de Volant, que carga el plugin de conexión, se conecta, ejecuta por ella el plugin de acción de la tarea como lo haría `ansible-playbook` y cierra la conexión cuando la tarea termina. Los elementos de un bucle comparten una sola conexión, como con `ansible-playbook`. ansible-core lee cada opción del plugin de las variables del host, de `ansible.cfg` y del entorno, como siempre.
 
 Todo lo demás de la ejecución no cambia: bucles, `when`, `register`, `changed_when`, `failed_when`, `until` y `retries`, `ignore_errors`, `no_log`, `serial`, `delegate_to`, handlers, `async` con `poll: 0` y `async_status`, el modo de comprobación y el recap. Una tarea que se ejecuta en el controlador, como `debug` o `set_fact`, se ejecuta allí como antes.
 

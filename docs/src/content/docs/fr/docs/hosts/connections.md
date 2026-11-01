@@ -1,5 +1,5 @@
 ---
-sourceHash: 3b083b74d53c
+sourceHash: 31bbd0638724
 title: Connexions et become
 description: Comment Volant atteint un hôte, les variables d'hôte et les paramètres d'ansible.cfg qu'il lit, et comment become fonctionne avec sudo et su.
 ---
@@ -247,7 +247,8 @@ Volant lit celles-ci par hôte, depuis l'inventaire ou depuis toute autre source
 | `ansible_become_password`, `ansible_become_pass`, `ansible_sudo_pass`, `ansible_su_pass` | Mot de passe de l'élévation |
 | `ansible_become_exe`, `ansible_sudo_exe`, `ansible_su_exe` | Le programme d'élévation |
 | `ansible_become_flags`, `ansible_sudo_flags`, `ansible_su_flags` | Ses options |
-| `ansible_su_prompt_l10n` | Une liste d'invites que `su` peut afficher. Elle remplace celles qui sont intégrées. |
+| `ansible_su_prompt_l10n` | Une liste d'invites que `su` peut afficher, ou une chaîne qui les sépare par des virgules. Elle remplace celles qui sont intégrées. |
+| `ansible_sudo_chdir` | Le répertoire depuis lequel `sudo` est lancé. Un répertoire qui n'existe pas fait échouer la tâche. |
 
 Quand un hôte définit une variable et un de ses alias, celui qu'Ansible fait gagner s'applique. Le tableau les liste du plus fort au plus faible, avec le mot-clé qui règle la même chose :
 
@@ -372,7 +373,7 @@ Quand l'élévation échoue, faute de mot de passe, avec un mauvais mot de passe
 
 `su` n'a pas d'option pour lire un mot de passe sans terminal : Volant répond donc à son invite. Le mot de passe est écrit une seule fois dans l'invite, jamais placé dans une ligne de commande, un journal ni la sortie de `-vvv`. Un mauvais mot de passe fait échouer la tâche avec `Incorrect su password`. Une invite qui ne vient jamais met fin à la tâche avec `Timeout (12s) waiting for privilege escalation prompt`, comme dans ansible-core.
 
-Sur une connexion `local`, `su` s'exécute sur un terminal à part. Un mauvais mot de passe fait échouer la tâche avec `Premature end of stream waiting for become success.` et ce que `su` a affiché, comme le fait ansible-core dans ce cas. L'attente de l'invite est toujours de 12 secondes sur une connexion locale, quelle que soit la valeur de `-T`.
+Sur une connexion `local`, `su` s'exécute sur un terminal à part. Un mauvais mot de passe fait échouer la tâche avec `Premature end of stream waiting for become success.` et ce que `su` a affiché, comme le fait ansible-core dans ce cas. L'attente de l'invite est toujours de 12 secondes sur une connexion locale, quelle que soit la valeur de `-T`. Une invite qui ne vient jamais rend l'hôte injoignable avec `Timed out waiting for become success or become password prompt.`
 
 ## Pas encore disponible
 

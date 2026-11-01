@@ -198,8 +198,8 @@ def scan_once():
 
 class ShippedAsItself(RuntimeError):
     """A module ansible-core builds with no zip: one in another language that reads its arguments
-    from the file named on its command line (`WANT_JSON`), or an `old` one, a script reading them
-    as `key=value` words from that file. It ships as itself: ansible-core's own `_execute_module`
+    from the file named on its command line (`WANT_JSON`), a compiled `binary` one that reads them
+    the same way, or an `old` one, a script reading them as `key=value` words from that file. It ships as itself: ansible-core's own `_execute_module`
     copies it and its arguments file to the host and runs it there."""
 
 
@@ -265,7 +265,7 @@ def build(name):
         raise RuntimeError("building module %r: %s" % (name, failure))
     # Measured on ansible-core 2.19.12: a `library/a.py` that only prints its JSON runs, copied
     # with its arguments file. A documentation stub runs the same way there and says nothing.
-    if built.module_style in ("non_native_want_json", "old"):
+    if built.module_style in ("non_native_want_json", "binary", "old"):
         raise ShippedAsItself(name)
     if built.module_style != "new":
         raise RuntimeError(
@@ -710,9 +710,9 @@ def own_plugins():
 
 
 def actions(names):
-    """Whether each name a `module_defaults` key spells resolves to an action or a module."""
+    """The full name of the action or module each `module_defaults` key spells, or None."""
     loaders()
-    return {name: resolve_action(name) is not None for name in names}
+    return {name: resolve_action(name) for name in names}
 
 
 def connections(names):

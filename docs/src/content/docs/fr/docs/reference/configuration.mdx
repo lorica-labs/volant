@@ -1,5 +1,5 @@
 ---
-sourceHash: 94ef043b1d7c
+sourceHash: b3d239daaa36
 title: Configuration
 description: Les paramètres d'ansible.cfg et les variables d'environnement que Volant lit, section par section, avec leurs valeurs par défaut.
 ---
@@ -52,6 +52,10 @@ Un fichier qui existe mais ne peut pas être lu est ignoré, et l'exécution con
 
 <Option name="forks" id="defaults-forks" default="5" flag="-f" env="ANSIBLE_FORKS">
   Le nombre d'hôtes sur lesquels un play travaille à la fois. Zéro, ou une valeur qui n'est pas un nombre, est rejeté avant le début de l'exécution. Les playbooks lisent la valeur courante sous le nom `ansible_forks`.
+</Option>
+
+<Option name="strategy" id="defaults-strategy" default="linear" env="ANSIBLE_STRATEGY">
+  La stratégie d'un play qui n'en nomme aucune : `linear`, `free`, `host_pinned` ou `debug`, aussi sous `ansible.builtin.`. Tout autre nom affiche l'avertissement de dépréciation d'ansible-core pour les plugins de stratégie hors de `ansible.builtin`, puis est refusé.
 </Option>
 
 <Option name="async_dir" id="defaults-async-dir" default="~/.ansible_async" env="ANSIBLE_ASYNC_DIR">

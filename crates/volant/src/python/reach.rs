@@ -97,13 +97,16 @@ pub(crate) fn modules_for_run(reach: &Reach) -> std::collections::BTreeSet<Strin
     modules_to_build(reach.modules.iter().map(|(module, _)| module.as_str()))
 }
 
-/// Every builtin module, when a task names a module, a role, or a file outside every role by a
-/// template: nothing follows such a name before the run, and it may lead to any of them.
+/// Every builtin module and every module of a `library/` the run searches, when a task names a
+/// module, a role, or a file outside every role by a template: nothing follows such a name
+/// before the run, and it may lead to any of them.
 pub(crate) fn modules_unfollowed(reach: &Reach) -> std::collections::BTreeSet<String> {
-    let every = reach
-        .unfollowed
-        .then_some(volant_protocol::modules::BUILTIN_MODULES);
-    modules_to_build(every.into_iter().flatten().copied())
+    if !reach.unfollowed {
+        return std::collections::BTreeSet::new();
+    }
+    let library = super::module_path::library_modules(&reach.plugin_dirs);
+    let builtin = volant_protocol::modules::BUILTIN_MODULES.iter().copied();
+    modules_to_build(builtin.chain(library.iter().map(String::as_str)))
 }
 
 /// Every role and task file a run's plays can reach, read once before the first connection: what

@@ -257,3 +257,35 @@ fn the_fixture_files_parse() {
     assert_eq!(k3s.collections.len(), 4);
     assert_eq!(k3s.collections[0], galaxy("ansible.posix", "2.2.2"));
 }
+
+/// A `source` names a configured server by its name or URL, or adds one for an HTTP URL; any
+/// other text is refused in the reference's words.
+#[test]
+fn a_source_picks_the_server_it_names() {
+    use super::api::servers::pins;
+    use super::settings::ServerSettings;
+
+    let server = |name: &str, url: &str| ServerSettings {
+        name: name.into(),
+        url: url.into(),
+        token: None,
+        validate_certs: true,
+        timeout: 60,
+    };
+    let wanted =
+        |source: &str| collection(&json!({"name": "a.b", "source": source})).expect("an entry");
+    let mut list = vec![server("release", "https://galaxy.example/api/")];
+    let explicit = |name: &str, url: &str| server(&format!("explicit_requirement_{name}"), url);
+    let pinned = |list: &mut Vec<ServerSettings>, source: &str| {
+        pins(list, &[wanted(source)], explicit).map(|p| p["a.b"])
+    };
+    assert_eq!(pinned(&mut list, "release"), Ok(0));
+    assert_eq!(pinned(&mut list, "https://galaxy.example/api/"), Ok(0));
+    assert_eq!(pinned(&mut list, "HTTPS://other.example/"), Ok(1));
+    assert_eq!(list[1].name, "explicit_requirement_a.b");
+    let refused = pinned(&mut list, "git+file:///tmp/a.git").expect_err("not a URL");
+    assert_eq!(
+        refused.summary(),
+        "Collections requirement 'source' entry should contain a valid Galaxy API URL but it does not: git+file:///tmp/a.git is not an HTTP URL."
+    );
+}

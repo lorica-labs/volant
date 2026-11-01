@@ -77,11 +77,11 @@ pub(crate) fn render_play_names<'a>(
     rendered.strategy = render("strategy", &play.strategy)?;
     rendered.order = render("order", &play.order)?;
     if let Some(strategy) = &rendered.strategy
-        && !crate::preflight::STRATEGIES.contains(&strategy.as_str())
+        && crate::preflight::builtin_strategy(strategy).is_none()
     {
         return Err(crate::stats::Refusal::at(
             4,
-            format!("strategy '{strategy}' is not supported yet"),
+            crate::preflight::unsupported_strategy(strategy),
         ));
     }
     Ok(std::borrow::Cow::Owned(rendered))

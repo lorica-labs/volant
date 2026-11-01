@@ -1,5 +1,5 @@
 ---
-sourceHash: 3b083b74d53c
+sourceHash: 31bbd0638724
 title: Verbindungen und become
 description: Wie Volant einen Host erreicht, welche Hostvariablen und ansible.cfg-Einstellungen es liest und wie become über sudo und su funktioniert.
 ---
@@ -247,7 +247,8 @@ Volant liest diese pro Host, aus dem Inventory oder aus jeder anderen Variablenq
 | `ansible_become_password`, `ansible_become_pass`, `ansible_sudo_pass`, `ansible_su_pass` | Passwort für die Rechteausweitung |
 | `ansible_become_exe`, `ansible_sudo_exe`, `ansible_su_exe` | Das Programm für die Rechteausweitung |
 | `ansible_become_flags`, `ansible_sudo_flags`, `ansible_su_flags` | Dessen Flags |
-| `ansible_su_prompt_l10n` | Eine Liste von Eingabeaufforderungen, die `su` ausgeben darf. Sie ersetzt die eingebauten. |
+| `ansible_su_prompt_l10n` | Eine Liste von Eingabeaufforderungen, die `su` ausgeben darf, oder ein String mit durch Kommas getrennten Eingabeaufforderungen. Sie ersetzt die eingebauten. |
+| `ansible_sudo_chdir` | Das Verzeichnis, aus dem `sudo` gestartet wird. Ein Verzeichnis, das nicht existiert, lässt den Task fehlschlagen. |
 
 Setzt ein Host eine Variable und einen Alias davon, gilt der, den Ansible gewinnen lässt. Die Tabelle führt sie von der stärksten zur schwächsten auf, mit dem Keyword, das dasselbe setzt:
 
@@ -372,7 +373,7 @@ Schlägt die Rechteausweitung fehl, sei es wegen eines fehlenden oder falschen P
 
 `su` hat kein Flag, um ein Passwort ohne Terminal zu lesen, daher beantwortet Volant stattdessen seine Eingabeaufforderung. Das Passwort wird einmal an die Eingabeaufforderung geschrieben und nie in eine Kommandozeile, ein Log oder die Ausgabe von `-vvv` gesetzt. Ein falsches Passwort lässt den Task mit `Incorrect su password` fehlschlagen. Kommt die Eingabeaufforderung nie, endet der Task mit `Timeout (12s) waiting for privilege escalation prompt`, wie in ansible-core.
 
-Über eine `local`-Verbindung läuft `su` auf einem eigenen Terminal. Ein falsches Passwort lässt den Task mit `Premature end of stream waiting for become success.` und dem, was `su` ausgegeben hat, fehlschlagen, wie ansible-core es dort tut. Das Warten auf die Eingabeaufforderung dauert bei einer lokalen Verbindung immer 12 Sekunden, was auch `-T` sagt.
+Über eine `local`-Verbindung läuft `su` auf einem eigenen Terminal. Ein falsches Passwort lässt den Task mit `Premature end of stream waiting for become success.` und dem, was `su` ausgegeben hat, fehlschlagen, wie ansible-core es dort tut. Das Warten auf die Eingabeaufforderung dauert bei einer lokalen Verbindung immer 12 Sekunden, was auch `-T` sagt. Kommt die Eingabeaufforderung nie, wird der Host mit `Timed out waiting for become success or become password prompt.` unerreichbar.
 
 ## Noch nicht vorhanden
 

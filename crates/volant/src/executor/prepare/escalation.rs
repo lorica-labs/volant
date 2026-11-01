@@ -224,8 +224,12 @@ pub(super) fn become_for(
         .or_else(|| set(host_setting(vars, "ansible_become_password")))
         .and_then(secret_text)
         .or_else(|| defaults.become_password.clone());
-    // Only `su` reads `prompt_l10n`; it replaces the built-in prompts.
+    // Only `su` reads `prompt_l10n`; it replaces the built-in prompts. A string is a list of one
+    // prompt per comma, as the option's `list` type reads it.
     let prompt_l10n = match (method, host_setting(vars, "ansible_su_prompt_l10n")) {
+        (BecomeMethod::Su, Some(Value::String(text))) => {
+            text.split(',').map(str::to_string).collect()
+        }
         (BecomeMethod::Su, Some(Value::Array(list))) => list
             .iter()
             .map(|p| p.as_str().map(str::to_string))
@@ -240,6 +244,11 @@ pub(super) fn become_for(
         }
         _ => Vec::new(),
     };
+    // Only `sudo` reads `sudo_chdir`, the directory it is invoked from.
+    let chdir = match (method, host_setting(vars, "ansible_sudo_chdir")) {
+        (BecomeMethod::Sudo, Some(Value::String(dir))) if !dir.is_empty() => Some(dir.clone()),
+        _ => None,
+    };
     Ok(Some(Escalation {
         method,
         user,
@@ -247,6 +256,7 @@ pub(super) fn become_for(
         exe,
         flags,
         prompt_l10n,
+        chdir,
     }))
 }
 

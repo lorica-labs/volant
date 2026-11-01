@@ -173,6 +173,22 @@ where
                 said.extend_from_slice(&line);
                 return Ok(Some(text(&said)));
             }
+            Err(_) if local => {
+                // The local connection's own words, measured on ansible-core 2.19.12: the prompt
+                // is named while none was answered, and what `su` printed follows.
+                let mut msg = "Task failed: Timed out waiting for become success".to_string();
+                if !answered {
+                    msg.push_str(" or become password prompt");
+                }
+                msg.push('.');
+                said.extend_from_slice(&line);
+                let said = text(&said);
+                if !said.trim().is_empty() {
+                    msg.push_str("\n>>> Standard Output\n");
+                    msg.push_str(&said);
+                }
+                return Err(ConnectError::Unreachable(msg));
+            }
             Err(_) => {
                 // The reference's own words, with the complete lines `su` printed before it
                 // went quiet; a prompt it is still waiting at has no line end and stays out.

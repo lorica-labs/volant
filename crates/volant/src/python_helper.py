@@ -22,6 +22,7 @@ import importlib.util
 import io
 import json
 import os
+import pickle
 import re
 import struct
 import sys
@@ -198,8 +199,8 @@ def scan_once():
 
 class ShippedAsItself(RuntimeError):
     """A module ansible-core builds with no zip: one in another language that reads its arguments
-    from the file named on its command line (`WANT_JSON`), or an `old` one, a script reading them
-    as `key=value` words from that file. It ships as itself: ansible-core's own `_execute_module`
+    from the file named on its command line (`WANT_JSON`), a compiled `binary` one that reads them
+    the same way, or an `old` one, a script reading them as `key=value` words from that file. It ships as itself: ansible-core's own `_execute_module`
     copies it and its arguments file to the host and runs it there."""
 
 
@@ -265,7 +266,7 @@ def build(name):
         raise RuntimeError("building module %r: %s" % (name, failure))
     # Measured on ansible-core 2.19.12: a `library/a.py` that only prints its JSON runs, copied
     # with its arguments file. A documentation stub runs the same way there and says nothing.
-    if built.module_style in ("non_native_want_json", "old"):
+    if built.module_style in ("non_native_want_json", "binary", "old"):
         raise ShippedAsItself(name)
     if built.module_style != "new":
         raise RuntimeError(
@@ -608,7 +609,11 @@ def resolve_one(name):
         # neither loader answers to it.
         action = action_loader.find_plugin_with_context(name)
         if action.resolved and action.plugin_resolved_name != "ansible.builtin.normal":
-            return {"action_plugin": action.resolved_fqcn, "with_module": False}
+            return {
+                "action_plugin": action.resolved_fqcn,
+                "with_module": False,
+                "raw_params": raw_params(action.resolved_fqcn),
+            }
         # A `runtime.yml` redirect into a collection nobody installed: the install hint names
         # the collection at the end of the chain, not the one the playbook wrote.
         last = module.redirect_list[-1] if module.redirect_list else name
@@ -633,7 +638,7 @@ def resolve_one(name):
             built = True
         except Exception:
             built = False
-        return {"action_plugin": handler, "with_module": built}
+        return {"action_plugin": handler, "with_module": built, "raw_params": raw_params(handler)}
     try:
         build(name)
     except ShippedAsItself:
@@ -672,6 +677,15 @@ def plugin_dirs(dirs, module_path=()):
     # ansible-playbook searches it.
     AnsibleCollectionConfig.playbook_paths = list(dirs)
     return {}
+
+
+def raw_params(plugin):
+    """Whether the action plugin keeps a string argument that is not `key=value` as its
+    `_raw_params`, as `Task._post_validate_args` reads `supports_raw_params`."""
+    from ansible.plugins.loader import action_loader
+
+    found = action_loader.get(plugin, class_only=True)
+    return bool(getattr(found, "supports_raw_params", False))
 
 
 def resolve_action(name):
@@ -822,8 +836,40 @@ CALL_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
 EXPRESSIONS = {
     "filter": "volant_args__[0] | %s(*volant_args__[1:], **volant_kwargs__)",
     "test": "volant_args__[0] is %s(*volant_args__[1:], **volant_kwargs__)",
-    "lookup": "lookup(volant_name__, *volant_args__, **volant_kwargs__)",
+    "lookup": "volant_marks__(lookup(volant_name__, *volant_args__, **volant_kwargs__))",
 }
+
+# What an undefined value travels as between the controller and this helper. Here it is
+# ansible-core's marker of one, so a lookup answers it, or reads it, as it does in the reference.
+UNDEFINED_MARK = "__volant_undefined__"
+
+
+def with_markers(value, sent):
+    """`value` from the controller, each mark of an undefined value made a marker, kept in
+    `sent`."""
+    if isinstance(value, dict):
+        if set(value) == {UNDEFINED_MARK}:
+            from ansible._internal._templating._jinja_common import UndefinedMarker
+
+            marker = UndefinedMarker(hint=value[UNDEFINED_MARK], _no_template_source=True)
+            sent.append(marker)
+            return marker
+        return {key: with_markers(item, sent) for key, item in value.items()}
+    if isinstance(value, list):
+        return [with_markers(item, sent) for item in value]
+    return value
+
+
+def without_markers(value, sent):
+    """A lookup's answer, each marker of `sent` in it made the mark the controller reads back as
+    undefined. A marker the plugin made itself stays, and fails the call as it always did."""
+    if any(value is marker for marker in sent):
+        return {UNDEFINED_MARK: value._undefined_message}
+    if isinstance(value, dict):
+        return {key: without_markers(item, sent) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [without_markers(item, sent) for item in value]
+    return value
 
 
 def plain(value):
@@ -1121,12 +1167,22 @@ def call(request):
                 if name not in lookup_loader:
                     return {"error": missing}
             return {"value": None}
+        kwargs, marks = request["kwargs"], None
+        if kind == "lookup":
+            from ansible._internal._templating._jinja_plugins import _DirectCall
+
+            sent = []
+            args, kwargs = with_markers(args, sent), with_markers(kwargs, sent)
+            # Called by Jinja as it is (`_DirectCall`): through the usual path, a marker given to
+            # a function is its answer, and the render would raise on it.
+            marks = _DirectCall.mark(lambda value: without_markers(value, sent))
         value = templar.evaluate_expression(
             trust_as_template(expression),
             local_variables={
                 "volant_args__": args,
-                "volant_kwargs__": request["kwargs"],
+                "volant_kwargs__": kwargs,
                 "volant_name__": name,
+                "volant_marks__": marks,
             },
         )
         return {"value": plain(value)}
@@ -1592,7 +1648,9 @@ def owned_connection(link, context, task, task_vars, templar):
     if task_vars.get("ansible_become") is not None:
         becomes = boolean(templar.template(task_vars["ansible_become"]))
     else:
-        becomes = task.become
+        # The controller settles the escalation of the link, a `become` written on the play or
+        # as a template included, and sends it on the play context: the task carries none of it.
+        becomes = task.become or context.become
     # A boolean, as `set_task_and_variable_override` leaves it: `network_cli` compares it with `^`.
     context.become = bool(becomes)
     become = None
@@ -1617,6 +1675,8 @@ def owned_connection(link, context, task, task_vars, templar):
     task_keys = task.dump_attrs()
     # The task's own `timeout` is not the connection's, and its `retries` are not either.
     task_keys["timeout"] = context.timeout
+    if context.become and not task_keys.get("become_user"):
+        task_keys["become_user"] = context.become_user
     if context.password:
         task_keys["password"] = context.password
     task_keys.pop("retries", None)
@@ -1927,6 +1987,18 @@ def run_action(ident, request):
             traceback = getattr(getattr(summary, "event", None), "formatted_traceback", None)
             if traceback:
                 result["exception"] = traceback
+    try:
+        # `WorkerProcess` pickles the result to send it back, and replaces one it cannot send.
+        pickle.dumps(result)
+    except Exception as unsent:
+        try:
+            raise AnsibleError("Task result omitted due to queue send failure.") from unsent
+        except AnsibleError as wrapped:
+            result = _error_utils.result_dict_from_exception(wrapped)
+        summary = result.pop("exception", None)
+        traceback = getattr(getattr(summary, "event", None), "formatted_traceback", None)
+        if traceback:
+            result["exception"] = traceback
     if isinstance(result, dict):
         captured_messages(result, warning_ctx)
     value = plain(result)

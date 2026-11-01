@@ -227,6 +227,57 @@ thread_local! {
     static HANDED: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
+thread_local! {
+    /// Set for the next expression this thread evaluates: see
+    /// [`super::Templar::render_omitting_undefined`].
+    static OMIT: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+impl super::Templar {
+    /// `render_value_tainted` of `raw`, the undefined values inside the list or mapping it renders
+    /// to left out, at any depth: what `first_found` does to its terms when a `with_first_found`
+    /// loop runs it (`_recurse_terms(terms, omit_undefined=True)`). A value that is undefined
+    /// itself still fails.
+    pub fn render_omitting_undefined<'a>(
+        &self,
+        raw: &serde_json::Value,
+        vars: impl Into<super::Vars<'a>>,
+    ) -> Result<(serde_json::Value, bool), TemplateError> {
+        OMIT.set(true);
+        let out = self.render_value_tainted(raw, vars);
+        OMIT.set(false);
+        out
+    }
+}
+
+/// Whether the expression that starts now leaves the undefined values of its result out. Asked
+/// once, by the outermost one: a variable it reads on the way renders as it always does.
+pub(super) fn omitting() -> bool {
+    OMIT.replace(false)
+}
+
+/// `value` without the undefined values inside it, at any depth.
+pub(super) fn without_undefined(value: &minijinja::Value) -> minijinja::Value {
+    let kept = |item: &minijinja::Value| !item.is_undefined();
+    let Ok(items) = value.try_iter() else {
+        return value.clone();
+    };
+    match value.kind() {
+        ValueKind::Seq | ValueKind::Iterable => {
+            minijinja::Value::from_iter(items.filter(kept).map(|i| without_undefined(&i)))
+        }
+        ValueKind::Map => minijinja::Value::from_object(
+            items
+                .filter_map(|key| {
+                    let item = value.get_item(&key).ok().filter(kept)?;
+                    Some((key, without_undefined(&item)))
+                })
+                .collect::<indexmap::IndexMap<_, _>>(),
+        ),
+        _ => value.clone(),
+    }
+}
+
 /// Forgets what an `undef()` said when its value was not the one used, a `default` that did not
 /// apply, so that a later failure is not worded by it.
 pub(super) fn forget_handed() {

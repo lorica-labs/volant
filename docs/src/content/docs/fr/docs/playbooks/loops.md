@@ -1,5 +1,5 @@
 ---
-sourceHash: 480ffa167c92
+sourceHash: a518b6925ec5
 title: Boucles et nouvelles tentatives
 description: loop, with_items et loop_control, et comment until, retries et delay répètent une tâche.
 ---
@@ -70,7 +70,7 @@ Une boucle rend les arguments, le `when`, les mots-clés et le libellé d'un él
 
 Tous deux bouclent sur un lookup, comme toute forme `with_<name>` : `with_first_found` parcourt ses termes jusqu'à ce que l'un nomme un fichier qui existe, et `with_fileglob` collecte toutes les correspondances d'un motif glob. `with_first_found` cherche aussi dans un sous-répertoire de chaque entrée de recherche avant l'entrée elle-même : `templates/` quand l'action de la tâche nomme `template`, `vars/` quand elle nomme `include_vars`, `files/` sinon, soit le répertoire qu'une tâche `template:` ou `include_vars:` ordinaire chercherait d'elle-même.
 
-Ne rien trouver fait échouer la tâche avec la phrase propre à ansible-core, `No file was found when using first_found.`, sauf si le terme est un mapping avec `skip: true`, auquel cas la boucle s'exécute à vide. Un terme rendu non défini est écarté au lieu de faire échouer tout le lookup, ce qui permet à un rôle de lire un fact qu'aucun hôte n'a encore défini et d'atteindre quand même son `when`. Un chemin trouvé par l'un ou l'autre lookup qui contient encore un marqueur de modèle (`{{`, `{%` ou `{#`) est refusé par son nom au lieu d'être rendu une seconde fois.
+Ne rien trouver fait échouer la tâche avec la phrase propre à ansible-core, `No file was found when using first_found.`, sauf si le terme est un mapping avec `skip: true`, auquel cas la boucle s'exécute à vide. Un terme rendu non défini est écarté au lieu de faire échouer tout le lookup, comme une valeur non définie dans la liste que donne une valeur de boucle écrite en une seule chaîne, ce qui permet à un rôle de lire un fact qu'aucun hôte n'a encore défini et d'atteindre quand même son `when`. Un chemin trouvé par l'un ou l'autre lookup qui contient encore un marqueur de modèle (`{{`, `{%` ou `{#`) est refusé par son nom au lieu d'être rendu une seconde fois.
 
 Un chemin qu'un lookup a trouvé sur le contrôleur est le contenu propre du playbook ; un élément construit en partie à partir d'une valeur d'hôte, comme un terme qui lit `ansible_distribution`, est lié comme une donnée, tout comme un élément issu d'un `loop:` sur une valeur enregistrée.
 
@@ -105,5 +105,4 @@ Une tâche en boucle réessaie chaque élément séparément et termine les tent
 ## Différences avec Ansible
 
 - Une expression `until` qui ne peut pas être évaluée est signalée avec le préfixe d'ansible-core et le message propre à Volant, de la même façon qu'un `when` en échec.
-- `FAILED - RETRYING` pour une tâche dans un rôle affiche le nom propre de la tâche plutôt que `role : name`.
 - Un `loop_control.label` qui échoue pour une raison autre qu'une variable non définie, comme un lookup qui lève une erreur, fait échouer la tâche avant l'exécution de tout élément. ansible-core termine la tâche après l'exécution de cet élément.

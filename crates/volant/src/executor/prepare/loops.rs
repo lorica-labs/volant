@@ -145,10 +145,17 @@ pub(super) fn with_lookup_items(
 ) -> Result<(Vec<Value>, bool), TemplateError> {
     let mut tainted = false;
     // A term written as one string is resolved before the lookup sees it (`resolve_to_container`
-    // in `_get_loop_items`), so an undefined variable there is an error even for `first_found`.
+    // in `_get_loop_items`), so an undefined variable there is an error even for `first_found`;
+    // one inside the list it resolves to is left out.
     let omit_undefined = lookup == "first_found" && !raw.is_string();
     crate::profile::count(crate::profile::Counter::RenderLoop, 1);
-    let terms = render_terms(templar, raw, vars, omit_undefined, &mut tainted)?;
+    let terms = if lookup == "first_found" && raw.is_string() {
+        let (terms, from_host) = templar.render_omitting_undefined(raw, vars)?;
+        tainted |= from_host;
+        Some(terms)
+    } else {
+        render_terms(templar, raw, vars, omit_undefined, &mut tainted)?
+    };
     let terms = match terms {
         Some(Value::Array(terms)) => terms,
         Some(term) => vec![term],

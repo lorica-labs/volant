@@ -46,6 +46,7 @@ fn escalation(password: Option<&str>) -> Escalation {
         exe: Vec::new(),
         flags: None,
         prompt_l10n: Vec::new(),
+        chdir: None,
     }
 }
 
@@ -129,6 +130,15 @@ fn the_sudo_words_follow_the_probed_form() {
             "a user name that would otherwise break out of the remote shell word is quoted"
         );
         assert!(sudo_prefix(None).is_empty());
+        // An empty `become_user` leaves `-u` out, so `sudo` runs as root.
+        let nobody = Escalation {
+            user: String::new(),
+            ..escalation(None)
+        };
+        assert_eq!(
+            sudo_prefix(Some((&nobody, SudoForm::NoPrompt))),
+            "'sudo' '-H' '-n' -- "
+        );
     }
 }
 
@@ -148,6 +158,7 @@ fn become_exe_and_become_flags_shape_the_sudo_words(#[case] form: SudoForm, #[ca
         exe: vec!["/usr/bin/sudo".into()],
         flags: Some(vec!["-H".into(), "-S".into(), "-n".into()]),
         prompt_l10n: Vec::new(),
+        chdir: None,
         ..escalation(Some("pw"))
     };
     assert_eq!(sudo_prefix(Some((&e, form))), want);
@@ -181,6 +192,7 @@ fn the_su_command_is_the_references_with_a_raw_terminal() {
         exe: vec!["/bin/su".into()],
         flags: Some(vec!["-".into()]),
         prompt_l10n: Vec::new(),
+        chdir: None,
         ..e
     };
     assert!(
@@ -284,6 +296,34 @@ async fn su_prompt_l10n_replaces_the_built_in_prompts(
     .await;
     assert_eq!(got.is_ok(), answered, "{got:?}");
     su.abort();
+}
+
+/// Over a local connection a `su` whose prompt goes unanswered times out in that connection's
+/// own words.
+#[tokio::test]
+async fn a_local_su_that_never_prompts_times_out_as_the_local_connection_says() {
+    let (mut ours, theirs) = tokio::io::duplex(1024);
+    let _su = tokio::spawn(fake_su(FakeSu::Accepts, theirs, "pw"));
+    let (mut read, mut write) = tokio::io::split(&mut ours);
+    let got = su_exchange(
+        &mut read,
+        &mut write,
+        None,
+        &[],
+        BECOME_SUCCESS,
+        Duration::from_millis(300),
+        true,
+    )
+    .await;
+    let Err(ConnectError::Unreachable(msg)) = got else {
+        panic!("{got:?}");
+    };
+    assert!(
+        msg.starts_with(
+            "Task failed: Timed out waiting for become success or become password prompt."
+        ),
+        "{msg}"
+    );
 }
 
 /// A prompt is answered once, the command's first byte is left on the stream, and every way
@@ -628,6 +668,15 @@ fn an_escalated_bootstrap_command_is_expanded_by_a_shell_running_as_that_user() 
     assert_eq!(
         wrapped,
         r#"'sudo' '-H' '-n' -u 'deploy' -- sh -c 'd=~/'\''.ansible/tmp'\''; mkdir -p "$d"'"#
+    );
+    // `sudo_chdir` is where the inner shell starts.
+    let moved = Escalation {
+        chdir: Some("/srv".into()),
+        ..escalation(None)
+    };
+    assert_eq!(
+        escalated_command(Some((&moved, SudoForm::NoPrompt)), "pwd"),
+        r"'sudo' '-H' '-n' -u 'deploy' -- sh -c 'cd '\''/srv'\'' && pwd'"
     );
     // Run the wrapping against a real `sh`, with the `sudo` words dropped: the failure this
     // guards against is a quoting one, and what has to hold is that the tilde reaches the

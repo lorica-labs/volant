@@ -70,84 +70,6 @@ pub(super) fn escalation(
     Ok((flag, user))
 }
 
-/// The module an `action:` or `local_action:` value names and the value that module reads its
-/// arguments from, as if it had been written under the module's own key.
-///
-/// Measured on ansible-core 2.19.12: `action: command hostname` and `action: {module: command,
-/// cmd: hostname}` both run, the mapping with a deprecation warning, and an `args:` inside the
-/// mapping is merged into the arguments beside it. A first word with a `=` in it is a
-/// `module=command` spelling the reference cannot resolve, which fails the task rather than the
-/// load, and a mapping with no `module:` has "no module/action".
-/// Where the module of an `action:` string ends: at the first space outside a template, as
-/// ansible-core's `split_args` joins a template's pieces back together. Measured on 2.19.12,
-/// `action: "{{ prefix }}file path=x"` runs `file` when `prefix` is empty.
-fn module_word_end(text: &str) -> usize {
-    let mut depth = 0usize;
-    let mut chars = text.char_indices().peekable();
-    while let Some((at, c)) = chars.next() {
-        match (c, chars.peek().map(|&(_, next)| next)) {
-            ('{', Some('{' | '%')) => {
-                depth += 1;
-                chars.next();
-            }
-            ('}' | '%', Some('}')) if depth > 0 => {
-                depth -= 1;
-                chars.next();
-            }
-            (c, _) if depth == 0 && c.is_whitespace() => return at,
-            _ => {}
-        }
-    }
-    text.len()
-}
-
-pub(super) fn action_statement<'a>(node: &Yaml<'a>) -> anyhow::Result<(String, Yaml<'a>)> {
-    match node {
-        Yaml::Value(Scalar::String(text)) => {
-            let text = text.trim();
-            let end = module_word_end(text);
-            let (name, rest) = (&text[..end], text[end..].trim_start());
-            if name.is_empty() {
-                bail!("no module/action detected in task.");
-            }
-            let args = if rest.is_empty() {
-                Yaml::Value(Scalar::Null)
-            } else {
-                Yaml::Value(Scalar::String(rest.to_string().into()))
-            };
-            Ok((name.to_string(), args))
-        }
-        Yaml::Mapping(entries) => {
-            warn_action_mapping(node);
-            let mut name = None;
-            let mut args = saphyr::Mapping::new();
-            for (key, value) in entries {
-                match (key.as_str(), value) {
-                    (Some("module"), Yaml::Value(Scalar::String(module))) => {
-                        name = Some(module.trim().to_string());
-                    }
-                    (Some("args"), Yaml::Mapping(inner)) => {
-                        for (k, v) in inner {
-                            args.insert(k.clone(), v.clone());
-                        }
-                    }
-                    // A template is an argument splat, which the task reads for itself.
-                    (Some("args"), Yaml::Value(Scalar::String(text)))
-                        if possibly_all_template(text) => {}
-                    _ => {
-                        args.insert(key.clone(), value.clone());
-                    }
-                }
-            }
-            match name.filter(|name| !name.is_empty()) {
-                Some(name) => Ok((name, Yaml::Mapping(args))),
-                None => bail!("no module/action detected in task."),
-            }
-        }
-        _ => bail!("no module/action detected in task."),
-    }
-}
-
 /// Whether a task's module word is one the reference cannot resolve to an action: it has a `=`
 /// in it. The task keeps the word and fails when it is reached.
 pub(crate) fn names_no_action(module: &str) -> bool {
@@ -243,7 +165,7 @@ pub(crate) fn deprecate_conditional_template(origin: Option<&super::Origin>) {
 }
 
 /// The deprecation the reference prints, on stderr, for a mapping given as an action.
-fn warn_action_mapping(node: &Yaml) {
+pub(super) fn warn_action_mapping(node: &Yaml) {
     let origin = value_origin(node)
         .map(|origin| format!("{}\n\n", crate::render::source_context(&origin)))
         .unwrap_or_default();
@@ -450,6 +372,7 @@ const BUILTIN_RAW_PARAM_MODULES: [&str; 9] = [
 pub(crate) fn stray_raw_params(task: &PlayTask) -> Option<&str> {
     let takes_it = if crate::python::is_resolved_name(&task.module) {
         FREE_FORM_COLLECTION_MODULES.contains(&task.module.as_str())
+            || crate::action_plugins::takes_raw_params(&task.module)
     } else {
         is_free_form(&task.module) || BUILTIN_RAW_PARAM_MODULES.contains(&short_name(&task.module))
     };

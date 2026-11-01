@@ -380,6 +380,7 @@ pub(crate) fn resolved_from(asked: &str, value: &Value) -> anyhow::Result<Resolv
         Resolved::ActionPlugin {
             fqcn,
             with_module: value.get("with_module") == Some(&Value::Bool(true)),
+            raw_params: value.get("raw_params") == Some(&Value::Bool(true)),
         }
     } else if let Some(reason) = text(value, "unusable") {
         Resolved::Unusable { reason }
@@ -401,9 +402,15 @@ pub(crate) fn resolved_json(resolved: &Resolved) -> Value {
             "module": fqcn,
             "collection": collection.as_ref().map(|(name, version)| [name, version]),
         }),
-        Resolved::ActionPlugin { fqcn, with_module } => {
-            serde_json::json!({ "action_plugin": fqcn, "with_module": with_module })
-        }
+        Resolved::ActionPlugin {
+            fqcn,
+            with_module,
+            raw_params,
+        } => serde_json::json!({
+            "action_plugin": fqcn,
+            "with_module": with_module,
+            "raw_params": raw_params,
+        }),
         Resolved::Unusable { reason } => serde_json::json!({ "unusable": reason }),
         Resolved::Missing { collection } => serde_json::json!({ "missing": collection }),
     }

@@ -1,5 +1,5 @@
 ---
-sourceHash: 864ee37f7fcb
+sourceHash: 31bbd0638724
 title: Conexiones y become
 description: Cómo llega Volant a un host, las variables de host y los ajustes de ansible.cfg que lee, y cómo funciona become mediante sudo y su.
 ---
@@ -200,7 +200,7 @@ Todo lo demás de la ejecución no cambia: bucles, `when`, `register`, `changed_
 - Las líneas que el plugin imprime con `-vvv`, como `<host> ESTABLISH ... CONNECTION`, se imprimen bajo la tarea con la misma verbosidad.
 - `ansible_password`, las demás variables secretas del plugin y la contraseña de become se escriben `********` en cada línea y cada resultado.
 - Nunca se ejecutan a la vez más procesos ayudantes de los que permite `forks`.
-- `become` usa el método de escalada de la tarea, `sudo` o `su`.
+- `become` usa el método de escalada de la tarea, `sudo` o `su`, lo pida la tarea, su bloque o su play. Escrito como plantilla, por ejemplo `become: "{{ item }}"`, se renderiza para cada elemento del bucle.
 
 Cada tarea paga el arranque de la conexión del plugin, como en `ansible-playbook`, así que esta vía es más lenta por tarea que la del agente.
 
@@ -247,7 +247,8 @@ Volant lee estas variables por host, desde el inventario o desde cualquier otra 
 | `ansible_become_password`, `ansible_become_pass`, `ansible_sudo_pass`, `ansible_su_pass` | Contraseña del escalado |
 | `ansible_become_exe`, `ansible_sudo_exe`, `ansible_su_exe` | El programa de escalado |
 | `ansible_become_flags`, `ansible_sudo_flags`, `ansible_su_flags` | Sus opciones |
-| `ansible_su_prompt_l10n` | Una lista de prompts que `su` puede imprimir. Sustituye a los integrados. |
+| `ansible_su_prompt_l10n` | Una lista de prompts que `su` puede imprimir, o una cadena con ellos separados por comas. Sustituye a los integrados. |
+| `ansible_sudo_chdir` | El directorio desde el que se inicia `sudo`. Un directorio que no existe hace fallar la tarea. |
 
 Cuando un host define una variable y un alias suyo, se aplica el que Ansible deja ganar. La tabla los enumera del más fuerte al más débil, con la palabra clave que define lo mismo:
 
@@ -372,7 +373,7 @@ Cuando el escalado falla, por falta de contraseña, por una contraseña incorrec
 
 `su` no tiene ninguna opción para leer una contraseña sin terminal, así que Volant responde a su prompt. La contraseña se escribe una sola vez en el prompt y nunca aparece en una línea de comandos, en un log ni en la salida de `-vvv`. Una contraseña incorrecta hace fallar la tarea con `Incorrect su password`. Un prompt que nunca llega termina la tarea con `Timeout (12s) waiting for privilege escalation prompt`, como en ansible-core.
 
-En una conexión `local`, `su` se ejecuta en un terminal propio. Una contraseña incorrecta hace fallar la tarea con `Premature end of stream waiting for become success.` y lo que imprimió `su`, como hace ansible-core en ese caso. La espera del prompt es siempre de 12 segundos en una conexión local, diga lo que diga `-T`.
+En una conexión `local`, `su` se ejecuta en un terminal propio. Una contraseña incorrecta hace fallar la tarea con `Premature end of stream waiting for become success.` y lo que imprimió `su`, como hace ansible-core en ese caso. La espera del prompt es siempre de 12 segundos en una conexión local, diga lo que diga `-T`. Si el prompt no llega nunca, el host queda inalcanzable con `Timed out waiting for become success or become password prompt.`
 
 ## Todavía no disponible
 

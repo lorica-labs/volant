@@ -1,5 +1,5 @@
 ---
-sourceHash: 658a36da3f86
+sourceHash: 796d9c2d62e0
 title: Action-Plugins
 description: Wie Volant die Module ausführt, die ansible-core über ein Action-Plugin auf dem Controller ausführt, in Rust oder auf der Python-Bridge.
 ---
@@ -173,7 +173,6 @@ Das Plugin liest Schlüssel und Benutzer der Verbindung (die Hostvariable, `--pr
 
 ### Bekannte Lücken
 
-- `wait_for_connection` auf einem Host, der von der ersten Verbindung an down ist, endet mit `UNREACHABLE` für ein Plugin-Element, das nie eine Verbindung bekommen hat; ansible-core meldet `failed` mit `timed out waiting for ping module test`.
 - Ein delegiertes `add_host` oder `group_by` gilt für den eigenen Host des Tasks.
 
 ## Eine Quelldatei, die ein verwalteter Host benannt hat

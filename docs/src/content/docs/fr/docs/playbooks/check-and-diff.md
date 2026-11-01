@@ -1,5 +1,5 @@
 ---
-sourceHash: 74edd923ede7
+sourceHash: 4a0054ff06cb
 title: Mode check, diff et listes
 description: Ce que font --check et --diff, quels modules y répondent, comment les tags sélectionnent les tâches, et les commandes qui décrivent une exécution sans la démarrer.
 ---
@@ -39,10 +39,7 @@ Un diff ne s'affiche que pour une tâche qui a changé quelque chose. `copy` et 
 
 ## Limites connues
 
-- `--step` ne demande pas confirmation avant une étape `meta` ou `flush_handlers`. Cela n'a pas été comparé avec ansible-core.
-- `-vv` n'affiche pas les lignes de notification des handlers.
 - `-vvvv` liste les options qu'ansible-core liste, dans son ordre, et les lignes de mise en place des plugins. Ses lignes ssh montrent les commandes que ce moteur exécute par `ssh` (la sonde, l'envoi et le lien vers l'agent), pas l'envoi `sftp` d'ansible-core, et une connexion locale ou un fichier de module n'affiche aucune ligne.
-- Une tâche avec une clé manquante sur un résultat sauté donne un message différent de celui d'ansible-core.
 
 La [page de parité](/fr/docs/reference/parity/) liste chaque option et chaque mot-clé avec son statut.
 

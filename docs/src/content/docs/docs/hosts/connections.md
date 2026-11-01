@@ -199,7 +199,7 @@ Everything else about the run is unchanged: loops, `when`, `register`, `changed_
 - The lines the plugin prints at `-vvv`, such as `<host> ESTABLISH ... CONNECTION`, are printed under the task at the same verbosity.
 - `ansible_password`, the plugin's other secret variables and the become password are written `********` in every line and every result.
 - No more helper processes run at once than `forks` allows.
-- `become` takes the escalation method of the task, `sudo` or `su`.
+- `become` takes the escalation method of the task, `sudo` or `su`, whether the task, its block or its play asks for it. Written as a template such as `become: "{{ item }}"`, it is rendered for each loop item.
 
 Each task pays for starting the plugin's connection, as `ansible-playbook` does, so this route is slower per task than the agent's.
 
@@ -246,7 +246,8 @@ Volant reads these per host, from the inventory or from any other variable sourc
 | `ansible_become_password`, `ansible_become_pass`, `ansible_sudo_pass`, `ansible_su_pass` | Escalation password |
 | `ansible_become_exe`, `ansible_sudo_exe`, `ansible_su_exe` | The escalation program |
 | `ansible_become_flags`, `ansible_sudo_flags`, `ansible_su_flags` | Its flags |
-| `ansible_su_prompt_l10n` | A list of prompts that `su` may print. It replaces the built-in ones. |
+| `ansible_su_prompt_l10n` | A list of prompts that `su` may print, or a string of them separated by commas. It replaces the built-in ones. |
+| `ansible_sudo_chdir` | The directory `sudo` is started from. A directory that does not exist fails the task. |
 
 When a host sets a variable and an alias of it, the one Ansible lets win applies. The table lists them from strongest to weakest, with the keyword that sets the same thing:
 
@@ -371,7 +372,7 @@ When escalation fails, for a missing password, a wrong one or a `sudoers` rule t
 
 `su` has no flag to read a password without a terminal, so Volant answers its prompt instead. The password is written once to the prompt, never put in a command line, a log or `-vvv` output. A wrong password fails the task with `Incorrect su password`. A prompt that never comes ends the task with `Timeout (12s) waiting for privilege escalation prompt`, as in ansible-core.
 
-Over a `local` connection `su` runs on a terminal of its own. A wrong password fails the task with `Premature end of stream waiting for become success.` and what `su` printed, as ansible-core does there. The wait for the prompt is always 12 seconds on a local connection, whatever `-T` says.
+Over a `local` connection `su` runs on a terminal of its own. A wrong password fails the task with `Premature end of stream waiting for become success.` and what `su` printed, as ansible-core does there. The wait for the prompt is always 12 seconds on a local connection, whatever `-T` says. A prompt that never comes makes the host unreachable with `Timed out waiting for become success or become password prompt.`
 
 ## Not there yet
 

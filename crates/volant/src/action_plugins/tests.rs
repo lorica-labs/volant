@@ -50,6 +50,27 @@ fn the_builtin_prefixes_name_the_same_modules() {
     assert_eq!(kind("community.general.reboot"), None);
 }
 
+/// A word that is not `key=value` is left over for a plugin that does not take raw parameters,
+/// and is its `_raw_params` for one that does.
+#[test]
+fn a_plugin_that_takes_raw_params_keeps_its_words() {
+    let task = |module: &str| {
+        let mut task = crate::playbook::PlayTask::empty();
+        task.module = module.to_string();
+        task.args.insert("_raw_params".into(), json!("junk"));
+        task
+    };
+    note_raw_params("ns.coll.takes_raw");
+    assert_eq!(
+        crate::playbook::stray_raw_params(&task("ns.coll.takes_raw")),
+        None
+    );
+    assert_eq!(
+        crate::playbook::stray_raw_params(&task("ns.coll.no_raw")),
+        Some("junk")
+    );
+}
+
 /// Every plugin the modules page lists is one this release dispatches.
 #[test]
 fn every_listed_plugin_has_a_kind() {
@@ -150,6 +171,7 @@ fn the_link_facts_follow_the_transport(
         exe: Vec::new(),
         flags: None,
         prompt_l10n: Vec::new(),
+        chdir: None,
     });
     let delegated = delegate.map(|name| (name.to_string(), HostVars::default()));
     let facts = LinkFacts::of(&transport, escalation.as_ref(), delegated.as_ref());

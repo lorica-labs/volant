@@ -843,7 +843,7 @@ type Program<'a> = (BecomeMethod, Vec<&'a str>, Option<Vec<&'a str>>);
 #[case::sudo_own_vars(json!({"ansible_sudo_exe": "/opt/sudo", "ansible_sudo_flags": "-E"}), (None, None, None), Ok((BecomeMethod::Sudo, vec!["/opt/sudo"], Some(vec!["-E"]))))]
 #[case::own_var_over_become_var(json!({"ansible_become_exe": "/a", "ansible_sudo_exe": "/b", "ansible_become_flags": "-E", "ansible_sudo_flags": "-P"}), (None, None, None), Ok((BecomeMethod::Sudo, vec!["/b"], Some(vec!["-P"]))))]
 #[case::su_own_vars(json!({"ansible_su_exe": "/opt/su", "ansible_sudo_exe": "/ignored"}), (Some("su"), None, None), Ok((BecomeMethod::Su, vec!["/opt/su"], None)))]
-#[case::bad_l10n(json!({"ansible_su_prompt_l10n": "Passwort"}), (Some("su"), None, None), Err("must be a list of strings"))]
+#[case::bad_l10n(json!({"ansible_su_prompt_l10n": {"de": "Passwort"}}), (Some("su"), None, None), Err("must be a list of strings"))]
 #[case::templated(json!({"tool": "/usr/bin/sudo -E"}), (None, Some("{{ tool }}"), None), Ok((BecomeMethod::Sudo, vec!["/usr/bin/sudo", "-E"], None)))]
 #[case::no_flags(json!({}), (None, None, Some("")), Ok((BecomeMethod::Sudo, vec![], Some(vec![]))))]
 #[case::unbalanced(json!({}), (None, None, Some("-H 'x")), Err("'become_flags' has unbalanced quotes"))]
@@ -915,6 +915,7 @@ fn the_become_password_is_redacted_in_debug_output() {
         exe: Vec::new(),
         flags: None,
         prompt_l10n: Vec::new(),
+        chdir: None,
     };
     assert!(!format!("{escalation:?}").contains("s3cret"));
     let mut d = defaults();

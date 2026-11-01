@@ -1,5 +1,5 @@
 ---
-sourceHash: "27377717e493"
+sourceHash: 72e07b4420ea
 title: Läuft mein Playbook?
 description: Prüfen Sie ein bestehendes Ansible-Projekt in wenigen Sekunden gegen dieses Release, ohne einen Host anzufassen.
 ---
@@ -81,7 +81,7 @@ Die Vorabprüfung bricht den Lauf vor der ersten Verbindung ab, vor jedem Banner
 
 | Was | Form der Meldung | Exit-Code |
 |---|---|---|
-| Eine `strategy` außer `linear`, `free`, `host_pinned` und `debug` | `strategy 'x' is not supported yet` | 4 |
+| Eine `strategy` außer `linear`, `free`, `host_pinned` und `debug`, aus dem Play oder aus `ANSIBLE_STRATEGY` | die Deprecation-Warnung von ansible-core für Strategie-Plugins außerhalb von `ansible.builtin`, dann `strategy 'x' is not supported yet` | 4 |
 | `until`, `retries` oder `delay` bei `include_tasks` oder `include_role` | `keyword 'until' is not supported yet on 'include_tasks'` | 4 |
 | Ein `pause` mit `prompt` und `seconds` oder `minutes`, wenn die Standardeingabe ein Terminal ist | `pause cannot wait for a prompt and a duration together on a terminal ...` | 4 |
 | Ein Modulargument, das ansible-core hat und das dieses Release nicht umsetzt | `argument 'x' is not supported yet on 'module'`, mit ` with 'v'`, wenn nur dieser Wert abgelehnt wird | 4 |

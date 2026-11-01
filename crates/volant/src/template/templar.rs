@@ -15,7 +15,7 @@ use crate::bridge::{Bridge, PluginKind};
 use super::bridged;
 use super::context::{Vars, begin, context_of, deferred, is_literal, take_failure};
 use super::env::{environment, holds_undefined, truthy, type_name};
-use super::missing::named;
+use super::missing::{named, omitting, without_undefined};
 use super::vm::{
     TemplateReads, convert_error, eval_expr, keep_literal, single_expression, template_reads,
 };
@@ -412,6 +412,7 @@ impl Templar {
     }
 
     fn evaluate_known(&self, expr: &str, ctx: &minijinja::Value) -> Result<Value, TemplateError> {
+        let omit = omitting();
         let value = eval_expr(self, expr, ctx).map_err(|e| {
             super::jinja_syntax(&e, expr).map_or_else(|| convert_error(e), TemplateError)
         });
@@ -420,7 +421,10 @@ impl Templar {
         if let Some(error) = take_failure(ctx) {
             return Err(error);
         }
-        let value = value.map_err(|e| super::order::tagged(named(e, expr, ctx), expr, ctx))?;
+        let mut value = value.map_err(|e| super::order::tagged(named(e, expr, ctx), expr, ctx))?;
+        if omit && !value.is_undefined() {
+            value = without_undefined(&value);
+        }
         // Strict mode only raises on operations that force an undefined value (printing,
         // comparing, ...); an attribute lookup that never gets used stays a lazy Undefined, alone
         // or inside a list or mapping, that serde_json would otherwise turn into `null`. Force

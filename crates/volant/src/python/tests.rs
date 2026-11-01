@@ -81,7 +81,8 @@ fn the_helper_resolution_is_read_name_by_name() {
                 "a.b.act".to_string(),
                 Resolved::ActionPlugin {
                     fqcn: "a.b.act".into(),
-                    with_module: false
+                    with_module: false,
+                    raw_params: false,
                 }
             ),
             (
@@ -317,7 +318,8 @@ fn a_collection_the_controller_cannot_run_is_answered_name_by_name() {
         // The plugin `runtime.yml` routes the module to runs, and the module builds.
         Resolved::ActionPlugin {
             fqcn: "volanttest.coll.act".into(),
-            with_module: true
+            with_module: true,
+            raw_params: false,
         }
     );
     assert_eq!(
@@ -325,7 +327,8 @@ fn a_collection_the_controller_cannot_run_is_answered_name_by_name() {
         // Its documentation-only `.py` is an `old` module, which `normal` ships as it is.
         Resolved::ActionPlugin {
             fqcn: "ansible.builtin.normal".into(),
-            with_module: false
+            with_module: false,
+            raw_params: false,
         }
     );
     assert_eq!(
@@ -464,7 +467,8 @@ fn the_controller_resolves_what_its_collections_hold() {
         resolved["ansible.posix.synchronize"],
         Resolved::ActionPlugin {
             fqcn: "ansible.posix.synchronize".into(),
-            with_module: true
+            with_module: true,
+            raw_params: false,
         }
     );
     assert_eq!(
@@ -1156,6 +1160,7 @@ fn a_cache_hit_still_knows_a_collection_action_plugin() {
             Resolved::ActionPlugin {
                 fqcn: "ns.c.sync".into(),
                 with_module: false,
+                raw_params: false,
             },
         )]),
     };

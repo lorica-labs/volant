@@ -297,6 +297,7 @@ impl Driver<'_> {
     /// Returns the length of the step list when the play is over for this host, which is what the
     /// driver's own bound reads as "done", and `None` when the run was interrupted on the way.
     pub(super) async fn advance(&mut self, pos: usize) -> Option<usize> {
+        self.passed(pos);
         let compiled = self.plan.steps();
         // An `any_errors_fatal` step is finished for this host only when it is finished for the
         // batch. A host that failed there makes this one fail at the same step: it does not step

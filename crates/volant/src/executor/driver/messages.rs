@@ -129,7 +129,6 @@ impl Driver<'_> {
 
     /// Tells the coordinator this host is done with the step at `index`.
     pub(super) async fn task_done(&self, index: usize) {
-        self.passed(index);
         let _ = self
             .tx
             .send(Event::TaskDone {

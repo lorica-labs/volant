@@ -33,7 +33,6 @@ module_defaults                #1341
 order                          #1340
 protomatter                    #1282
 remote_tmp                     #1336
-result_pickle_error            #1284
 roles_arg_spec                 #1284
 set_fact                       #1282
 shell                          #1336

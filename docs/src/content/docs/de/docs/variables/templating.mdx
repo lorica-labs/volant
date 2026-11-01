@@ -1,5 +1,5 @@
 ---
-sourceHash: 1d836c016a17
+sourceHash: 6874b1c1e49e
 title: Templating
 description: Jinja2 auf dem Controller, der strikte Modus, Bedingungen, die Filter, Tests und Lookups von Volant und wie Template-Dateien gerendert werden.
 ---
@@ -137,6 +137,8 @@ Es nimmt die Optionen, die das Modul `template` liest:
 | `output_encoding` | `utf-8` | Die Kodierung der geschriebenen Datei. Nur bei `template`. |
 
 `lookup('template')` nimmt die vier Trennzeichen für Variablen und Kommentare sowie `trim_blocks` und sonst nichts.
+
+Eine Vorlage aus einem einzigen Knoten, einem `{{ }}` ohne etwas darum, gibt `lookup('template')` den Wert dieses Ausdrucks mit seinem Typ, wie in ansible-core: `{{ {'a': 1} }}` ergibt ein Mapping. Ein Makro, dessen Rumpf ein einziger Knoten ist, antwortet ebenso mit dessen Wert.
 
 Ein eigenes Trennzeichen ersetzt das Standardzeichen: Mit `variable_start_string: '[['` ist ein `{{` in der Datei einfacher Text. Die drei Startstrings müssen sich voneinander unterscheiden. Ein Text, der keinen der drei Startstrings enthält, ist kein Template und wird unverändert geschrieben, Zeilenenden eingeschlossen, was `newline_sequence` auch sagt.
 

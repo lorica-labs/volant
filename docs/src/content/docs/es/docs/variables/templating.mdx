@@ -1,5 +1,5 @@
 ---
-sourceHash: 1d836c016a17
+sourceHash: 6874b1c1e49e
 title: Plantillas
 description: Jinja2 en el controlador, el modo estricto, las condiciones, los filtros, tests y lookups que ofrece Volant, y cómo se renderizan los archivos de plantilla.
 ---
@@ -137,6 +137,8 @@ Acepta las opciones que lee el módulo `template`:
 | `output_encoding` | `utf-8` | La codificación del archivo escrito. Solo `template`. |
 
 `lookup('template')` acepta los cuatro delimitadores de variable y de comentario y `trim_blocks`, y nada más.
+
+Una plantilla de un solo nodo, un `{{ }}` sin nada alrededor, da a `lookup('template')` el valor de esa expresión con su tipo, como en ansible-core: `{{ {'a': 1} }}` da un mapa. Una macro cuyo cuerpo es un solo nodo responde su valor de la misma forma.
 
 Un delimitador personalizado reemplaza al predeterminado: con `variable_start_string: '[['`, un `{{` del archivo es texto plano. Las tres cadenas de inicio deben ser distintas entre sí. Un texto que no contiene ninguna de las tres cadenas de inicio no es una plantilla, y se escribe tal cual, finales de línea incluidos, diga lo que diga `newline_sequence`.
 

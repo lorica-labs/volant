@@ -517,7 +517,7 @@ fn a_template_lookup_reads_a_chained_variable_resolved() {
     map.insert("b".into(), json!(1));
     map.insert("via".into(), json!("{{ lookup('template', 'chain.j2') }}"));
     let (resolved, untrusted) = t.resolve_vars_tainted(&map);
-    assert_eq!(resolved["via"], json!("1"));
+    assert_eq!(resolved["via"], json!(1));
     assert!(untrusted.contains("via"), "{untrusted:?}");
 
     let from_host = BTreeSet::from(["a".to_string()]);
@@ -556,7 +556,7 @@ fn a_name_that_cannot_be_resolved_fails_only_when_it_is_read() {
     let r = |name: &str| t.render(&format!("{{{{ lookup('template', '{name}') }}}}"), &map);
     assert_eq!(r("branch.j2").unwrap(), json!("ok"));
     assert_eq!(r("default.j2").unwrap(), json!("none"));
-    assert_eq!(r("defined.j2").unwrap(), json!("False"));
+    assert_eq!(r("defined.j2").unwrap(), json!(false));
     let err = r("read.j2").unwrap_err();
     assert!(err.is_undefined(), "{err}");
 }
@@ -667,5 +667,27 @@ fn a_varnames_pattern_python_refuses_says_why_as_python() {
         err.0.contains("nothing to repeat at position 0"),
         "{}",
         err.0
+    );
+}
+
+/// A macro whose body is one node answers that node's value, and so does a template lookup whose
+/// template is one node: a mapping stays a mapping.
+#[test]
+fn a_macro_and_a_template_of_one_node_answer_its_value() {
+    let role = Role::new();
+    role.write(
+        "role/templates/m.j2",
+        "{% macro m() %}{{ {\"foo\": \"bar\"} }}{% endmacro %}\n{{ m() }}\n",
+    );
+    let t = templar(&role.dir);
+    let r = |text: &str| t.render(text, &role.vars()).unwrap();
+    assert_eq!(r("{{ lookup('template', 'm.j2') }}"), json!({"foo": "bar"}));
+    assert_eq!(
+        r("{% macro n() %}{{ 1 }}{% endmacro %}{{ n() + 1 }}"),
+        json!(2)
+    );
+    assert_eq!(
+        r("{% macro n() %}x{{ 1 }}{% endmacro %}{{ n() }}"),
+        json!("x1")
     );
 }

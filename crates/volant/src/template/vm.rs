@@ -207,6 +207,7 @@ thread_local! {
 /// Notes one `{{ }}` the VM is about to print into `out`. Called by the formatter of the
 /// environment. A `none` is no node: the reference leaves it out of the result.
 pub(super) fn note_emit(out: &minijinja::Output<'_>, value: &minijinja::Value) {
+    super::macros::note(value);
     EMITTED.with_borrow_mut(|e| {
         if address(out) != e.top {
             return;
@@ -225,18 +226,8 @@ pub(super) fn note_emit(out: &minijinja::Output<'_>, value: &minijinja::Value) {
 /// `env.render_named_str`, with `~` routed through [`concat()`]. Compiled once per call, as
 /// `render_named_str` does, with the syntax settings given (whitespace included). The only place that
 /// decides auto-escape. The environment is the templar's, with the filters and tests the
-/// compiled code calls that only the Python helper has ([`Templar::env_for`]).
-pub(super) fn render_str(
-    templar: &Templar,
-    name: &str,
-    source: &str,
-    ctx: &minijinja::Value,
-    syntax_config: SyntaxConfig,
-) -> Result<String, minijinja::Error> {
-    render_counted(templar, name, source, ctx, syntax_config).map(|(text, _)| text)
-}
-
-/// [`render_str`], and what the render printed through `{{ }}`.
+/// compiled code calls that only the Python helper has ([`Templar::env_for`]). Answers the text,
+/// and what the render printed through `{{ }}`.
 pub(super) fn render_counted(
     templar: &Templar,
     name: &str,

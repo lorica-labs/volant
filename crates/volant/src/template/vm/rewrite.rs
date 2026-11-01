@@ -5,7 +5,7 @@
 use minijinja::machinery::{Instruction, Instructions};
 
 use super::super::bridged;
-use super::super::env::{attr_call, const_call, var_call};
+use super::super::env::{attr_call, const_call, macro_call, var_call};
 use super::super::order::OPERATORS;
 use super::super::pymethods::mutable::MUTATORS;
 use super::super::{
@@ -16,19 +16,23 @@ use super::super::{
 use super::concat;
 
 /// Whether the code holds a capture that prints into the output (see [`route_calls`]), whether
-/// it calls `now()`, whether it calls `encode`, which makes bytes, and the names a macro or a
-/// `set` takes: one called `q` or `query` shadows the lookup shorthand.
-fn scan(instructions: &Instructions<'_>) -> (bool, bool, bool, Vec<String>) {
+/// it calls `now()`, whether it calls `encode`, which makes bytes, the names a macro or a `set`
+/// takes (one called `q` or `query` shadows the lookup shorthand), and the macros' alone.
+fn scan(instructions: &Instructions<'_>) -> (bool, bool, bool, Vec<String>, Vec<String>) {
     let mut captures = false;
     let mut clock = false;
     let mut bytes = false;
     // The captures open at this point, each with whether a `{{ }}` printed inside it.
     let mut open: Vec<bool> = Vec::new();
     let mut shadowed = Vec::new();
+    let mut macros = Vec::new();
     let mut at = 0;
     while let Some(op) = instructions.get(at) {
         if let Instruction::BuildMacro(name, ..) | Instruction::StoreLocal(name) = op {
             shadowed.push(name.to_string());
+        }
+        if let Instruction::BuildMacro(name, ..) = op {
+            macros.push(name.to_string());
         }
         match op {
             Instruction::CallFunction("now", _) => clock = true,
@@ -43,7 +47,7 @@ fn scan(instructions: &Instructions<'_>) -> (bool, bool, bool, Vec<String>) {
         }
         at += 1;
     }
-    (captures, clock, bytes, shadowed)
+    (captures, clock, bytes, shadowed, macros)
 }
 
 /// Whether the captured text at `at`, after any filter of a `set` block, goes to a variable
@@ -87,7 +91,7 @@ pub(in crate::template) fn route_calls(
     instructions: &mut Instructions<'_>,
     mutating: bool,
 ) -> bool {
-    let (captures, clock, bytes, shadowed) = scan(instructions);
+    let (captures, clock, bytes, shadowed, macros) = scan(instructions);
     let mut links = Vec::new();
     let mut idx = 0;
     loop {
@@ -163,6 +167,10 @@ pub(in crate::template) fn route_calls(
             }
             Instruction::Lookup(name) if mutating => {
                 *op = Instruction::CallFunction(var_call(name), Some(0));
+            }
+            // A macro the template defines answers the value of its one node, see `macros`.
+            Instruction::CallFunction(name, args) if macros.iter().any(|m| m == name) => {
+                *op = Instruction::CallFunction(macro_call(name), *args);
             }
             Instruction::CallFunction(name, args)
                 if matches!(*name, "query" | "q") && !shadowed.iter().any(|n| n == name) =>

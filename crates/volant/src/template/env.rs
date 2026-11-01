@@ -21,8 +21,8 @@ use super::pymethods::percent;
 pub(crate) use super::register::{add_filter, add_test, add_text_filter, undefined_through};
 use super::vm::{concat, note_emit};
 use super::{
-    ATTR_KEY, CONCAT_KEY, CONST_KEY, CONTEXT_KEY, ITEM_KEY, MATTR_KEY, MITEM_KEY, MKLIST_KEY,
-    MKMAP_KEY, REM_KEY, REMT_KEY, VAR_KEY,
+    ATTR_KEY, CONCAT_KEY, CONST_KEY, CONTEXT_KEY, ITEM_KEY, MACRO_KEY, MATTR_KEY, MITEM_KEY,
+    MKLIST_KEY, MKMAP_KEY, REM_KEY, REMT_KEY, VAR_KEY,
 };
 
 /// The engine's environment: minijinja's, strict about undefined values, with every filter,
@@ -168,6 +168,11 @@ pub(super) fn known(value: minijinja::Value) -> minijinja::Value {
 /// The function name an attribute lookup is routed through: `ATTR_KEY` then the attribute.
 pub(super) fn attr_call(name: &str, mutable: bool) -> &'static str {
     routed(if mutable { MATTR_KEY } else { ATTR_KEY }, name)
+}
+
+/// The function name a call of the macro `name` is routed through: `MACRO_KEY` then the name.
+pub(super) fn macro_call(name: &str) -> &'static str {
+    routed(MACRO_KEY, name)
 }
 
 /// The function name a variable read is routed through in a template that changes values in

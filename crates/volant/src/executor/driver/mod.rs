@@ -345,6 +345,7 @@ pub(super) async fn drive_host(
             break 'run;
         }
         failed_before = failed;
+        driver.standing_at(pos);
         // Collect a batch of remote tasks up to the next boundary; report skips and run local
         // tasks as they come, in order.
         let mut batch: Vec<(usize, Vec<Item>)> = Vec::new();

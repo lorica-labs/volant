@@ -106,6 +106,17 @@ impl Driver<'_> {
         }
     }
 
+    /// Says, when the host has a place in the queue, that it stands at `pos` with no batch in
+    /// hand: done with every step before it, whichever way it got there.
+    pub(super) fn standing_at(&self, pos: usize) {
+        if let Some(mine) = self.place {
+            self.plan.turns.at(mine, |place| {
+                place.passed = place.passed.max(pos);
+                place.held = None;
+            });
+        }
+    }
+
     /// Says, when the host has a place in the queue, that its batch starts at `pos`: until it
     /// takes its fork, the hosts behind it wait for it there.
     pub(super) fn hold(&self, pos: usize) {

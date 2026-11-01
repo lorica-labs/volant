@@ -190,6 +190,9 @@ impl Driver<'_> {
     /// host that asked "is the runner still live?" first would see a runner that is merely gone
     /// and leave at exit 4 where the reference exits 2.
     pub(super) async fn wait_for_run_once(&mut self, runner: &str, pos: usize) -> Option<RunOnce> {
+        // Whoever waits here takes no fork for the step: the runner already has, the others never
+        // will.
+        self.passed(pos);
         loop {
             if self.stopped() {
                 return None;

@@ -1,5 +1,5 @@
 ---
-sourceHash: 31bbd0638724
+sourceHash: 8baaf4b329f9
 title: Verbindungen und become
 description: Wie Volant einen Host erreicht, welche Hostvariablen und ansible.cfg-Einstellungen es liest und wie become über sudo und su funktioniert.
 ---
@@ -192,7 +192,7 @@ Mit `-vvvv` lautet die erste Zeile `ESTABLISH PARAMIKO SSH CONNECTION FOR USER: 
 
 ## Verbindungen, die nur ansible-core hat
 
-Volant erreicht einen Host auf einem von zwei Wegen. Für `ssh`, `local` und die oben aufgeführten Verbindungen startet es seinen Agent auf dem Host und schickt ihm die Tasks. Für jedes andere Verbindungs-Plugin, das das ansible-core des Controllers laden kann, läuft kein Agent: jeder Task, der den Host braucht, geht an den Python-Helfer von Volant, der das Verbindungs-Plugin lädt, sich verbindet, das Action-Plugin des Tasks darüber ausführt wie `ansible-playbook` und die Verbindung wieder schließt. ansible-core liest jede Option des Plugins aus den Variablen des Hosts, der `ansible.cfg` und der Umgebung, wie immer.
+Volant erreicht einen Host auf einem von zwei Wegen. Für `ssh`, `local` und die oben aufgeführten Verbindungen startet es seinen Agent auf dem Host und schickt ihm die Tasks. Für jedes andere Verbindungs-Plugin, das das ansible-core des Controllers laden kann, läuft kein Agent: jeder Task, der den Host braucht, geht an den Python-Helfer von Volant, der das Verbindungs-Plugin lädt, sich verbindet, das Action-Plugin des Tasks darüber ausführt wie `ansible-playbook` und die Verbindung schließt, sobald der Task fertig ist. Die Items einer Schleife teilen sich eine Verbindung, wie unter `ansible-playbook`. ansible-core liest jede Option des Plugins aus den Variablen des Hosts, der `ansible.cfg` und der Umgebung, wie immer.
 
 Alles andere am Lauf bleibt gleich: Schleifen, `when`, `register`, `changed_when`, `failed_when`, `until` und `retries`, `ignore_errors`, `no_log`, `serial`, `delegate_to`, Handler, `async` mit `poll: 0` und `async_status`, der Check-Modus und das Recap. Ein Task, der auf dem Controller läuft, etwa `debug` oder `set_fact`, läuft dort wie bisher.
 

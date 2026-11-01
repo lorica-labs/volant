@@ -823,8 +823,40 @@ CALL_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
 EXPRESSIONS = {
     "filter": "volant_args__[0] | %s(*volant_args__[1:], **volant_kwargs__)",
     "test": "volant_args__[0] is %s(*volant_args__[1:], **volant_kwargs__)",
-    "lookup": "lookup(volant_name__, *volant_args__, **volant_kwargs__)",
+    "lookup": "volant_marks__(lookup(volant_name__, *volant_args__, **volant_kwargs__))",
 }
+
+# What an undefined value travels as between the controller and this helper. Here it is
+# ansible-core's marker of one, so a lookup answers it, or reads it, as it does in the reference.
+UNDEFINED_MARK = "__volant_undefined__"
+
+
+def with_markers(value, sent):
+    """`value` from the controller, each mark of an undefined value made a marker, kept in
+    `sent`."""
+    if isinstance(value, dict):
+        if set(value) == {UNDEFINED_MARK}:
+            from ansible._internal._templating._jinja_common import UndefinedMarker
+
+            marker = UndefinedMarker(hint=value[UNDEFINED_MARK], _no_template_source=True)
+            sent.append(marker)
+            return marker
+        return {key: with_markers(item, sent) for key, item in value.items()}
+    if isinstance(value, list):
+        return [with_markers(item, sent) for item in value]
+    return value
+
+
+def without_markers(value, sent):
+    """A lookup's answer, each marker of `sent` in it made the mark the controller reads back as
+    undefined. A marker the plugin made itself stays, and fails the call as it always did."""
+    if any(value is marker for marker in sent):
+        return {UNDEFINED_MARK: value._undefined_message}
+    if isinstance(value, dict):
+        return {key: without_markers(item, sent) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [without_markers(item, sent) for item in value]
+    return value
 
 
 def plain(value):
@@ -1122,12 +1154,22 @@ def call(request):
                 if name not in lookup_loader:
                     return {"error": missing}
             return {"value": None}
+        kwargs, marks = request["kwargs"], None
+        if kind == "lookup":
+            from ansible._internal._templating._jinja_plugins import _DirectCall
+
+            sent = []
+            args, kwargs = with_markers(args, sent), with_markers(kwargs, sent)
+            # Called by Jinja as it is (`_DirectCall`): through the usual path, a marker given to
+            # a function is its answer, and the render would raise on it.
+            marks = _DirectCall.mark(lambda value: without_markers(value, sent))
         value = templar.evaluate_expression(
             trust_as_template(expression),
             local_variables={
                 "volant_args__": args,
-                "volant_kwargs__": request["kwargs"],
+                "volant_kwargs__": kwargs,
                 "volant_name__": name,
+                "volant_marks__": marks,
             },
         )
         return {"value": plain(value)}

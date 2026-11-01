@@ -24,10 +24,12 @@ use crate::template::FileRender;
 pub fn register(env: &mut Environment<'static>, base_dir: PathBuf, bridge: Option<&Arc<Bridge>>) {
     let bridge = bridge.cloned();
     let call = move |state: &State, name: String, terms: Rest<Value>, kwargs: Kwargs| {
-        // Measured on ansible-core 2.19.12: an undefined term or option is an undefined
-        // read (`lookup('env', nope | lower)`, `lookup('vars', 'x', default=nope | lower)`).
-        // `env` reads its `default` only for a variable that is not set, so an undefined one
-        // fails there, in the plugin's words.
+        // `_invoke_lookup` in ansible-core 2.19.12: a lookup given an undefined term or option
+        // answers that undefined value without running, and one that touches an undefined value
+        // inside a term answers it too. It fails only where it is used: `lookup('file', nope) |
+        // default('x')` is `x`. A plugin of the Python helper is handed the values as they are,
+        // and ansible-core decides. `env` reads its `default` only for a variable that is not
+        // set, so an undefined one fails there, in the plugin's words.
         let env = matches!(
             name.as_str(),
             "env" | "ansible.builtin.env" | "ansible.legacy.env"
@@ -35,19 +37,24 @@ pub fn register(env: &mut Environment<'static>, base_dir: PathBuf, bridge: Optio
         let undefined_option = kwargs.args().any(|k| {
             !(env && k == "default") && kwargs.peek::<Value>(k).is_ok_and(|v| v.is_undefined())
         });
-        if undefined_option || terms.iter().any(super::holds_undefined) {
-            return Err(Error::from(ErrorKind::UndefinedError));
-        }
         // `ansible.legacy.env` is the engine's `env`, as the reference resolves it.
         let name = match name.strip_prefix("ansible.legacy.") {
             Some(short) if supported(short) => short.to_string(),
             _ => name,
         };
-        if super::unknown::active() && differs_between_runs(state, &name, &terms, &base_dir) {
-            // Read, so that minijinja sees every option taken.
+        // Read, so that minijinja sees every option taken.
+        let take_all = || {
             for key in kwargs.args() {
                 let _ = kwargs.get::<Value>(key);
             }
+        };
+        let bridged = bridge.is_some() && super::bridged_name(PluginKind::Lookup, &name);
+        if !bridged && (undefined_option || terms.iter().any(super::holds_undefined)) {
+            take_all();
+            return Ok(Value::UNDEFINED);
+        }
+        if super::unknown::active() && differs_between_runs(state, &name, &terms, &base_dir) {
+            take_all();
             let short = name.rsplit('.').next().unwrap_or(&name);
             return Ok(super::unknown::value(&format!("lookup '{short}'")));
         }

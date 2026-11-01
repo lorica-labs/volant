@@ -691,3 +691,23 @@ fn a_macro_and_a_template_of_one_node_answer_its_value() {
         json!("x1")
     );
 }
+
+/// A lookup given an undefined value answers it, and fails only where that is used. A
+/// `with_first_found` string leaves out what renders undefined inside its list.
+#[test]
+fn an_undefined_term_is_the_answer_of_a_lookup() {
+    let t = crate::testing::templar();
+    let r = |text: &str| t.render(text, &Map::new());
+    assert_eq!(
+        r("{{ lookup('file', nope) is undefined }}").unwrap(),
+        json!(true)
+    );
+    assert_eq!(
+        r("{{ q('file', [nope]) | default('x') }}").unwrap(),
+        json!("x")
+    );
+    assert!(r("{{ lookup('file', nope) }}").unwrap_err().is_undefined());
+    let raw = json!("{{ [{'files': nope}] | zip([{'files': ['b']}]) }}");
+    let (terms, _) = t.render_omitting_undefined(&raw, &Map::new()).unwrap();
+    assert_eq!(terms, json!([[{}, {"files": ["b"]}]]));
+}

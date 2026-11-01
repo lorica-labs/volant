@@ -98,6 +98,12 @@ const PASSWORD: &str = "s3cret-pw";
 /// The calls the fake plugin logged, and the action's value, for a `ping` run over it with
 /// `extra` variables; `None` when no helper starts and the test is skipped.
 fn ping_over_fake(extra: Value) -> Option<(Vec<Value>, Value)> {
+    pings_over_fake(extra, 1)
+}
+
+/// [`ping_over_fake`] run `runs` times as the items of one task: past one, the link keeps its
+/// connection under `h1` and the bridge releases it after the last; the value is the last run's.
+fn pings_over_fake(extra: Value, runs: usize) -> Option<(Vec<Value>, Value)> {
     if let Err(why) = crate::python::PythonBuilder::start() {
         assert!(
             std::env::var_os("VOLANT_PYTHON").is_none(),
@@ -125,19 +131,27 @@ fn ping_over_fake(extra: Value) -> Option<(Vec<Value>, Value)> {
         .unwrap()
         .extend(extra.as_object().unwrap().clone());
     let bridge = Bridge::new(vec![dir.path().to_path_buf()]);
-    let value = bridge
-        .run_action(
-            &ActionCall {
-                name: "ansible.builtin.normal",
-                task: &json!({"_volant_action": "ansible.builtin.ping", "args": {}}),
-                task_vars: &vars,
-                play_context: &json!({"remote_addr": "h1", "password": PASSWORD}),
-                link: Some(&json!({"kind": "owned", "connection": "fake", "verbosity": 3})),
-            },
-            Instant::now() + Duration::from_secs(120),
-            &mut |ask| Reply::Error(format!("an owned link asked the controller: {ask:?}")),
-        )
-        .expect("the action ran");
+    let keep = (runs > 1).then_some("h1");
+    let link = json!({"kind": "owned", "connection": "fake", "verbosity": 3, "keep": keep});
+    let mut value = Value::Null;
+    for _ in 0..runs {
+        value = bridge
+            .run_action(
+                &ActionCall {
+                    name: "ansible.builtin.normal",
+                    task: &json!({"_volant_action": "ansible.builtin.ping", "args": {}}),
+                    task_vars: &vars,
+                    play_context: &json!({"remote_addr": "h1", "password": PASSWORD}),
+                    link: Some(&link),
+                },
+                Instant::now() + Duration::from_secs(120),
+                &mut |ask| Reply::Error(format!("an owned link asked the controller: {ask:?}")),
+            )
+            .expect("the action ran");
+    }
+    if let Some(keep) = keep {
+        bridge.release(keep);
+    }
     Some((calls(&log), value))
 }
 
@@ -170,6 +184,18 @@ fn an_owned_link_runs_the_module_through_the_connection_plugin() {
         "{calls:?}"
     );
     assert!(named(&calls, "exec_command").len() >= 2, "{calls:?}");
+    assert_eq!(named(&calls, "close").len(), 1, "{calls:?}");
+    assert_eq!(calls.last().unwrap()[0], "close", "{calls:?}");
+}
+
+/// The items of one task share the connection: connected by the first, closed once after the last.
+#[test]
+fn a_kept_owned_link_connects_once_for_every_item() {
+    let Some((calls, value)) = pings_over_fake(json!({}), 3) else {
+        return;
+    };
+    assert_eq!(value["ping"], "pong", "{value:#}");
+    assert_eq!(named(&calls, "connect").len(), 1, "{calls:?}");
     assert_eq!(named(&calls, "close").len(), 1, "{calls:?}");
     assert_eq!(calls.last().unwrap()[0], "close", "{calls:?}");
 }

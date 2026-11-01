@@ -73,7 +73,7 @@ impl InventoryPlugin for Generator {
             let vars: Map<String, Value> = layers.keys().cloned().zip(combination).collect();
             let at = ["hosts".to_string(), "name".to_string()];
             let host = py_str(&run.template(&name, &vars, &at)?);
-            into.add_source_host(&host, None, Map::new(), Some(run.file));
+            into.add_source_host(&host, None, crate::tags::Tagged::default(), Some(run.file));
             run.parents(
                 into,
                 &host,
@@ -170,7 +170,7 @@ impl Run<'_, '_> {
                             inv.group_mut(&group).priority = Some(p);
                         }
                     } else {
-                        inv.group_mut(&group).vars.insert(var.clone(), value);
+                        inv.group_mut(&group).vars.insert(var.clone(), value, None);
                     }
                 }
             }

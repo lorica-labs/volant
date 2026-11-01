@@ -4,7 +4,7 @@
 ansiballz_debug                #1336
 ansiballz_debugging            #1330
 ansible                        #1333
-ansible-galaxy-collection-scm  #1351
+ansible-galaxy-collection-scm  #1372
 ansible-playbook-callbacks     #1333
 ansible_log                    #1336
 assert                         #1282
@@ -22,12 +22,10 @@ interpreter_discovery_python   #1375
 inventory_cache                #1334
 inventory_script               #1282
 lookup_env                     #1282
-loop-connection                #1353
 module_defaults                #1345
 order                          #1340
 protomatter                    #1282
 remote_tmp                     #1336
-roles_arg_spec                 #1360
 set_fact                       #1282
 shell                          #1336
 strategy-external              #1335

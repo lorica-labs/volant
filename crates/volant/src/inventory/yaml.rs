@@ -4,6 +4,7 @@
 
 use std::path::Path;
 
+use crate::tags::{TagTree, Tagged};
 use saphyr::{Scalar, Yaml};
 use serde_json::{Map, Value};
 
@@ -51,12 +52,8 @@ impl InventoryPlugin for YamlInventory {
         let text = String::from_utf8(bytes).map_err(|e| failed(e.to_string()))?;
         // Where a `!vault` value is written is read only for a file that holds one: a failure to
         // decrypt it points there.
-        let (docs, origins) = if text.contains("!vault") {
-            yaml::load_with_origins(&text, source.text())
-        } else {
-            yaml::load(&text, source.text()).map(|docs| (docs, yaml::Origins::default()))
-        }
-        .map_err(|e| failed(load_failure(&e)))?;
+        let (docs, origins) =
+            yaml::load_with_origins(&text, source.text()).map_err(|e| failed(load_failure(&e)))?;
         yaml::note_value_origins(&docs, &origins, &source.path().display().to_string(), &text);
         let null = Yaml::Value(Scalar::Null);
         // `load` refuses a second document, so there is at most one.
@@ -70,7 +67,17 @@ impl InventoryPlugin for YamlInventory {
             }
         }
         let groups = lower(root).map_err(failed)?;
-        read_groups(&groups, Dialect::Yaml, into, Some(source.path()), cx).map_err(failed)
+        let path = std::path::absolute(source.path()).unwrap_or_else(|_| source.path().into());
+        let tree = yaml::tags_of(root, &origins, Some(&path.display().to_string()), true);
+        read_groups(
+            &groups,
+            tree.as_ref(),
+            Dialect::Yaml,
+            into,
+            Some(source.path()),
+            cx,
+        )
+        .map_err(failed)
     }
 }
 
@@ -228,6 +235,7 @@ fn show(value: &Value) -> String {
 /// Reads `{group: data}` into `inv`. What was added before an error stays.
 pub(super) fn read_groups(
     groups: &Value,
+    tree: Option<&TagTree>,
     dialect: Dialect,
     inv: &mut Inventory,
     file: Option<&Path>,
@@ -241,7 +249,7 @@ pub(super) fn read_groups(
     };
     if let Value::Object(map) = groups {
         for (name, data) in map {
-            reader.group(name, data)?;
+            reader.group(name, data, tree.and_then(|t| t.at(name)))?;
         }
     }
     Ok(())
@@ -286,7 +294,8 @@ struct Reader<'a, 'c> {
 
 impl Reader<'_, '_> {
     /// `_parse_group`: whether the group was read, `false` when it is no group definition.
-    fn group(&mut self, name: &str, data: &Value) -> Result<bool, String> {
+    fn group(&mut self, name: &str, data: &Value, tree: Option<&TagTree>) -> Result<bool, String> {
+        let section = |key: &str| tree.and_then(|t| t.at(key));
         if !matches!(data, Value::Null | Value::Object(_)) {
             self.cx.warn(format!(
                 "Skipping '{name}' as this is not a valid group definition"
@@ -327,13 +336,14 @@ impl Reader<'_, '_> {
             match (key.as_str(), data) {
                 ("vars", Value::Object(vars)) => {
                     for (var, value) in vars {
-                        self.group_var(name, var, value)?;
+                        self.group_var(name, var, value, section("vars").and_then(|t| t.at(var)))?;
                     }
                 }
                 ("vars", _) => return Err(invalid(self, "vars", word)),
                 ("children", Value::Object(children)) if self.dialect == Dialect::Yaml => {
                     for (child, data) in children {
-                        if !self.group(child, data)? {
+                        let tree = section("children").and_then(|t| t.at(child));
+                        if !self.group(child, data, tree)? {
                             return Err(format!("{child} is not a known host nor group"));
                         }
                         self.child(name, child)?;
@@ -344,14 +354,19 @@ impl Reader<'_, '_> {
                         let Value::String(child) = child else {
                             return Err(bad_group(&show(child), &self.dialect.type_name(child)));
                         };
-                        self.group(child, &Value::Object(Map::new()))?;
+                        self.group(child, &Value::Object(Map::new()), None)?;
                         self.child(name, child)?;
                     }
                 }
                 ("children", _) => return Err(invalid(self, "children", list)),
                 ("hosts", Value::Object(hosts)) => {
                     for (pattern, vars) in hosts {
-                        self.hosts(name, pattern, vars)?;
+                        self.hosts(
+                            name,
+                            pattern,
+                            vars,
+                            section("hosts").and_then(|t| t.at(pattern)),
+                        )?;
                     }
                 }
                 ("hosts", _) => return Err(invalid(self, "hosts", word)),
@@ -407,13 +422,19 @@ impl Reader<'_, '_> {
         self.inv.group_mut(name);
     }
 
-    fn group_var(&mut self, group: &str, var: &str, value: &Value) -> Result<(), String> {
+    fn group_var(
+        &mut self,
+        group: &str,
+        var: &str,
+        value: &Value,
+        tree: Option<&TagTree>,
+    ) -> Result<(), String> {
         if var == "ansible_group_priority" {
             if let Some(priority) = priority(value)? {
                 self.inv.group_mut(group).priority = Some(priority);
             }
         } else {
-            crate::vars::combine_one(&mut self.inv.group_mut(group).vars, var, value);
+            self.inv.group_mut(group).vars.combine_one(var, value, tree);
         }
         Ok(())
     }
@@ -424,7 +445,13 @@ impl Reader<'_, '_> {
     }
 
     /// `_populate_host_vars` for every host a pattern expands to.
-    fn hosts(&mut self, group: &str, pattern: &str, vars: &Value) -> Result<(), String> {
+    fn hosts(
+        &mut self,
+        group: &str,
+        pattern: &str,
+        vars: &Value,
+        tree: Option<&TagTree>,
+    ) -> Result<(), String> {
         let vars = match vars {
             Value::Object(vars) => vars.clone(),
             v if self.dialect == Dialect::Yaml && falsy(v) => Map::new(),
@@ -437,11 +464,17 @@ impl Reader<'_, '_> {
         };
         let (names, port) = expand_hostpattern(pattern)?;
         for name in names {
-            let mut all = Map::new();
+            let mut all = Tagged::default();
             if let Some(port) = port.filter(|p| *p != 0) {
-                all.insert("ansible_port".to_string(), Value::from(port));
+                all.insert("ansible_port".to_string(), Value::from(port), None);
             }
-            all.extend(vars.clone());
+            for (var, value) in &vars {
+                all.insert(
+                    var.clone(),
+                    value.clone(),
+                    tree.and_then(|t| t.at(var)).cloned(),
+                );
+            }
             self.inv.add_source_host(&name, None, all, self.file);
             self.inv.add_member(&name, group);
         }

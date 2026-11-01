@@ -1,5 +1,5 @@
 ---
-sourceHash: bca51b95b831
+sourceHash: dd5a8cdb6098
 title: Roles, includes e imports
 description: Dónde busca Volant los roles, cómo funcionan las dependencias, las especificaciones de argumentos y las variables de un rol, y cómo los imports y los includes traen otros archivos a un play.
 ---
@@ -47,7 +47,7 @@ roles:
 
 La tarea lleva la `short_description` del rol tras un guion, así que `--list-tasks` muestra `Validating arguments against arg spec 'main' - The spec role`. Está etiquetada `always`, así que ninguna selección con `--tags` la descarta.
 
-Las comprobaciones se ejecutan en el orden en que las ejecuta Ansible: un argumento obligatorio ausente, después un tipo, después un valor fuera de `choices` y después un argumento que la especificación no nombra. Las subopciones, `aliases`, `default` y `mutually_exclusive` todavía no se comprueban.
+Las comprobaciones siguen el orden de Ansible y usan sus mensajes: un argumento obligatorio ausente, un tipo (`bytes`, `bits`, `json` y los demás), un valor fuera de `choices` y después las subopciones a cualquier profundidad, cada una con sus propias reglas `required`, `aliases`, `mutually_exclusive` y `required_*`. Los argumentos que la especificación no nombra van al final, en un solo mensaje. Una cadena dada para una opción `dict` se lee como JSON o `key=value`; Volant no la evalúa como un literal de Python, como hace Ansible.
 
 ## Variables de rol
 

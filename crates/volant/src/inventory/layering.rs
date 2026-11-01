@@ -4,9 +4,8 @@
 
 use std::collections::HashMap;
 
-use serde_json::{Map, Value};
-
 use super::{Group, Host, Inventory};
+use crate::tags::Tagged;
 
 /// Each host's groups, `all` included, in the order `Inventory::sorted_groups_of` gives them,
 /// and each host's own line. One walk over the groups serves every host: asked host by host,
@@ -53,19 +52,19 @@ impl<'a> Layering<'a> {
     }
 
     /// [`Inventory::host_with_vars`]'s variables: the groups' in order, then the host's own.
-    pub fn vars_of(&self, host: &str) -> Map<String, Value> {
-        let mut vars = Map::new();
+    pub fn vars_of(&self, host: &str) -> Tagged {
+        let mut vars = Tagged::default();
         for group in self.groups_of(host) {
-            vars.extend(group.vars.clone());
+            vars.overlay(&group.vars);
         }
         if let Some(own) = self.host(host) {
-            vars.extend(own.vars.clone());
+            vars.overlay(&own.vars);
         }
         vars
     }
 
     /// [`Inventory::host_line_vars`].
-    pub fn line_vars(&self, host: &str) -> Option<&'a Map<String, Value>> {
+    pub fn line_vars(&self, host: &str) -> Option<&'a Tagged> {
         self.host(host).map(|h| &h.vars)
     }
 

@@ -44,7 +44,12 @@ impl Bridge {
         asks: &mut dyn FnMut(Ask) -> Reply,
     ) -> Result<Value, BridgeError> {
         let name = call.name;
-        let (mut helper, id) = self.action_helper()?;
+        // The helper that holds the connection an earlier item kept, or one of the pool.
+        let keep = call
+            .link
+            .and_then(|link| link.get("keep"))
+            .and_then(Value::as_str);
+        let (mut helper, id) = self.action_helper(keep)?;
         // Built as maps, not with `json!`, which serializes the values again and refuses a `NaN`
         // a variable holds; the helper's `json.loads` reads it.
         let action = Map::from_iter([
@@ -82,7 +87,10 @@ impl Bridge {
                 ))
             }
             mut outcome => {
-                self.lock_actions().idle.push(helper);
+                match keep {
+                    Some(keep) => _ = self.lock_actions().kept.insert(keep.to_string(), helper),
+                    None => self.lock_actions().idle.push(helper),
+                }
                 // The persistent process a task started is the host's until a reset ends it.
                 if let Ok(Value::Object(map)) = &mut outcome
                     && let Some(Value::String(path)) = map.remove("_volant_socket")
@@ -104,14 +112,44 @@ impl Bridge {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// An idle helper of the pool, or a new one, and the id of the request it is about to get.
-    fn action_helper(&self) -> Result<(ActionHelper, u64), BridgeError> {
+    /// Closes the connection `keep` names and gives its helper back to the pool, as ansible-core
+    /// closes a task's connection once its last item ran. Nothing kept is nothing to do; a helper
+    /// that does not answer is ended.
+    pub fn release(&self, keep: &str) {
+        let (mut helper, id) = {
+            let mut actions = self.lock_actions();
+            let Some(helper) = actions.kept.remove(keep) else {
+                return;
+            };
+            actions.next += 1;
+            (helper, actions.next)
+        };
+        let request = json!({"id": id, "call": {
+            "kind": "release", "name": "release", "args": [keep], "kwargs": {},
+        }})
+        .to_string();
+        let deadline = Instant::now() + std::time::Duration::from_secs(30);
+        let refuse = &mut |_: Ask| Reply::Error("a connection being closed asks nothing".into());
+        match converse(&mut helper, id, "release", &request, deadline, refuse) {
+            Err(BridgeError::Helper(_)) => _ = helper.end(),
+            _ => self.lock_actions().idle.push(helper),
+        }
+    }
+
+    /// The helper kept under `keep`, else an idle helper of the pool, or a new one, and the id of
+    /// the request it is about to get.
+    fn action_helper(&self, keep: Option<&str>) -> Result<(ActionHelper, u64), BridgeError> {
         let mut actions = self.lock_actions();
         if let Some(why) = &actions.broken {
             return Err(why.clone());
         }
         actions.next += 1;
         let id = actions.next;
+        if let Some(mut helper) = keep.and_then(|keep| actions.kept.remove(keep))
+            && helper.alive()
+        {
+            return Ok((helper, id));
+        }
         // A helper that died while idle is dropped here, which reaps it, and never reused.
         while let Some(mut helper) = actions.idle.pop() {
             if helper.alive() {

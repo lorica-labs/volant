@@ -11,7 +11,7 @@ fn read(text: &str, dialect: Dialect) -> (Inventory, Result<(), String>) {
     let result = match dialect {
         Dialect::Yaml => {
             let docs = yaml::load(text, "t.yml").unwrap();
-            lower(&docs[0]).and_then(|g| read_groups(&g, dialect, &mut inv, None, &cx))
+            lower(&docs[0]).and_then(|g| read_groups(&g, None, dialect, &mut inv, None, &cx))
         }
         Dialect::Toml => super::super::toml::read_text(text, &mut inv, &cx, "t.toml"),
     };

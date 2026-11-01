@@ -1,5 +1,5 @@
 ---
-sourceHash: 0bc7c1588fca
+sourceHash: 33184a66ffe2
 title: volant galaxy
 description: Las opciones de ansible-galaxy, comprobadas por el propio Volant, mientras sus subcomandos se vuelven nativos uno a uno.
 ---
@@ -35,6 +35,10 @@ Cuando ninguna ruta de colecciones configurada está bajo el `PATH` de `collecti
 `collection install` acepta también un repositorio git: `git+<url>`, con `,<ref>` para una rama, una etiqueta o un commit, `HEAD` por defecto, y `#/<subdir>` para una colección que no está en la raíz del repositorio, como `git+https://host/org/repo.git,v1.0.0` o `git+file:///work/mono/.git#/collections/demo`. En un archivo de requisitos es una entrada con `type: git`, cuya `version` es la referencia. Volant ejecuta el `git` del sistema: un clon superficial para `HEAD`, uno completo con checkout si no, y luego instala el checkout como un árbol de código. Los mensajes de git llegan a la terminal, como con `ansible-galaxy`. Una contraseña en la URL se sustituye por `********` en todos los mensajes. Sin `git` en el `PATH`, el comando falla con `Could not find git executable to extract the collection from the Git repository`, salida 1.
 
 Las URL de tarballs, los directorios de espacio de nombres y las firmas se rechazan hasta que sean nativos: `[ERROR]: volant galaxy collection install from a URL or a namespace directory is not supported yet`, o `with signatures`, salida 1.
+
+## Crear una colección
+
+`collection init <namespace>.<name> [--init-path DIR] [--collection-skeleton DIR] [-e VARS] [-f]` escribe una colección nueva en `DIR/<namespace>/<name>`, `./` por defecto, e imprime `- Collection <namespace>.<name> was created successfully`. Sin esqueleto, escribe el esqueleto por defecto de ansible-core 2.19.12: `galaxy.yml`, `README.md`, `meta/runtime.yml`, `plugins/README.md` y los directorios vacíos `docs/` y `roles/`. `--collection-skeleton`, o `GALAXY_COLLECTION_SKELETON`, indica en su lugar un directorio de esqueleto que copiar. Sus archivos `.j2` se renderizan con `--extra-vars` y pierden la extensión, salvo bajo `playbooks/*/templates` y `roles/*/templates`. Sus enlaces siguen siendo enlaces, y lo que coincide con `GALAXY_COLLECTION_SKELETON_IGNORE` se omite. Un directorio de colección que ya existe es un error salvo con `-f`, que primero lo vacía. Los mensajes y los códigos de salida son los de `ansible-galaxy`.
 
 ## Construir una colección
 

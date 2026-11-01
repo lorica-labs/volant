@@ -16,7 +16,7 @@ use crate::template::Vars;
 /// reads the map as the host's variables misses it. `get` reads all three.
 #[derive(Debug, Clone, Default)]
 pub struct HostVars {
-    pub map: Map<String, Value>,
+    pub map: crate::tags::Tagged,
     pub hostvars: Arc<crate::vars::HostvarsMap>,
     /// `groups` and the play's host lists, shared for the same reason and in the same way.
     pub shared: Arc<Map<String, Value>>,
@@ -29,7 +29,7 @@ pub struct HostVars {
     pub untrusted_hosts: Arc<crate::vars::UntrustedHosts>,
     /// The variables the items of a loop share, read after `map` and never written: see
     /// [`HostVars::shared_by_items`]. Empty for a map that stands alone.
-    pub base: Arc<Map<String, Value>>,
+    pub base: Arc<crate::tags::Tagged>,
 }
 
 /// What a `hostvars` entry holds in place of the implicit host's interpreter until someone reads
@@ -98,7 +98,7 @@ impl HostVars {
             facts.shift_remove(&key);
             self.facts = Arc::new(facts);
         }
-        self.map.insert(key, value)
+        self.map.insert(key, value, None)
     }
 
     /// Lays the `ansible_facts` a module just returned over these variables, as ansible-core's
@@ -152,7 +152,7 @@ impl HostVars {
         if self.base.is_empty() {
             return std::borrow::Cow::Borrowed(&self.map);
         }
-        let mut all = Map::clone(&self.base);
+        let mut all = self.base.as_map().clone();
         all.extend(self.map.iter().map(|(k, v)| (k.clone(), v.clone())));
         crate::template::complete_loop(&mut all);
         std::borrow::Cow::Owned(all)
@@ -169,14 +169,30 @@ impl HostVars {
     /// holding nothing to render (the reads of the template context, and the design of the open
     /// change that renders a variable when another template reads it) is right only while this
     /// holds. Keep it when `base` gains an entry.
+    /// `resolved`, what a resolution of these variables returned, in place of `map`, with the
+    /// tags of each name whose value held no template: what a render produced is a template
+    /// result, which is not the value the tags were written for.
+    pub fn set_resolved(&mut self, resolved: Map<String, Value>, untrusted: BTreeSet<String>) {
+        let (before, mut tags) = std::mem::take(&mut self.map).into_parts();
+        tags.retain(|name, _| {
+            before
+                .get(name)
+                .is_some_and(|v| !crate::template::holds_template(v))
+        });
+        self.map = crate::tags::Tagged::new(resolved, tags);
+        self.untrusted = untrusted;
+    }
+
     pub fn shared_by_items(mut self) -> Self {
-        let mut base = Map::clone(&self.base);
-        let mut kept = Map::new();
-        for (name, value) in std::mem::take(&mut self.map) {
+        let mut base = crate::tags::Tagged::clone(&self.base);
+        let mut kept = crate::tags::Tagged::default();
+        let (map, mut tags) = std::mem::take(&mut self.map).into_parts();
+        for (name, value) in map {
+            let tree = tags.shift_remove(&name);
             if self.untrusted.contains(&name) || !crate::template::holds_template(&value) {
-                base.insert(name, value);
+                base.insert(name, value, tree);
             } else {
-                kept.insert(name, value);
+                kept.insert(name, value, tree);
             }
         }
         self.map = kept;
@@ -223,6 +239,12 @@ pub trait HostSettings {
 }
 
 impl HostSettings for Map<String, Value> {
+    fn setting(&self, name: &str) -> Option<&Value> {
+        self.get(name)
+    }
+}
+
+impl HostSettings for crate::tags::Tagged {
     fn setting(&self, name: &str) -> Option<&Value> {
         self.get(name)
     }

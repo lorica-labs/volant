@@ -60,6 +60,20 @@ impl<'a> Settings<'a> {
         )
     }
 
+    /// `GALAXY_COLLECTION_SKELETON`: the skeleton `collection init` starts from without
+    /// `--collection-skeleton`.
+    pub fn collection_skeleton(&self) -> Option<String> {
+        self.galaxy("collection_skeleton")
+    }
+
+    /// `GALAXY_COLLECTION_SKELETON_IGNORE`: what `collection init` leaves out of a skeleton.
+    pub fn collection_skeleton_ignore(&self) -> Vec<String> {
+        self.galaxy("collection_skeleton_ignore").map_or_else(
+            || vec!["^.git$".to_string(), "^.*/.git_keep$".to_string()],
+            |v| v.split(',').map(|p| p.trim().to_string()).collect(),
+        )
+    }
+
     pub fn server_timeout(&self) -> u64 {
         self.galaxy("server_timeout")
             .and_then(|t| t.trim().parse().ok())

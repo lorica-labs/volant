@@ -12,6 +12,7 @@
 
 use std::path::{Component, Path, PathBuf};
 
+use crate::tags::Tagged;
 use anyhow::{Context, bail};
 use serde_json::{Map, Value};
 
@@ -56,7 +57,7 @@ impl Default for RoleFrom {
 pub struct RoleEntry {
     pub name: String,
     pub from: RoleFrom,
-    pub params: Map<String, Value>,
+    pub params: Tagged,
     /// The task keywords written on the entry, which every task of the role inherits.
     pub keywords: PlayTask,
     /// Whether the role lends its `defaults` and `vars` to the rest of the play. A role of a
@@ -77,7 +78,7 @@ impl RoleEntry {
         Self {
             name: name.to_string(),
             from,
-            params: Map::new(),
+            params: Tagged::default(),
             keywords: PlayTask::empty(),
             public: true,
             validate: true,
@@ -89,8 +90,8 @@ impl RoleEntry {
 /// What one role directory holds.
 #[derive(Debug, Clone)]
 pub struct LoadedRole {
-    pub defaults: Map<String, Value>,
-    pub vars: Map<String, Value>,
+    pub defaults: Tagged,
+    pub vars: Tagged,
     pub tasks: Vec<TaskOrBlock>,
     /// The role's `handlers/` directory, read with the same file-before-directory rule as its
     /// tasks. They join the play's own handlers at compile time, in front of them - measured on
@@ -372,13 +373,11 @@ pub(crate) fn folded(path: &Path) -> PathBuf {
 }
 
 /// A role's `defaults` or `vars`, with the files of a directory merged in name order.
-fn variables(role: &Path, name: &str, sub: &str, from: &str) -> anyhow::Result<Map<String, Value>> {
+fn variables(role: &Path, name: &str, sub: &str, from: &str) -> anyhow::Result<Tagged> {
     let look = Lookup::named(role, name, sub, from, true);
-    let mut out = Map::new();
+    let mut out = Tagged::default();
     for file in files(&look)?.unwrap_or_default() {
-        for (key, value) in crate::vars::load_vars_file(&file)? {
-            out.insert(key, value);
-        }
+        out.overlay(&crate::vars::load_vars_file(&file)?);
     }
     Ok(out)
 }

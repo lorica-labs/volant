@@ -3,8 +3,6 @@
 
 use std::path::Path;
 
-use serde_json::{Map, Value};
-
 /// How a role instance came into the play, in the order ansible-core 2.19.12 lists them in
 /// `ansible_play_role_names`, measured: the play's `roles:` entries, then every `import_role` in
 /// the order the play was read, then each `include_role` once it ran. A `meta/main.yml`
@@ -29,18 +27,18 @@ pub struct RoleVars {
     pub collection: Option<String>,
     /// How this instance came into the play: which of the play's role lists names it.
     pub kind: RoleKind,
-    pub defaults: Map<String, Value>,
-    pub vars: Map<String, Value>,
+    pub defaults: crate::tags::Tagged,
+    pub vars: crate::tags::Tagged,
     /// The role's own parameters over those of the roles whose `meta/main.yml` pulled it in,
     /// outermost first: ansible-core's `Role.get_role_params` along the dependency chain.
-    pub params: Map<String, Value>,
+    pub params: crate::tags::Tagged,
     /// What a role inherits along its dependency chain, laid between what the play lends and the
     /// role's own values: for the defaults, its dependencies' and then its parents', outermost
     /// first (`Role.get_default_vars`); for the vars, its parents' and then its dependencies'
     /// (`Role.get_vars`). Measured on ansible-core 2.19.12 with the `roles_var_inheritance` and
     /// `var_precedence` targets.
-    pub inherited_defaults: Map<String, Value>,
-    pub inherited_vars: Map<String, Value>,
+    pub inherited_defaults: crate::tags::Tagged,
+    pub inherited_vars: crate::tags::Tagged,
     /// Whether this instance lends `defaults` and `vars` to the rest of the play.
     pub public: bool,
     /// What the coordinator's `roles_run` records once a host has run this instance: `role ...`
@@ -101,10 +99,10 @@ pub fn identity(path: &Path, asked: &str) -> (String, Option<String>) {
 /// The `defaults` and `vars` a role directory holds, before anything was laid under them.
 #[derive(Debug, Clone, Default)]
 pub struct OwnVars {
-    pub defaults: Map<String, Value>,
-    pub vars: Map<String, Value>,
+    pub defaults: crate::tags::Tagged,
+    pub vars: crate::tags::Tagged,
     /// What the other roles of the same statement lend: its dependencies, which see each other
     /// and the role that asked for them whether or not the statement is public.
-    pub group_defaults: Map<String, Value>,
-    pub group_vars: Map<String, Value>,
+    pub group_defaults: crate::tags::Tagged,
+    pub group_vars: crate::tags::Tagged,
 }

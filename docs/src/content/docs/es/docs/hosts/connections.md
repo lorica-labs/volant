@@ -1,5 +1,5 @@
 ---
-sourceHash: 8baaf4b329f9
+sourceHash: 7668cce931df
 title: Conexiones y become
 description: Cómo llega Volant a un host, las variables de host y los ajustes de ansible.cfg que lee, y cómo funciona become mediante sudo y su.
 ---
@@ -338,6 +338,8 @@ sudo -H <form> -u <user> -- volant-agent
 `<form>` es `-n` o `-k -S -p ''`, según una sonda que se describe más abajo. Volant añade `-H` solo cuando no hay `become_flags`: una lista de opciones lo sustituye. Las tareas que no escalan siguen usando el agente sin privilegios. El agente en sí no sabe nada del escalado. El [registro de decisión 0004](/es/docs/decisions/0004-become-runs-a-second-agent-under-sudo/) explica por qué.
 
 El agente escalado se conserva hasta el final del play, así que un play de tareas con escalado paga `sudo` una vez por host.
+
+Con una conexión `local`, el agente arranca detrás de una shell que primero imprime una línea de éxito, como el comando de ansible-core imprime su `BECOME-SUCCESS-<random>`. Lo que un envoltorio de `become_exe` imprime antes de que corra `sudo` nunca se lee como salida del agente, y va a la salida de error estándar del controlador. Con `ansible_local_become_strip_preamble: false` se conserva: lo que imprimió el envoltorio y la línea de éxito van delante del `stdout` y del `stderr` de cada tarea `raw` que escala con ese agente. Esas tareas tienen un agente propio.
 
 ### Qué ajuste gana
 

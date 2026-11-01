@@ -68,7 +68,7 @@ A module from an installed collection, such as `ansible.posix.sysctl` or `commun
 
 Before the first connection, Volant asks the controller's ansible-core what each dotted name is. ansible-core looks in the collection paths it is configured with, such as `ANSIBLE_COLLECTIONS_PATH`, and then in the `collections/` directory of the managed runtime, where `volant runtime install --collections` puts them. Volant installs nothing during a run, and nothing is fetched to answer.
 
-A name outside `ansible.builtin` and `ansible.legacy` gets one of five answers:
+A name that is not one of ansible-core's own modules gets one of five answers. This includes an `ansible.builtin.` name that ansible-core's `ansible_builtin_runtime.yml` routes to a collection:
 
 | What ansible-core finds | What Volant does |
 |---|---|
@@ -91,7 +91,7 @@ task 'Forward': couldn't resolve module/action 'ns.coll.mod'. This often indicat
 task 'Forward': module 'ns.coll.mod' cannot run: <reason>
 ```
 
-The install hint appears only when the collection itself is missing. A module missing from a collection that is installed gets the first sentence alone. `ansible.builtin.nosuch` also gets it alone, because no collection can supply a name in the namespace ansible-core owns. Without an ansible-core on the controller, a name outside `ansible.builtin` is refused with the same first sentence and the reason nothing could look it up.
+The install hint appears only when the collection itself is missing. A module missing from a collection that is installed gets the first sentence alone. `ansible.builtin.nosuch` also gets it alone: ansible-core's routing decides what such a name becomes, and there is no collection to install. Without an ansible-core on the controller, a name that is not one of ansible-core's own modules is refused with the same first sentence and the reason nothing could look it up.
 
 A collection module named only in a role's file for another platform is resolved too. If it can be built, it joins the union. Anything else is left out without stopping the run, and the include that reaches it fails for that host before any of the file's tasks run:
 

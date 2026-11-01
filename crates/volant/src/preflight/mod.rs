@@ -267,9 +267,10 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
             // and `check_arguments` knows only the native modules.
             return Ok(());
         }
-        // A collection's module, or a name a `library/` may hold, is set aside rather than
-        // judged: only the controller's ansible-core knows which collections are installed and
-        // what its module path holds, and it is asked once, after both passes, before the union
+        // A collection's module, a name a `library/` may hold, or an `ansible.builtin.` name its
+        // runtime routes, is set aside rather than judged: only the controller's ansible-core
+        // knows which collections are installed, what its module path holds and where its
+        // `ansible_builtin_runtime.yml` sends a name, and it is asked once, after both passes, before the union
         // is built ([`check_resolved`]). A word left in `_raw_params` fails the task when it
         // runs (`raw_params_refusal`), once the name resolved: `shel: echo hi` is a typo before
         // it is a module given raw params.

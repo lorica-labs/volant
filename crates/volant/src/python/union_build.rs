@@ -161,7 +161,7 @@ fn union_keeping(
         {
             return Ok(None);
         }
-        // A name a task gives outside `ansible.builtin` is refused with the reference's own
+        // A name no builtin has that a task gives is refused with the reference's own
         // sentence first: `ansible.builtins.debug` is a typo before it is a reason to install
         // anything, and only ansible-core could have said which of the two it is.
         Err(err) => {

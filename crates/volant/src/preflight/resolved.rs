@@ -204,13 +204,13 @@ pub(crate) fn refusal_of(module: &str, answer: &crate::python::Resolved) -> Opti
     }
 }
 
-/// A name outside `ansible.builtin` a task gives, on a controller where no ansible-core could be
-/// asked what it is: the reference's sentence, then why nothing could look.
+/// A name no builtin has that a task gives, on a controller where no ansible-core could be asked
+/// what it is: the reference's sentence, then why nothing could look.
 pub(crate) fn unresolvable_here(task: &str, module: &str, why: &anyhow::Error) -> anyhow::Error {
     Refusal::at(
         CODE,
         format!(
-            "{} Only the controller's ansible-core can resolve a name outside ansible.builtin, and {why:#}",
+            "{} Only the controller's ansible-core can resolve a module this engine does not ship, and {why:#}",
             unresolved(task, module)
         ),
     )

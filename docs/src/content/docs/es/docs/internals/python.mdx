@@ -69,7 +69,7 @@ Un módulo de una colección instalada, como `ansible.posix.sysctl` o `community
 
 Antes de la primera conexión, Volant pregunta al ansible-core del controlador qué es cada nombre con puntos. ansible-core busca en las rutas de colecciones con las que está configurado, como `ANSIBLE_COLLECTIONS_PATH`, y después en el directorio `collections/` del runtime administrado, donde `volant runtime install --collections` las deja. Volant no instala nada durante una ejecución, y no se descarga nada para responder.
 
-Un nombre fuera de `ansible.builtin` y `ansible.legacy` recibe una de cinco respuestas:
+Un nombre que no es uno de los módulos propios de ansible-core recibe una de cinco respuestas. Esto incluye un nombre `ansible.builtin.` que el `ansible_builtin_runtime.yml` de ansible-core redirige a una colección:
 
 | Lo que encuentra ansible-core | Lo que hace Volant |
 |---|---|
@@ -92,7 +92,7 @@ task 'Forward': couldn't resolve module/action 'ns.coll.mod'. This often indicat
 task 'Forward': module 'ns.coll.mod' cannot run: <reason>
 ```
 
-La indicación de instalación aparece solo cuando falta la propia colección. Un módulo que falta en una colección instalada recibe solo la primera frase. `ansible.builtin.nosuch` también la recibe sola, porque ninguna colección puede aportar un nombre del espacio de nombres que posee ansible-core. Sin un ansible-core en el controlador, un nombre fuera de `ansible.builtin` se rechaza con la misma primera frase y el motivo por el que no se pudo consultar nada.
+La indicación de instalación aparece solo cuando falta la propia colección. Un módulo que falta en una colección instalada recibe solo la primera frase. `ansible.builtin.nosuch` también la recibe sola: el enrutamiento de ansible-core decide qué es un nombre así, y no hay ninguna colección que instalar. Sin un ansible-core en el controlador, un nombre que no es uno de los módulos propios de ansible-core se rechaza con la misma primera frase y el motivo por el que no se pudo consultar nada.
 
 Un módulo de colección nombrado solo en el archivo de un rol para otra plataforma también se resuelve. Si se puede construir, se une a la union. Todo lo demás se deja fuera sin detener la ejecución, y el include que llega a él falla para ese host antes de que se ejecute ninguna tarea del archivo:
 

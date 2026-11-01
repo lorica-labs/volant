@@ -338,6 +338,8 @@ sudo -H <form> -u <user> -- volant-agent
 
 The escalated agent is kept until the end of the play, so a play of escalated tasks pays for `sudo` once per host.
 
+Over a `local` connection the agent starts behind a shell that first prints a success line, as ansible-core's command prints its `BECOME-SUCCESS-<random>`. Whatever a `become_exe` wrapper prints before `sudo` runs is therefore never read as the agent's output, and it goes to the controller's standard error. With `ansible_local_become_strip_preamble: false` it is kept instead: what the wrapper printed and the success line go in front of the `stdout` and `stderr` of each `raw` task that escalates through that agent. Such tasks get an agent of their own.
+
 ### Which setting wins
 
 `become`, `become_user` and `become_method` are accepted on a play, a block and a task. Measured against Ansible:

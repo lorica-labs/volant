@@ -69,7 +69,7 @@ Un module d'une collection installée, comme `ansible.posix.sysctl` ou `communit
 
 Avant la première connexion, Volant demande à l'ansible-core du contrôleur ce qu'est chaque nom pointé. ansible-core cherche dans les chemins de collections qui lui sont configurés, comme `ANSIBLE_COLLECTIONS_PATH`, puis dans le répertoire `collections/` du runtime géré, où `volant runtime install --collections` les place. Volant n'installe rien pendant une exécution, et rien n'est téléchargé pour répondre.
 
-Un nom en dehors de `ansible.builtin` et `ansible.legacy` reçoit l'une de cinq réponses :
+Un nom qui n'est pas l'un des modules propres d'ansible-core reçoit l'une de cinq réponses. C'est aussi le cas d'un nom `ansible.builtin.` que le `ansible_builtin_runtime.yml` d'ansible-core redirige vers une collection :
 
 | Ce que trouve ansible-core | Ce que fait Volant |
 |---|---|
@@ -92,7 +92,7 @@ task 'Forward': couldn't resolve module/action 'ns.coll.mod'. This often indicat
 task 'Forward': module 'ns.coll.mod' cannot run: <reason>
 ```
 
-L'indication d'installation n'apparaît que lorsque la collection elle-même manque. Un module absent d'une collection installée reçoit la première phrase seule. `ansible.builtin.nosuch` la reçoit seule aussi, car aucune collection ne peut fournir un nom dans l'espace de noms qu'ansible-core possède. Sans ansible-core sur le contrôleur, un nom en dehors de `ansible.builtin` est refusé avec la même première phrase et la raison pour laquelle rien n'a pu le chercher.
+L'indication d'installation n'apparaît que lorsque la collection elle-même manque. Un module absent d'une collection installée reçoit la première phrase seule. `ansible.builtin.nosuch` la reçoit seule aussi : le routage d'ansible-core décide de ce que devient un tel nom, et il n'y a aucune collection à installer. Sans ansible-core sur le contrôleur, un nom qui n'est pas l'un des modules propres d'ansible-core est refusé avec la même première phrase et la raison pour laquelle rien n'a pu le chercher.
 
 Un module de collection nommé seulement dans un fichier de rôle pour une autre plateforme est lui aussi résolu. S'il peut être construit, il rejoint l'union. Tout le reste est écarté sans arrêter l'exécution, et l'include qui l'atteint échoue pour cet hôte avant que la moindre tâche du fichier s'exécute :
 

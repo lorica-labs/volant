@@ -12,7 +12,7 @@ cache-plugins                  #1334
 callback-dispatch              #1333
 callback_results               #1333
 conditionals                   #1282
-connection_local               #1337
+connection_local               #1369
 deprecations                   #1282
 filter_encryption              #1282
 fork_safe_stdio                #1333
@@ -22,7 +22,7 @@ interpreter_discovery_python   #1375
 inventory_cache                #1334
 inventory_script               #1282
 lookup_env                     #1282
-module_defaults                #1345
+module_defaults                #1367
 protomatter                    #1282
 remote_tmp                     #1336
 set_fact                       #1282

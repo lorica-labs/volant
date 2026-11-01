@@ -80,7 +80,6 @@ fn task_play(body: &str) -> String {
 #[case::retries_on_include_role(task_play("      include_role:\n        name: r\n      retries: 2\n"), &["keyword 'retries' is not supported yet on 'include_role'"])]
 #[case::delay_on_include_role(task_play("      include_role:\n        name: r\n      delay: 1\n"), &["keyword 'delay' is not supported yet on 'include_role'"])]
 #[case::strategy_unknown("- hosts: all\n  strategy: mitogen_free\n  tasks:\n    - command: echo hi\n".to_string(), &["strategy 'mitogen_free' is not supported yet"])]
-#[case::builtin_no_collection_can_supply(task_play("      ansible.builtin.nosuch: x=1\n"), &["couldn't resolve module/action 'ansible.builtin.nosuch'"])]
 fn the_preflight_refuses_by_name(#[case] text: String, #[case] needles: &[&str]) {
     let got = refusal(&text);
     for needle in needles {
@@ -106,6 +105,7 @@ fn the_preflight_refuses_by_name(#[case] text: String, #[case] needles: &[&str])
 #[case::host_pinned("- hosts: all\n  strategy: host_pinned\n  tasks:\n    - command: echo hi\n".to_string())]
 #[case::debug("- hosts: all\n  strategy: debug\n  tasks:\n    - command: echo hi\n".to_string())]
 #[case::builtin_by_full_name("- hosts: all\n  strategy: ansible.builtin.free\n  tasks:\n    - command: echo hi\n".to_string())]
+#[case::builtin_name_the_runtime_routes(task_play("      ansible.builtin.formerly_core_ping:\n"))]
 #[case::unknown_argument_is_the_agents(task_play(
     "      command: /bin/true\n      args:\n        no_such_arg: 1\n"
 ))]

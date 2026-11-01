@@ -17,7 +17,6 @@ deprecations                   #1282
 filter_encryption              #1282
 fork_safe_stdio                #1333
 gather_facts-errors            #1330
-gathering_facts                #1285
 include_vars                   #1282
 interpreter_discovery_python   #1284
 inventory_cache                #1334

@@ -48,13 +48,16 @@ fn a_galaxy_case_matches_the_reference() {
         std::fs::create_dir(&home).expect("a home");
         let mut inputs = galaxy::copy_inputs(&name, tmp.as_path());
         inputs.extend(galaxy::make_repos(&case.repos, tmp.as_path()));
+        let path = galaxy::quiet_git(tmp.as_path());
+        inputs.push(".quiet-git".to_string());
         let volant = |args: &[String]| {
             let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_volant"));
             command
                 .arg("galaxy")
                 .args(galaxy::argv(args, &server, tmp.as_path()))
                 .current_dir(tmp.as_path())
-                .env("HOME", &home);
+                .env("HOME", &home)
+                .env("PATH", &path);
             for (key, _) in std::env::vars_os() {
                 if key.to_string_lossy().starts_with("ANSIBLE_") {
                     command.env_remove(key);

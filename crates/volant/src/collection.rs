@@ -303,19 +303,28 @@ impl Resolved {
                 .filter(|name| !known.contains_key(name))
                 .collect()
         };
-        if let Some(first) = missing_actions.first() {
-            let bridge = bridge.ok_or_else(|| unresolved_action(first))?;
-            let found = bridge
-                .actions_resolve(&missing_actions)
-                .map_err(|e| e.to_string())?;
-            let mut known = self.actions.lock().unwrap_or_else(PoisonError::into_inner);
-            for (name, resolved) in found {
-                match resolved {
-                    Some(full) => {
-                        known.insert(name, full);
+        // A task's own module is asked about only to follow its redirect: without a helper, it
+        // keeps its name, and only a key nothing resolves is refused.
+        match bridge {
+            _ if missing_actions.is_empty() => {}
+            None => {
+                if let Some(key) = missing_actions.iter().find(|name| keys.contains(*name)) {
+                    return Err(unresolved_action(key));
+                }
+            }
+            Some(bridge) => {
+                let found = bridge
+                    .actions_resolve(&missing_actions)
+                    .map_err(|e| e.to_string())?;
+                let mut known = self.actions.lock().unwrap_or_else(PoisonError::into_inner);
+                for (name, resolved) in found {
+                    match resolved {
+                        Some(full) => {
+                            known.insert(name, full);
+                        }
+                        None if keys.contains(&name) => return Err(unresolved_action(&name)),
+                        None => {}
                     }
-                    None if keys.contains(&name) => return Err(unresolved_action(&name)),
-                    None => {}
                 }
             }
         }

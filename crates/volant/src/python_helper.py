@@ -1592,7 +1592,9 @@ def owned_connection(link, context, task, task_vars, templar):
     if task_vars.get("ansible_become") is not None:
         becomes = boolean(templar.template(task_vars["ansible_become"]))
     else:
-        becomes = task.become
+        # The controller settles the escalation of the link, a `become` written on the play or
+        # as a template included, and sends it on the play context: the task carries none of it.
+        becomes = task.become or context.become
     # A boolean, as `set_task_and_variable_override` leaves it: `network_cli` compares it with `^`.
     context.become = bool(becomes)
     become = None
@@ -1617,6 +1619,8 @@ def owned_connection(link, context, task, task_vars, templar):
     task_keys = task.dump_attrs()
     # The task's own `timeout` is not the connection's, and its `retries` are not either.
     task_keys["timeout"] = context.timeout
+    if context.become and not task_keys.get("become_user"):
+        task_keys["become_user"] = context.become_user
     if context.password:
         task_keys["password"] = context.password
     task_keys.pop("retries", None)

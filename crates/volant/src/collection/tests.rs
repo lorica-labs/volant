@@ -131,6 +131,30 @@ fn a_group_nobody_defined_names_itself() {
     );
 }
 
+/// `t.c.redirected` is an action redirected to `t.c.eos` whose module redirects to `t.c.module`:
+/// the defaults of the action reach it, those of the module do not.
+#[test]
+fn a_redirected_action_gets_the_defaults_of_the_action() {
+    let resolve = |name: &str| match name {
+        "t.c.redirected" | "t.c.eos" => Some("t.c.eos".to_string()),
+        "t.c.module" => Some(name.to_string()),
+        _ => None,
+    };
+    let of = |key: &str| {
+        defaults_for(
+            "t.c.redirected",
+            &resolve,
+            &[json!({key: {"a": 1}})],
+            &groups(),
+            &mut as_written,
+        )
+        .expect("defaults")
+    };
+    assert_eq!(Value::Object(of("t.c.module")), json!({}));
+    assert_eq!(Value::Object(of("t.c.eos")), json!({"a": 1}));
+    assert_eq!(Value::Object(of("t.c.redirected")), json!({"a": 1}));
+}
+
 /// A `with_<name>` is asked about unless `ansible.builtin` ships the lookup, under either of its
 /// two prefixes.
 #[test]

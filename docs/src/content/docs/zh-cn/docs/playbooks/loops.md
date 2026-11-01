@@ -1,5 +1,5 @@
 ---
-sourceHash: 480ffa167c92
+sourceHash: c2d8411de0e5
 title: 循环与重试
 description: loop、with_items 和 loop_control，以及 until、retries 和 delay 如何重复运行一个 task。
 ---

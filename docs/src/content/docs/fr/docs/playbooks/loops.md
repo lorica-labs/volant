@@ -1,5 +1,5 @@
 ---
-sourceHash: 480ffa167c92
+sourceHash: c2d8411de0e5
 title: Boucles et nouvelles tentatives
 description: loop, with_items et loop_control, et comment until, retries et delay répètent une tâche.
 ---

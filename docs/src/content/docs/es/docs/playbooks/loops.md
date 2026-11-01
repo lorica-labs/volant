@@ -1,5 +1,5 @@
 ---
-sourceHash: 480ffa167c92
+sourceHash: c2d8411de0e5
 title: Bucles y reintentos
 description: loop, with_items y loop_control, y cómo until, retries y delay repiten una tarea.
 ---

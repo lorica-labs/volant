@@ -1368,8 +1368,13 @@ fn facts_cannot_pick_the_user_port_or_connection(#[case] name: &str, #[case] val
         "h1 ansible_host=real ansible_user=ops ansible_port=2200\n",
     )
     .unwrap();
-    let mut store =
-        crate::vars::VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
+    let mut store = crate::vars::VarStore::new(
+        &inventory,
+        None,
+        Path::new("."),
+        crate::tags::Tagged::default(),
+    )
+    .unwrap();
     let mut facts = Map::new();
     facts.insert(name.to_string(), value);
     assert_eq!(store.gather_facts("h1", &facts), [name]);

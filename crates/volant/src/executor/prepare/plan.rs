@@ -4,7 +4,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use serde_json::{Map, Value};
 use tokio::sync::{Notify, watch};
 
 use crate::compile::Compiled;
@@ -49,7 +48,7 @@ pub(in crate::executor) struct PlayPlan {
     /// forks go out in the batch's order and not in the order the scheduler starts the drivers.
     pub(in crate::executor) queue: Vec<String>,
     pub(in crate::executor) turn: watch::Sender<usize>,
-    pub(in crate::executor) play_vars: Map<String, Value>,
+    pub(in crate::executor) play_vars: crate::tags::Tagged,
     /// The `vars_files` maps of each host, in the order the play lists the files.
     pub(in crate::executor) vars_files: HashMap<String, Arc<crate::vars::VarsFiles>>,
     /// Every host the play resolved, whatever batch it belongs to and whether it has failed or

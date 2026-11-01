@@ -8,7 +8,7 @@ use crate::playbook::PlayTask;
 use crate::template::Templar;
 
 use super::builder::Builder;
-use super::inherit::extend;
+use crate::vars::extend;
 
 impl Builder<'_> {
     /// An import's path, rendered when it holds a template. Measured on ansible-core 2.19.12: it

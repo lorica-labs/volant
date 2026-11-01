@@ -56,7 +56,7 @@ fn local_host() -> Host {
     vars.insert("ansible_connection".to_string(), json!("local"));
     Host {
         name: "localhost".to_string(),
-        vars,
+        vars: vars.into(),
     }
 }
 

@@ -294,7 +294,10 @@ pub(crate) fn graft(
 /// the roles of other hosts see it as well, because the reference keeps the list in the play and
 /// not in the host.
 fn publish_roles(base: &mut Compiled, brought: &mut [RoleVars]) {
-    let mut group = (Map::new(), Map::new());
+    let mut group = (
+        crate::tags::Tagged::default(),
+        crate::tags::Tagged::default(),
+    );
     for role in brought.iter() {
         extend(&mut group.0, &role.defaults);
         extend(&mut group.1, &role.vars);
@@ -329,7 +332,7 @@ pub(crate) fn include_role_entry(args: &Map<String, Value>) -> anyhow::Result<Ro
     Ok(RoleEntry {
         // As for `import_role`: everything the statement says is an argument of the statement,
         // and what it hands the role travels in the task's own `vars:`.
-        params: Map::new(),
+        params: crate::tags::Tagged::default(),
         keywords: PlayTask::empty(),
         // An include keeps the variables of its role to the role unless it says `public: true`,
         // and unlike an import it runs its role again unless it says `allow_duplicates: false`.

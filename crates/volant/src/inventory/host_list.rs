@@ -66,7 +66,7 @@ impl InventoryPlugin for HostList {
                 (vec![item.to_string()], None)
             });
             for host in hosts {
-                if into.add_source_host(&host, port, serde_json::Map::new(), None) {
+                if into.add_source_host(&host, port, crate::tags::Tagged::default(), None) {
                     into.add_member(&host, "ungrouped");
                 }
             }

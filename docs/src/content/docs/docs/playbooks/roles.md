@@ -46,7 +46,7 @@ roles:
 
 The task carries the role's `short_description` after a dash, so `--list-tasks` shows `Validating arguments against arg spec 'main' - The spec role`. It is tagged `always`, so no `--tags` selection drops it.
 
-Checks run in the order Ansible runs them: a missing required argument, then a type, then a value outside `choices`, then an argument the spec does not name. Sub-options, `aliases`, `default` and `mutually_exclusive` are not checked yet.
+Checks run in Ansible's order and use its messages: a missing required argument, a type (`bytes`, `bits`, `json` and the rest), a value outside `choices`, then sub-options at any depth, each with its own `required`, `aliases`, `mutually_exclusive` and `required_*` rules. Arguments the spec does not name come last, in one message. A string given for a `dict` option is read as JSON or `key=value`; Volant does not evaluate it as a Python literal the way Ansible does.
 
 ## Role variables
 

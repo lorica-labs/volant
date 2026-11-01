@@ -104,6 +104,10 @@ pub(super) async fn run_plugin_items(
     let mut stopped = false;
     let mut broken_at = None;
     let mut outcome = Ok(BatchOutcome::Completed);
+    // The items of a loop over a connection plugin share one connection, opened by the first and
+    // closed after the last, as `TaskExecutor` keeps its connection for the whole task.
+    let keep = (look.items.len() > 1 && matches!(look.transport, Transport::Python(_)))
+        .then(|| look.name.to_string());
     for ii in 0..look.items.len() {
         let (at, passed) = broke_before(
             look.task,
@@ -148,7 +152,10 @@ pub(super) async fn run_plugin_items(
             .as_ref()
             .map_or(look.escalation, Option::as_ref);
         let start = PluginStart {
-            link: &LinkFacts::of(look.transport, escalation, delegate),
+            link: &LinkFacts {
+                keep: keep.clone(),
+                ..LinkFacts::of(look.transport, escalation, delegate)
+            },
             kind: look.kind,
             running_vars: running_host_vars(delegate, std::slice::from_ref(item)),
             templar: look.templar,
@@ -217,6 +224,9 @@ pub(super) async fn run_plugin_items(
                 })
                 .await;
         }
+    }
+    if let (Some(keep), Some(bridge)) = (&keep, look.templar.bridge()) {
+        bridge.release(keep);
     }
 
     ItemsEnded {

@@ -1,5 +1,5 @@
 ---
-sourceHash: fc8e4351f40d
+sourceHash: 7668cce931df
 title: Connexions et become
 description: Comment Volant atteint un hôte, les variables d'hôte et les paramètres d'ansible.cfg qu'il lit, et comment become fonctionne avec sudo et su.
 ---
@@ -192,7 +192,7 @@ Avec `-vvvv`, la première ligne est `ESTABLISH PARAMIKO SSH CONNECTION FOR USER
 
 ## Connexions que seul ansible-core possède
 
-Volant joint un hôte par l'une de deux voies. Pour `ssh`, `local` et les connexions listées plus haut, il lance son agent sur l'hôte et lui envoie les tâches. Pour tout autre plugin de connexion que l'ansible-core du contrôleur sait charger, aucun agent ne tourne : chaque tâche qui a besoin de l'hôte va à l'assistant Python de Volant, qui charge le plugin de connexion, se connecte, exécute par lui le plugin d'action de la tâche comme `ansible-playbook` le ferait, puis referme la connexion. ansible-core lit chaque option du plugin dans les variables de l'hôte, dans `ansible.cfg` et dans l'environnement, comme toujours.
+Volant joint un hôte par l'une de deux voies. Pour `ssh`, `local` et les connexions listées plus haut, il lance son agent sur l'hôte et lui envoie les tâches. Pour tout autre plugin de connexion que l'ansible-core du contrôleur sait charger, aucun agent ne tourne : chaque tâche qui a besoin de l'hôte va à l'assistant Python de Volant, qui charge le plugin de connexion, se connecte, exécute par lui le plugin d'action de la tâche comme `ansible-playbook` le ferait, puis referme la connexion une fois la tâche finie. Les éléments d'une boucle partagent une seule connexion, comme sous `ansible-playbook`. ansible-core lit chaque option du plugin dans les variables de l'hôte, dans `ansible.cfg` et dans l'environnement, comme toujours.
 
 Tout le reste de l'exécution est inchangé : boucles, `when`, `register`, `changed_when`, `failed_when`, `until` et `retries`, `ignore_errors`, `no_log`, `serial`, `delegate_to`, handlers, `async` avec `poll: 0` et `async_status`, le mode vérification et le récapitulatif. Une tâche qui s'exécute sur le contrôleur, comme `debug` ou `set_fact`, s'y exécute comme avant.
 

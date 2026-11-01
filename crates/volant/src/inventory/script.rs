@@ -58,7 +58,7 @@ impl InventoryPlugin for Script {
                         )));
                     }
                 };
-                into.add_source_host(host, None, vars.into_iter().collect(), origin);
+                into.add_source_host(host, None, script_tagged(path, vars), origin);
             }
         } else {
             cx.deprecate(deprecation(
@@ -69,7 +69,7 @@ impl InventoryPlugin for Script {
             ));
             for host in &hosts {
                 let vars = host_variables(path, host)?;
-                into.add_source_host(host, None, vars.into_iter().collect(), origin);
+                into.add_source_host(host, None, script_tagged(path, vars), origin);
             }
         }
         Ok(())
@@ -77,6 +77,22 @@ impl InventoryPlugin for Script {
 }
 
 /// A deprecation of the script plugin, worded and ended as the reference's `display.deprecated`.
+/// Where the reference says an inventory script's values come from.
+fn script_origin(path: &str) -> crate::tags::OriginId {
+    crate::tags::origin_described(&format!("<inventory script output from {}>", py_repr(path)))
+}
+
+/// A host's variables from a script's output, trusted as the reference trusts that output.
+fn script_tagged(path: &str, vars: Map<String, Value>) -> crate::tags::Tagged {
+    let origin = script_origin(path);
+    let mut out = crate::tags::Tagged::default();
+    for (key, value) in vars {
+        let tree = crate::tags::uniform(&value, origin, true);
+        out.insert(key, value, tree);
+    }
+    out
+}
+
 fn deprecation(path: &str, what: &str) -> String {
     format!(
         "{what} This feature will be removed from inventory plugin 'script' in ansible-core \
@@ -421,7 +437,12 @@ fn group(
             if !hosts.contains(host) {
                 hosts.push(host.clone());
             }
-            into.add_source_host(host, None, Map::new(), Some(source.path()));
+            into.add_source_host(
+                host,
+                None,
+                crate::tags::Tagged::default(),
+                Some(source.path()),
+            );
             into.add_member(host, name);
         }
     }
@@ -435,7 +456,14 @@ fn group(
                     into.group_mut(name).priority = Some(p);
                 }
             } else {
-                into.group_mut(name).vars.insert(key.clone(), value.clone());
+                let tree = crate::tags::uniform(
+                    value,
+                    script_origin(&source.path().display().to_string()),
+                    true,
+                );
+                into.group_mut(name)
+                    .vars
+                    .insert(key.clone(), value.clone(), tree);
             }
         }
     }

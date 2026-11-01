@@ -4,7 +4,7 @@
 
 use anyhow::{Context, bail};
 use saphyr::{Scalar, Yaml};
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use crate::yaml::{field, to_json};
 
@@ -49,7 +49,7 @@ pub(super) struct Import {
     tags: Vec<String>,
     /// The names of a `tags` among the variables of the entry, see [`Import::apply`].
     var_tags: Vec<String>,
-    vars: Map<String, Value>,
+    vars: crate::tags::Tagged,
 }
 
 impl Import {
@@ -68,10 +68,10 @@ impl Import {
         };
         refuse_template("when", &when)?;
         let mut vars = match field(entry, "vars") {
-            None | Some(Yaml::Value(Scalar::Null)) => Map::new(),
+            None | Some(Yaml::Value(Scalar::Null)) => crate::tags::Tagged::default(),
             Some(node @ Yaml::Mapping(_)) => match to_json(node).context("'vars'")? {
-                Value::Object(map) => map,
-                _ => Map::new(),
+                Value::Object(map) => super::origin::tagged_vars(node, map),
+                _ => crate::tags::Tagged::default(),
             },
             Some(_) => bail!("Vars in a PlaybookInclude must be specified as a dictionary."),
         };
@@ -127,7 +127,7 @@ impl Import {
         play.tags.extend(self.tags.iter().cloned());
         play.tags.sort_unstable();
         play.tags.dedup();
-        play.vars.extend(self.vars.clone());
+        play.vars.overlay(&self.vars);
         if !self.when.is_empty() {
             let inner = std::mem::take(&mut play.import_when);
             play.import_when = self.when.iter().cloned().chain(inner).collect();

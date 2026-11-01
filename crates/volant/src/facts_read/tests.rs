@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::collections::BTreeSet;
 
-use serde_json::Map;
-
 use super::decide::native_gather_allowed;
 use super::*;
 use crate::compile::Compiled;
@@ -50,8 +48,13 @@ impl Tree {
             .collect();
         let reach = Reach::walk(&walked).unwrap_or_else(|e| panic!("{e:#}"));
         let inventory = crate::inventory::Inventory::parse_ini(inventory).expect("an inventory");
-        let store =
-            VarStore::new(&inventory, None, self.0.path(), Map::new()).expect("a var store");
+        let store = VarStore::new(
+            &inventory,
+            None,
+            self.0.path(),
+            crate::tags::Tagged::default(),
+        )
+        .expect("a var store");
         let plays: Vec<(&Play, &Compiled)> = pb.plays.iter().zip(&compiled).collect();
         facts_read(&plays, &reach, &store)
     }

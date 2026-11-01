@@ -47,6 +47,8 @@ enum State {
 #[derive(Default)]
 struct Actions {
     idle: Vec<ActionHelper>,
+    /// The helper holding the connection a `link.keep` names, out of the pool until released.
+    kept: HashMap<String, ActionHelper>,
     /// Why no helper could start; every later action fails with it and nothing retries.
     broken: Option<BridgeError>,
     next: u64,
@@ -56,7 +58,7 @@ impl Drop for Actions {
     /// Every idle helper is asked to stop before any is waited for, so the run's exit waits
     /// for the slowest of them rather than for each in turn.
     fn drop(&mut self) {
-        for helper in &mut self.idle {
+        for helper in self.idle.iter_mut().chain(self.kept.values_mut()) {
             helper.close_input();
         }
     }

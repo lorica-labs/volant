@@ -12,19 +12,20 @@ use super::facts::no_facts;
 use super::load::{extend, extend_except};
 use super::{Added, HostFacts, Scope, VarStore};
 use crate::inventory::{LOCALHOST_NAMES, is_localhost};
+use crate::tags::Tagged;
 use crate::template::HOSTVARS_KEYS;
 
 /// One host's variables as `layered_for_host` hands them out.
 #[derive(Debug)]
 pub struct Layers {
     /// Every layer but the two below.
-    pub map: Map<String, Value>,
+    pub map: Tagged,
     /// The inventory-wide values: `shared_values`.
     pub shared: Arc<Map<String, Value>>,
     /// The gathered facts that answer.
     pub facts: Arc<Map<String, Value>>,
     /// The `vars_files` values no render changes, read after `map`: `VarsFiles::plain`.
-    pub files: Arc<Map<String, Value>>,
+    pub files: Arc<Tagged>,
 }
 
 impl VarStore {
@@ -220,13 +221,13 @@ impl VarStore {
         let gathered = self.gathered.get(host).unwrap_or_else(|| no_facts());
         let (shadowed, answering): (BTreeSet<String>, BTreeSet<String>) = {
             let above = [
-                Some(&scope.play_vars),
-                Some(&scope.role_vars),
-                Some(&scope.task_vars),
-                self.included.get(host),
-                self.facts.get(host),
-                Some(&scope.role_params),
-                Some(&self.extra),
+                Some(scope.play_vars.as_map()),
+                Some(scope.role_vars.as_map()),
+                Some(scope.task_vars.as_map()),
+                self.included.get(host).map(Tagged::as_map),
+                self.facts.get(host).map(Tagged::as_map),
+                Some(scope.role_params.as_map()),
+                Some(self.extra.as_map()),
                 Some(&magic),
             ];
             gathered.keys().cloned().partition(|name| {
@@ -234,28 +235,30 @@ impl VarStore {
                     || scope.vars_files.contains_key(name)
             })
         };
-        let mut map = Map::new();
-        extend_except(&mut map, &scope.role_defaults, &answering);
-        extend_except(&mut map, &self.host_base(host), &answering);
-        extend(&mut map, &scope.play_vars);
+        let mut map = Tagged::default();
+        map.extend_except(&scope.role_defaults, &answering);
+        map.extend_except(&self.host_base(host), &answering);
+        map.extend(&scope.play_vars);
         // The plain half of the `vars_files` is read after this map, so a name it holds leaves
         // the layers below it here, and every layer above it lands in the map.
         let files = Arc::clone(&scope.vars_files.plain);
         if !files.is_empty() {
             map.retain(|name, _| !files.contains_key(name));
         }
-        extend(&mut map, &scope.vars_files.templated);
-        extend(&mut map, &scope.role_vars);
-        extend(&mut map, &scope.task_vars);
+        map.extend(&scope.vars_files.templated);
+        map.extend(&scope.role_vars);
+        map.extend(&scope.task_vars);
         if let Some(included) = self.included.get(host) {
-            extend(&mut map, included);
+            map.extend(included);
         }
         if let Some(facts) = self.facts.get(host) {
-            extend(&mut map, facts);
+            map.extend(facts);
         }
-        extend(&mut map, &scope.role_params);
-        extend(&mut map, &self.extra);
-        map.extend(magic);
+        map.extend(&scope.role_params);
+        map.extend(&self.extra);
+        for (name, value) in magic {
+            map.insert(name, value, None);
+        }
         let facts = self.facts_for(host, shadowed);
         crate::profile::count(crate::profile::Counter::LayersBuilt, 1);
         crate::profile::count(
@@ -315,48 +318,48 @@ impl VarStore {
 
     /// Inventory-level sources for one host, without play, facts, extra or magic variables.
     /// This is what other hosts see through `hostvars`.
-    pub(super) fn host_base(&self, host: &str) -> Map<String, Value> {
+    pub(super) fn host_base(&self, host: &str) -> Tagged {
         self.host_base_in(host, false)
     }
 
     /// `host_base`, and with `lazy` the implicit host's interpreter left as `PENDING_PYTHON`
     /// for `settled` to fill in. Finding the controller's interpreter starts a Python, which a
     /// run that never reads `hostvars['localhost']` must not pay for.
-    fn host_base_in(&self, host: &str, lazy: bool) -> Map<String, Value> {
+    fn host_base_in(&self, host: &str, lazy: bool) -> Tagged {
         // A spelling of the controller that the inventory lists under another one is that host.
         let host = self.controller_alias(host).unwrap_or(host);
-        let mut vars = Map::new();
+        let mut vars = Tagged::default();
         // Inventory group vars and inventory host vars arrive already merged in Ansible's
         // group order from `Inventory::resolve`; the `group_vars` files slot in between, `all`
         // first, so the merged inventory view is applied first and the files after. Measured on
         // ansible-core 2.19.12, a playbook `group_vars/all` file beats a child group's variable
         // in the inventory file.
         if let Some(inv) = self.inventory_vars.get(host) {
-            extend(&mut vars, inv);
+            vars.extend(inv);
         } else if self.is_implicit_localhost(host) {
             // Measured on ansible-core 2.19.12: the implicit `localhost` is in no group, and it
             // still reads the inventory's `all` variables, those of every source.
             let mut all = self.dynamic.group_vars_of("all");
             all.remove("ansible_group_priority");
-            extend(&mut vars, &all);
+            vars.extend_untagged(&all);
         }
         for files in &self.group_files {
             if let Some(all) = files.get("all") {
-                extend(&mut vars, all);
+                vars.extend(all);
             }
         }
         if let Some(names) = self.group_names.get(host) {
             for files in &self.group_files {
                 for name in names {
                     if let Some(group) = files.get(name) {
-                        extend(&mut vars, group);
+                        vars.extend(group);
                     }
                 }
             }
         }
         // Inventory host vars must beat `group_vars/<group>` files: re-apply them on top.
         if let Some(host_only) = self.host_line_vars.get(host) {
-            extend(&mut vars, host_only);
+            vars.extend(host_only);
         }
         // A name the inventory never carried is an implicit `localhost`, which connects locally.
         // The reference sets it on the host object, that is at the inventory host var layer, and
@@ -368,6 +371,7 @@ impl VarStore {
             vars.insert(
                 "ansible_connection".into(),
                 Value::String("local".to_string()),
+                None,
             );
             // The reference also sets the controller's own interpreter there
             // (`sys.executable`), at the same layer, so the host runs Python tasks under it
@@ -376,14 +380,19 @@ impl VarStore {
                 vars.insert(
                     "ansible_python_interpreter".into(),
                     Value::String(PENDING_PYTHON.to_string()),
+                    None,
                 );
             } else if let Some(python) = crate::runtime::resolve::controller_python() {
-                vars.insert("ansible_python_interpreter".into(), Value::String(python));
+                vars.insert(
+                    "ansible_python_interpreter".into(),
+                    Value::String(python),
+                    None,
+                );
             }
         }
         for files in &self.host_files {
             if let Some(h) = files.get(host) {
-                extend(&mut vars, h);
+                vars.extend(h);
             }
         }
         vars
@@ -393,7 +402,7 @@ impl VarStore {
     /// own identity. The reference carries `inventory_hostname` inside `hostvars[x]`, so a task
     /// naming another host can ask who that host is.
     pub(super) fn host_view(&self, host: &str) -> Map<String, Value> {
-        let mut base = self.host_base_in(host, true);
+        let mut base = self.host_base_in(host, true).into_values();
         match self.gathered.get(host) {
             Some(gathered) => extend(&mut base, gathered),
             None => extend(&mut base, no_facts()),

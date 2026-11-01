@@ -26,7 +26,7 @@ impl VarStore {
     /// What `ansible-inventory` prints for a host: the inventory-level variables, `group_vars` and
     /// `host_vars` files included, with the extra variables on top.
     pub fn listed_vars(&self, host: &str) -> Map<String, Value> {
-        let mut vars = self.host_base(host);
+        let mut vars = self.host_base(host).into_values();
         extend(&mut vars, &self.extra);
         vars
     }
@@ -39,8 +39,8 @@ impl VarStore {
         let vars = self.listed_vars(host);
         let host = self.controller_alias(host).unwrap_or(host);
         let mut order: Vec<String> = group_names.to_vec();
-        let mut push = |map: Option<&Map<String, Value>>| {
-            order.extend(map.into_iter().flat_map(Map::keys).cloned());
+        let mut push = |map: Option<&super::Tagged>| {
+            order.extend(map.into_iter().flat_map(|m| m.keys()).cloned());
         };
         for files in &self.group_files {
             push(files.get("all"));
@@ -82,7 +82,11 @@ impl VarStore {
     /// `host_vars` files set, without its groups' variables or the extra ones.
     pub fn exported_vars(&self, host: &str) -> Map<String, Value> {
         let host = self.controller_alias(host).unwrap_or(host);
-        let mut vars = self.host_line_vars.get(host).cloned().unwrap_or_default();
+        let mut vars = self
+            .host_line_vars
+            .get(host)
+            .map(|t| t.as_map().clone())
+            .unwrap_or_default();
         for files in &self.host_files {
             if let Some(h) = files.get(host) {
                 extend(&mut vars, h);
@@ -97,7 +101,7 @@ impl VarStore {
             return ListedOrigin::Extra;
         }
         let host = self.controller_alias(host).unwrap_or(host);
-        let has = |map: Option<&Map<String, Value>>| map.is_some_and(|m| m.contains_key(name));
+        let has = |map: Option<&super::Tagged>| map.is_some_and(|m| m.contains_key(name));
         if self.host_files.iter().any(|files| has(files.get(host)))
             || has(self.host_line_vars.get(host))
         {

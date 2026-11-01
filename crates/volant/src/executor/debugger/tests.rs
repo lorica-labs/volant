@@ -103,7 +103,9 @@ fn a_line_at_the_prompt_answers_as_the_reference_does(
     #[case] next: Next,
 ) {
     let mut s = session_for_tests("h1", "t_ok");
-    s.vars.map.insert("x".to_string(), serde_json::json!(1));
+    s.vars
+        .map
+        .insert("x".to_string(), serde_json::json!(1), None);
     assert_eq!(typed(&mut s, &[line]), (printed.to_string(), next));
 }
 

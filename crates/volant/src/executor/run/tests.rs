@@ -67,7 +67,13 @@ use volant_protocol::{BatchOutcome, FromAgent, StagedFile, Task, TaskResult, ToA
 async fn every_local_module_has_an_arm_in_run_local() {
     let inventory = crate::inventory::Inventory::parse_ini("h1\n").expect("an inventory");
     let store = Mutex::new(
-        VarStore::new(&inventory, None, Path::new("."), Map::new()).expect("a var store"),
+        VarStore::new(
+            &inventory,
+            None,
+            Path::new("."),
+            crate::tags::Tagged::default(),
+        )
+        .expect("a var store"),
     );
     let templar = Templar::new(PathBuf::from("."));
     let step = Step {
@@ -147,7 +153,13 @@ async fn local_with(module: &str, args: Value, host_vars: HostVars) -> TaskResul
     };
     let inventory = crate::inventory::Inventory::parse_ini("h1\n").expect("an inventory");
     let store = Mutex::new(
-        VarStore::new(&inventory, None, Path::new("."), Map::new()).expect("a var store"),
+        VarStore::new(
+            &inventory,
+            None,
+            Path::new("."),
+            crate::tags::Tagged::default(),
+        )
+        .expect("a var store"),
     );
     let step = Step {
         kind: StepKind::Task,
@@ -745,7 +757,7 @@ fn the_failed_task_carries_the_reference_s_own_keys() {
     task.register = Some("b".to_string());
     task.when = vec!["true".to_string()];
     task.tags = vec!["t1".to_string()];
-    task.vars = vars(json!({"v": 1}));
+    task.vars = crate::tags::Tagged::from(vars(json!({"v": 1})));
     task.connect.port = Some("22".to_string());
     let value = failed_task_value(&task);
     let object = value.as_object().expect("an object");
@@ -2121,7 +2133,7 @@ async fn plugin_item_on<R: Relink<FakeAgent>>(
         ..bare_item()
     };
     let running = HostVars {
-        map: vars(running),
+        map: crate::tags::Tagged::from(vars(running)),
         ..HostVars::default()
     };
     let templar = Templar::new(PathBuf::from("."));
@@ -4008,7 +4020,13 @@ fn payload(blob: &str, interpreter: &str) -> volant_protocol::PythonPayload {
 
 fn one_host_store() -> VarStore {
     let inventory = crate::inventory::Inventory::parse_ini("h1\n").expect("an inventory");
-    VarStore::new(&inventory, None, Path::new("."), Map::new()).expect("a var store")
+    VarStore::new(
+        &inventory,
+        None,
+        Path::new("."),
+        crate::tags::Tagged::default(),
+    )
+    .expect("a var store")
 }
 
 fn registered(store: &mut VarStore, value: Value) {
@@ -4180,7 +4198,9 @@ fn a_python_module_result_is_untrusted_and_never_rendered() {
         let templar = Templar::new(PathBuf::from("."));
         let render = |store: &mut VarStore| {
             let vars = HostVars {
-                map: store.for_host("h1", &crate::vars::Scope::default()),
+                map: crate::tags::Tagged::from(
+                    store.for_host("h1", &crate::vars::Scope::default()),
+                ),
                 untrusted: store.untrusted_of("h1", &crate::vars::Scope::default()),
                 untrusted_hosts: store.untrusted_hosts(),
                 ..HostVars::default()
@@ -4210,6 +4230,7 @@ fn a_python_module_result_is_untrusted_and_never_rendered() {
             "h1",
             "probe",
             json!({"msg": format!("{{{{ lookup('pipe', 'touch {}') }}}}", author.display())}),
+            None,
         );
         render(&mut store).expect("an author-side template renders");
         assert!(author.exists(), "the lookup itself does nothing here");
@@ -4223,7 +4244,7 @@ fn gathered_facts_are_untrusted_and_land_under_both_names() {
     let mut store = one_host_store();
     let render = |store: &mut VarStore, text: &str| {
         let vars = HostVars {
-            map: store.for_host("h1", &crate::vars::Scope::default()),
+            map: crate::tags::Tagged::from(store.for_host("h1", &crate::vars::Scope::default())),
             untrusted: store.untrusted_of("h1", &crate::vars::Scope::default()),
             untrusted_hosts: store.untrusted_hosts(),
             ..HostVars::default()
@@ -4285,7 +4306,7 @@ fn gathered_facts_are_untrusted_and_land_under_both_names() {
             "{name} carries a managed host's own words"
         );
     }
-    store.set_fact("h1", "ansible_hostname", json!("SHADOWED"));
+    store.set_fact("h1", "ansible_hostname", json!("SHADOWED"), None);
     assert_eq!(
         render(
             &mut store,
@@ -4341,7 +4362,13 @@ fn a_gathered_fact_is_data_and_moves_nothing_it_should_not() {
             "h1 ansible_host=192.0.2.10 ansible_python_interpreter=/usr/bin/python3\n",
         )
         .expect("an inventory");
-        let mut store = VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
+        let mut store = VarStore::new(
+            &inventory,
+            None,
+            Path::new("."),
+            crate::tags::Tagged::default(),
+        )
+        .unwrap();
         let result = TaskResult(vars(json!({
             "ansible_facts": {
                 "ansible_host": "203.0.113.9",
@@ -4450,7 +4477,7 @@ fn a_gathered_fact_is_data_and_moves_nothing_it_should_not() {
         record_facts(&mut store, &["h1".to_string()], &[(None, result)]);
         let templar = Templar::new(PathBuf::from("."));
         let vars = HostVars {
-            map: store.for_host("h1", &crate::vars::Scope::default()),
+            map: crate::tags::Tagged::from(store.for_host("h1", &crate::vars::Scope::default())),
             untrusted: store.untrusted_of("h1", &crate::vars::Scope::default()),
             untrusted_hosts: store.untrusted_hosts(),
             ..HostVars::default()
@@ -4501,7 +4528,7 @@ async fn a_real_link_s_stop_batch_forward_reaches_the_agent() {
     vars.insert("ansible_connection".to_string(), json!("local"));
     let host = crate::inventory::Host {
         name: "localhost".to_string(),
-        vars,
+        vars: vars.into(),
     };
     let defaults = ConnectionDefaults {
         remote_user: None,
@@ -4871,7 +4898,10 @@ async fn a_connect_timeout_reaches_the_connection_as_ssh_s_connecttimeout() {
     {
         let host = crate::inventory::Host {
             name: "h1".to_string(),
-            vars: Map::from_iter([("ansible_host".to_string(), json!("probe-hostname"))]),
+            vars: crate::tags::Tagged::from(Map::from_iter([(
+                "ansible_host".to_string(),
+                json!("probe-hostname"),
+            )])),
         };
         let defaults = ConnectionDefaults {
             remote_user: None,
@@ -5443,7 +5473,7 @@ h1
 ",
     )
     .unwrap();
-    let mut store = VarStore::new(&inv, None, tmp.path(), Map::new()).unwrap();
+    let mut store = VarStore::new(&inv, None, tmp.path(), crate::tags::Tagged::default()).unwrap();
     let ok = |value: Value| vec![(None, TaskResult(value.as_object().unwrap().clone()))];
     let added = json!({"add_host": {"host_name": "n1", "groups": ["g1"], "host_vars": {"x": 1}}});
     record_inventory_results(
@@ -5684,7 +5714,8 @@ fn a_name_from_a_hosts_text_is_data_whatever_it_holds() {
                 item
             })
             .collect();
-        let mut store = VarStore::new(&inv, None, tmp.path(), Map::new()).unwrap();
+        let mut store =
+            VarStore::new(&inv, None, tmp.path(), crate::tags::Tagged::default()).unwrap();
         record_inventory_results(
             &mut store,
             &task(case.module),
@@ -5801,10 +5832,10 @@ async fn an_include_vars_merge_keeps_the_trust_of_both_sides() {
         let templar = Templar::new(PathBuf::from("."));
         let mut host_vars = HostVars::default();
         for name in ["r", "h"] {
-            host_vars.map.insert(name.into(), host_dict.clone());
+            host_vars.map.insert(name.into(), host_dict.clone(), None);
             host_vars.untrusted.insert(name.into());
         }
-        host_vars.map.insert("plain".into(), json!({"a": 1}));
+        host_vars.map.insert("plain".into(), json!({"a": 1}), None);
         let mut written = task("include_vars");
         written.args = vars(args);
         let item = Item {

@@ -79,7 +79,7 @@ pub(crate) fn task(module: &str) -> PlayTask {
 /// A host's variables as the render path carries them: the map, and an empty shared view.
 pub(crate) fn hvars(v: Value) -> HostVars {
     HostVars {
-        map: vars(v),
+        map: crate::tags::Tagged::from(vars(v)),
         ..HostVars::default()
     }
 }

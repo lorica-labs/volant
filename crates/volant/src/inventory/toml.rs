@@ -65,7 +65,7 @@ pub(super) fn read_text(
     if data.get("plugin").is_some_and(|p| !falsy(p)) {
         return Err("Plugin configuration TOML file, not TOML inventory".to_string());
     }
-    read_groups(&data, Dialect::Toml, inv, None, cx)
+    read_groups(&data, None, Dialect::Toml, inv, None, cx)
 }
 
 fn table<'a>(entries: impl Iterator<Item = (&'a str, &'a Item)>) -> Value {

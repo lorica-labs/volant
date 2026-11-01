@@ -28,14 +28,14 @@ use super::prepare::{
 };
 use super::report::report_task;
 use super::run::{
-    Attempt, DISCOVERED_INTERPRETER, DISCOVERY_HELP, ItemRetry, Polled, Relinker, Replayed,
-    RetryLine, announce_retry, break_after, broke_before, chosen_interpreter,
-    discovers_interpreter, discovery_warning, fact_targets, failed_task_value, finish,
-    item_by_item, item_link, judge_attempt, legacy_discovery, link_for, local_timed_out,
-    notified_handlers, pause_lines, poll_job, polls, python_for, record_facts,
-    record_inventory_results, record_local_facts, record_registered, refusal, release_at_barrier,
-    replayed, requested_interpreter, retry_plans, run_agent_batch, run_local, running_host_vars,
-    shown, silent_discovery, stamp_discovery, step_task, step_tasks, take_warnings, task_fails,
+    Attempt, DISCOVERED_INTERPRETER, Fallback, Found, ItemRetry, Polled, Relinker, Replayed,
+    RetryLine, announce_retry, break_after, broke_before, discovers_interpreter, fact_targets,
+    failed_task_value, fallback, finish, item_by_item, item_link, judge_attempt, legacy_discovery,
+    link_for, local_timed_out, notified_handlers, pause_lines, poll_job, polls, python_for,
+    record_facts, record_inventory_results, record_local_facts, record_registered, refusal,
+    release_at_barrier, replayed, requested_interpreter, retry_plans, run_agent_batch, run_local,
+    running_host_vars, shown, silent_discovery, stamp_discovery, step_task, step_tasks,
+    take_warnings, task_fails,
 };
 use super::{LinkKey, RunOptions};
 use crate::shadow::replay::Seen;
@@ -351,8 +351,9 @@ pub(super) async fn drive_host(
         // batch this release runs today, a Python module being refused before the first connection.
         let mut payloads: HashMap<usize, (Box<ModulePayload>, Option<String>)> = HashMap::new();
         // The steps of the batch whose host picks its interpreter itself, each with whether the
-        // reference warns about the choice. Those results carry the discovered interpreter.
-        let mut discovering: HashMap<usize, bool> = HashMap::new();
+        // reference warns about the choice and the list of its own it set, if any. Those results
+        // carry the discovered interpreter.
+        let mut discovering: HashMap<usize, (bool, Option<Fallback>)> = HashMap::new();
         // How long each step of the batch took to render, for the profile.
         let mut prepare_micros: HashMap<usize, u64> = HashMap::new();
         // The escalation every task of the batch shares. A batch is one message to one agent,
@@ -1516,7 +1517,8 @@ pub(super) async fn drive_host(
                     }
                     // A task refused for its raw parameters fails before it is sent anywhere.
                     if refusal(task).is_none() && discovers_interpreter(&task.module, target_vars) {
-                        discovering.insert(pos, !silent_discovery(target_vars));
+                        let own = fallback(target_vars);
+                        discovering.insert(pos, (!silent_discovery(target_vars), own));
                     }
                     Seen::mark(&mut seen, pos, task);
                     batch.push((pos, items));
@@ -1743,6 +1745,18 @@ pub(super) async fn drive_host(
             // The step each result of a flat batch belongs to, by its position in the batch. The
             // plugin and retry paths send one step, so an empty list means `batch[0]`.
             let mut flat_steps: Vec<usize> = Vec::new();
+            let own = |i: &usize| (*i, discovering.get(i).and_then(|d| d.1.as_ref()));
+            let ran = [batch_delegate.clone().unwrap_or_else(|| name.clone())];
+            let known = store
+                .lock()
+                .expect("vars lock")
+                .all_gathered(&ran, DISCOVERED_INTERPRETER);
+            let (stop, live) = (
+                (&mut driver.stop, &mut driver.stop_broken),
+                options.replay.is_none(),
+            );
+            let steps = batch.iter().map(|b| own(&b.0));
+            let found = Found::probe(link, &name, steps, (live, known), stop).await;
             // First, so a task a plugin backs can never fall into a path below that would send
             // the plugin's own name to the agent as a module.
             let ended = if let Some(PluginBatch {
@@ -1761,7 +1775,7 @@ pub(super) async fn drive_host(
                     }
                 };
                 let step = step_at(&c, &rendered, *index);
-                let interpreters = link.interpreters().to_vec();
+                let interpreters = found.interpreters(*index);
                 // Out of the map while the plugin holds it, so that a plugin reconnecting can
                 // drop the host's other links, and back in once the task is done, fresh or not.
                 let Some(mut owned) = links.remove(&key) else {
@@ -1897,7 +1911,7 @@ pub(super) async fn drive_host(
                 // read off the step and the host, and nothing about an item can change either.
                 let chosen = payloads
                     .get(index)
-                    .map(|(_, asked)| chosen_interpreter(asked.as_deref(), link.interpreters()));
+                    .map(|(_, asked)| found.chosen(*index, asked.as_deref()));
                 let python = python_for(
                     &task.module,
                     payloads.get(index).map(|(module, _)| &**module),
@@ -2079,9 +2093,9 @@ pub(super) async fn drive_host(
                     // and a batch holds whatever shares a connection, not whatever shares an
                     // interpreter. Reading the batch's first step for all of them would run one
                     // task's module under another task's Python.
-                    let chosen = payloads.get(index).map(|(_, asked)| {
-                        chosen_interpreter(asked.as_deref(), link.interpreters())
-                    });
+                    let chosen = payloads
+                        .get(index)
+                        .map(|(_, asked)| found.chosen(*index, asked.as_deref()));
                     let python = python_for(
                         &task.module,
                         payloads.get(index).map(|(module, _)| &**module),
@@ -2157,9 +2171,6 @@ pub(super) async fn drive_host(
             // stalls every barrier behind it.
             let mut undecided_reported = false;
             let mut any_reported = false;
-            let found = links
-                .get(&key)
-                .and_then(|link| link.interpreters().first().cloned());
             for (bi, (index, items)) in batch.iter().enumerate() {
                 let task = &step_at(&c, &rendered, *index).task;
                 let mut results = Vec::new();
@@ -2218,8 +2229,9 @@ pub(super) async fn drive_host(
                 // The host the module ran on decides whether anything is discovered: it is the
                 // delegate's interpreter that is asked about, and that the fact is kept for.
                 let ran_on = batch_delegate.as_deref().unwrap_or(&name);
-                let due = match (discovering.get(index), &found) {
-                    (Some(&warns), Some(path))
+                let at = found.discovered(*index);
+                let due = match (discovering.get(index), &at) {
+                    (Some(&(warns, _)), Some(path))
                         if {
                             let vars = store.lock().expect("vars lock");
                             // The reference gives the implicit `localhost` the controller's own
@@ -2266,10 +2278,8 @@ pub(super) async fn drive_host(
                 // Not censored by `no_log`: measured on ansible-core 2.19.12, the line names the
                 // host and the path and nothing the task returned, and it shows on a hidden task.
                 // Registered without the pointer to the documentation the line ends with.
-                if let (Some(true), Some(path)) = (discovered, &found) {
-                    let text = discovery_warning(&name, path);
-                    said.push((format!("{text} {DISCOVERY_HELP}"), false));
-                    warnings.push(text);
+                if discovered == Some(true) {
+                    found.warn(*index, &name, &mut said, &mut warnings);
                 }
                 if let (Some(_), Some(i)) = (discovered, first) {
                     let deprecations = legacy_discovery(&mut results[i].1, &items[i].vars);

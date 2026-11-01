@@ -18,7 +18,7 @@ filter_encryption              #1282
 fork_safe_stdio                #1333
 gather_facts-errors            #1330
 include_vars                   #1282
-interpreter_discovery_python   #1361
+interpreter_discovery_python   #1375
 inventory_cache                #1334
 inventory_script               #1282
 lookup_env                     #1282

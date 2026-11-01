@@ -23,7 +23,8 @@ pub(super) fn read_splats(task: &mut PlayTask, yaml: &Yaml<'_>, action: Option<&
         if let Yaml::Value(Scalar::String(text)) = node
             && possibly_all_template(text)
         {
-            task.splats.push((text.to_string(), value_origin(node)));
+            task.splats
+                .push((text.to_string(), value_origin(node), false));
         }
     }
     if let Some(raw) = stray_raw_params(task)
@@ -32,7 +33,7 @@ pub(super) fn read_splats(task: &mut PlayTask, yaml: &Yaml<'_>, action: Option<&
     {
         task.args.remove("_raw_params");
         let at = task.value_origins.get("args._raw_params").cloned();
-        task.splats.push((raw, at));
+        task.splats.push((raw, at, true));
     }
 }
 

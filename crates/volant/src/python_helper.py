@@ -608,7 +608,11 @@ def resolve_one(name):
         # neither loader answers to it.
         action = action_loader.find_plugin_with_context(name)
         if action.resolved and action.plugin_resolved_name != "ansible.builtin.normal":
-            return {"action_plugin": action.resolved_fqcn, "with_module": False}
+            return {
+                "action_plugin": action.resolved_fqcn,
+                "with_module": False,
+                "raw_params": raw_params(action.resolved_fqcn),
+            }
         # A `runtime.yml` redirect into a collection nobody installed: the install hint names
         # the collection at the end of the chain, not the one the playbook wrote.
         last = module.redirect_list[-1] if module.redirect_list else name
@@ -633,7 +637,7 @@ def resolve_one(name):
             built = True
         except Exception:
             built = False
-        return {"action_plugin": handler, "with_module": built}
+        return {"action_plugin": handler, "with_module": built, "raw_params": raw_params(handler)}
     try:
         build(name)
     except ShippedAsItself:
@@ -672,6 +676,15 @@ def plugin_dirs(dirs, module_path=()):
     # ansible-playbook searches it.
     AnsibleCollectionConfig.playbook_paths = list(dirs)
     return {}
+
+
+def raw_params(plugin):
+    """Whether the action plugin keeps a string argument that is not `key=value` as its
+    `_raw_params`, as `Task._post_validate_args` reads `supports_raw_params`."""
+    from ansible.plugins.loader import action_loader
+
+    found = action_loader.get(plugin, class_only=True)
+    return bool(getattr(found, "supports_raw_params", False))
 
 
 def resolve_action(name):

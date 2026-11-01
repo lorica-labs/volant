@@ -165,7 +165,7 @@ pub(in crate::executor) fn finalization_causes(task: &PlayTask, message: &str) -
     let rest = message.strip_prefix(super::item::FINALIZING)?;
     // A splat that did not render to arguments: its sentence at the template.
     if !rest.contains(&format!(": {}", crate::template::RESOLVING))
-        && let Some((_, splat_at)) = task.splats.last()
+        && let Some((_, splat_at, _)) = task.splats.last()
         && let Some(cut) = rest.find(" failed: ")
     {
         let head = format!("{}{} failed.", super::item::FINALIZING, &rest[..cut]);

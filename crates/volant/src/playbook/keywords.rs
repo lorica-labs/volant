@@ -450,6 +450,7 @@ const BUILTIN_RAW_PARAM_MODULES: [&str; 9] = [
 pub(crate) fn stray_raw_params(task: &PlayTask) -> Option<&str> {
     let takes_it = if crate::python::is_resolved_name(&task.module) {
         FREE_FORM_COLLECTION_MODULES.contains(&task.module.as_str())
+            || crate::action_plugins::takes_raw_params(&task.module)
     } else {
         is_free_form(&task.module) || BUILTIN_RAW_PARAM_MODULES.contains(&short_name(&task.module))
     };

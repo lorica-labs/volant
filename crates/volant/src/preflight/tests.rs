@@ -270,6 +270,7 @@ fn collection_modules_are_set_aside_and_the_controllers_answers_refused() {
         verdict(Resolved::ActionPlugin {
             fqcn: "ns.coll.mod".into(),
             with_module: false,
+            raw_params: false,
         })
         .is_ok()
     );
@@ -279,6 +280,7 @@ fn collection_modules_are_set_aside_and_the_controllers_answers_refused() {
         verdict(Resolved::ActionPlugin {
             fqcn: waiting.into(),
             with_module: false,
+            raw_params: false,
         })
         .map_err(|text| text.ends_with("which this release does not run")),
         Err(true)

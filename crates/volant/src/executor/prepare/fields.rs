@@ -138,7 +138,7 @@ pub(super) fn render_rest(
         }
     }
     // The reference warns once for each template that renders to arguments, at the template.
-    for (_, at) in &task.splats {
+    for (_, at, _) in &task.splats {
         let place = at
             .as_ref()
             .map(|at| {
@@ -299,10 +299,15 @@ fn render_args(
     let (mut map, mut untrusted) = rendered.map_err(finalizing)?;
     // The splats lie under the arguments written as such, each over the one before it.
     let mut splatted: BTreeMap<String, (Value, bool)> = BTreeMap::new();
-    for (template, _) in &task.splats {
+    for (template, _, own) in &task.splats {
         let (value, tainted) = templar
             .render_value_tainted(&Value::String(template.clone()), vars)
             .map_err(|err| splat_failure(task, &super::undefined_name(template, err.0)))?;
+        // A plugin that takes raw parameters keeps the action's own value, rendered, as them.
+        if *own && crate::action_plugins::takes_raw_params(&task.module) {
+            splatted.insert("_raw_params".into(), (value, tainted));
+            continue;
+        }
         // A splat that is `omit` as a whole is left out, measured.
         if value.as_str() == Some(crate::vars::omit_token()) {
             continue;

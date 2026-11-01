@@ -30,13 +30,10 @@ pub(in crate::transport) async fn check_local_escalation(
 
 /// Whether `sudo` really did start the local agent as the asked-for user: the agent's own
 /// version line, not `sudo`'s exit status alone. A `sudo` that exited zero having run something
-/// else - a wrapper, an alias, a stale cached binary - is not an escalation that worked. What a
-/// wrapper prints before `sudo` runs is not the agent's: the reference strips it as the
-/// preamble of the command's output, so the version is the last line.
+/// else - a wrapper, an alias, a stale cached binary - is not an escalation that worked.
 pub(in crate::transport) fn agent_version_ran(probe: &Captured) -> bool {
     probe.code == Some(0)
-        && probe.stdout.lines().last().map(str::trim)
-            == Some(format!("volant-agent {}", env!("CARGO_PKG_VERSION")).as_str())
+        && probe.stdout.trim() == format!("volant-agent {}", env!("CARGO_PKG_VERSION"))
 }
 
 /// One `sudo ... volant-agent --version` in the given form, and what it printed.

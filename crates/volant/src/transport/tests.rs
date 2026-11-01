@@ -569,8 +569,8 @@ fn local_escalation_succeeds_only_on_the_agents_own_version_line() {
     let version = format!("volant-agent {}", env!("CARGO_PKG_VERSION"));
     assert!(printed(Some(0), &version));
     assert!(
-        printed(Some(0), &format!("stdout noise\n{version}\n")),
-        "what a wrapper printed first, and a trailing newline, are not a different version"
+        printed(Some(0), &format!("{version}\n")),
+        "a trailing newline is not a different version"
     );
     assert!(
         !printed(Some(0), "volant-agent 0.0.0-stale"),

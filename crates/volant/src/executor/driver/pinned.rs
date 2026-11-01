@@ -59,3 +59,23 @@ impl Drop for Turn<'_> {
         self.gate.reach(self.mine, usize::MAX);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A host's place only moves forward, and a host that leaves holds nobody up.
+    #[test]
+    fn a_place_only_moves_forward_and_leaving_frees_it() {
+        let turns = Turns::default();
+        turns.reach(1, 3);
+        turns.reach(1, 2);
+        assert_eq!(*turns.places.borrow(), [0, 3]);
+        drop(Turn {
+            gate: &turns,
+            mine: 0,
+            passed: true,
+        });
+        assert_eq!(*turns.places.borrow(), [usize::MAX, 3]);
+    }
+}

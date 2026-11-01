@@ -1,5 +1,5 @@
 ---
-sourceHash: 864ee37f7fcb
+sourceHash: 3b083b74d53c
 title: 连接与 become
 description: Volant 如何连接到主机、它读取的主机变量和 ansible.cfg 设置，以及 become 如何通过 sudo 和 su 工作。
 ---
@@ -200,7 +200,7 @@ Volant 用两种方式之一到达主机。对于 `ssh`、`local` 和上面列�
 - 插件在 `-vvv` 下打印的行，例如 `<host> ESTABLISH ... CONNECTION`，会以相同的详细程度打印在 task 下。
 - `ansible_password`、插件的其他机密变量和 become 密码在每一行和每个结果中都写成 `********`。
 - 同时运行的辅助进程数量不会超过 `forks` 允许的数量。
-- `become` 使用 task 的提权方法，`sudo` 或 `su`。
+- `become` 使用 task 的提权方法，`sudo` 或 `su`，无论它写在 task、所在的 block 还是 play 上。写成模板时，例如 `become: "{{ item }}"`，会为循环的每个元素分别渲染。
 
 每个 task 都要付出建立插件连接的代价，与 `ansible-playbook` 一样，因此这条路线每个 task 比 agent 的路线慢。
 

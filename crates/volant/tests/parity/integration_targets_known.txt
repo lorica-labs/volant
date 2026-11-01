@@ -7,7 +7,7 @@ ansible                        #1333
 ansible-galaxy-collection-scm  #1351
 ansible-playbook-callbacks     #1333
 ansible_log                    #1336
-assert                         #1283
+assert                         #1282
 cache-plugins                  #1334
 callback-dispatch              #1333
 callback_results               #1333

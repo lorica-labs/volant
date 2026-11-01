@@ -269,18 +269,14 @@ fn an_unreachable_server_is_skipped() {
         clear_cache: false,
         token_path: &home.path().join("galaxy_token"),
     };
-    let mut servers = Servers {
-        list: vec![
-            Server::new(&unreachable("dead"), &files, 0),
-            fake.server(home.path()),
-        ],
-    };
+    let mut servers = Servers::new(vec![
+        Server::new(&unreachable("dead"), &files, 0),
+        fake.server(home.path()),
+    ]);
     let versions = servers.versions("demo.base").expect("the second answers");
     assert_eq!(versions.len(), 3);
     assert!(versions.iter().all(|(_, at)| *at == 1));
-    let mut alone = Servers {
-        list: vec![Server::new(&unreachable("dead"), &files, 0)],
-    };
+    let mut alone = Servers::new(vec![Server::new(&unreachable("dead"), &files, 0)]);
     let failure = alone.versions("demo.base").expect_err("none answers");
     assert!(
         failure.summary().starts_with(

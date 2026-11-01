@@ -141,8 +141,14 @@ pub(super) async fn run_plugin_items(
         };
         let mut warnings = Vec::new();
         let delegate = look.delegate;
+        // An item that escalates otherwise than the task's first (`become: "{{ item }}"`)
+        // carries its own escalation.
+        let escalation = item
+            .escalation
+            .as_ref()
+            .map_or(look.escalation, Option::as_ref);
         let start = PluginStart {
-            link: &LinkFacts::of(look.transport, look.escalation, delegate),
+            link: &LinkFacts::of(look.transport, escalation, delegate),
             kind: look.kind,
             running_vars: running_host_vars(delegate, std::slice::from_ref(item)),
             templar: look.templar,

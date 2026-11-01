@@ -1,5 +1,5 @@
 ---
-sourceHash: 74edd923ede7
+sourceHash: 4a0054ff06cb
 title: Modo check, diff y listados
 description: Qué hacen --check y --diff, qué módulos los atienden, cómo seleccionan tareas las etiquetas, y los comandos que describen una ejecución sin iniciarla.
 ---
@@ -39,10 +39,7 @@ Un diff se imprime solo para una tarea que cambió algo. `copy` y `template` no 
 
 ## Carencias conocidas
 
-- `--step` no pregunta antes de un paso `meta` o `flush_handlers`. Esto no se ha comparado con ansible-core.
-- `-vv` no imprime las líneas de notificación de handlers.
 - `-vvvv` enumera las opciones que enumera ansible-core, en su orden, y las líneas de preparación de plugins. Sus líneas de ssh muestran los comandos que este motor ejecuta por `ssh` (la sonda, la subida y el enlace con el agente), no la subida por `sftp` de ansible-core, y una conexión local o un archivo de módulo no imprimen ninguna línea.
-- Una tarea con una clave ausente en un resultado omitido da un mensaje distinto del de ansible-core.
 
 La [página de paridad](/es/docs/reference/parity/) enumera cada opción y palabra clave con su estado.
 

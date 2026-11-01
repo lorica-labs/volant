@@ -1,5 +1,5 @@
 ---
-sourceHash: "27377717e493"
+sourceHash: 72e07b4420ea
 title: Mon playbook va-t-il s'exécuter ?
 description: Vérifiez en quelques secondes un projet Ansible existant par rapport à cette version, sans toucher à un hôte.
 ---
@@ -81,7 +81,7 @@ La vérification préalable arrête l'exécution avant la première connexion, a
 
 | Quoi | Forme du message | Code de sortie |
 |---|---|---|
-| Une `strategy` autre que `linear`, `free`, `host_pinned` et `debug` | `strategy 'x' is not supported yet` | 4 |
+| Une `strategy` autre que `linear`, `free`, `host_pinned` et `debug`, venue du play ou de `ANSIBLE_STRATEGY` | l'avertissement de dépréciation d'ansible-core pour les plugins de stratégie hors de `ansible.builtin`, puis `strategy 'x' is not supported yet` | 4 |
 | `until`, `retries` ou `delay` sur `include_tasks` ou `include_role` | `keyword 'until' is not supported yet on 'include_tasks'` | 4 |
 | Un `pause` avec un `prompt` et `seconds` ou `minutes`, quand l'entrée standard est un terminal | `pause cannot wait for a prompt and a duration together on a terminal ...` | 4 |
 | Un argument de module qu'ansible-core a et que cette version n'exploite pas | `argument 'x' is not supported yet on 'module'`, avec ` with 'v'` quand seule cette valeur est refusée | 4 |

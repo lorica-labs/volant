@@ -186,6 +186,8 @@ pub struct Config {
     pub fact_caching_prefix: String,
     /// `gathering`: `implicit`, `explicit` or `smart`.
     pub gathering: String,
+    /// `strategy` (`ANSIBLE_STRATEGY`): the strategy of a play that names none.
+    pub strategy: Option<String>,
     /// `playbook_dir`: what `ansible` and `ansible-console` take as `--playbook-dir`.
     pub playbook_dir: Option<PathBuf>,
     /// `[galaxy]` and `[galaxy_server.<name>]`: section, key and value, as written.
@@ -379,6 +381,9 @@ impl Config {
         }
         if let Ok(value) = std::env::var("ANSIBLE_CACHE_PLUGIN_PREFIX") {
             config.fact_caching_prefix = value;
+        }
+        if let Ok(value) = std::env::var("ANSIBLE_STRATEGY") {
+            config.strategy = Some(value.trim().to_string());
         }
         if let Ok(value) = std::env::var("ANSIBLE_GATHERING") {
             config.gathering = gathering(&value, "env: ANSIBLE_GATHERING")?;

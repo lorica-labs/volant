@@ -109,6 +109,8 @@ pub struct Escalation {
     pub flags: Option<Vec<String>>,
     /// `su`'s `prompt_l10n`: the password prompts it matches instead of the built-in list.
     pub prompt_l10n: Vec<String>,
+    /// `sudo`'s `sudo_chdir`: the directory the agent starts in.
+    pub chdir: Option<String>,
 }
 
 /// How a link escalates, less the user: two links to one user through different programs,
@@ -122,6 +124,7 @@ pub struct EscalationProgram {
     pub exe: Vec<String>,
     pub flags: Option<Vec<String>>,
     pub password: Option<u64>,
+    pub chdir: Option<String>,
 }
 
 impl Escalation {
@@ -137,6 +140,7 @@ impl Escalation {
                 password.hash(&mut hasher);
                 hasher.finish()
             }),
+            chdir: self.chdir.clone(),
         }
     }
 }
@@ -152,6 +156,7 @@ impl std::fmt::Debug for Escalation {
             .field("exe", &self.exe)
             .field("flags", &self.flags)
             .field("prompt_l10n", &self.prompt_l10n)
+            .field("chdir", &self.chdir)
             .finish()
     }
 }

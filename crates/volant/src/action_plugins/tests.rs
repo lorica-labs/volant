@@ -171,6 +171,7 @@ fn the_link_facts_follow_the_transport(
         exe: Vec::new(),
         flags: None,
         prompt_l10n: Vec::new(),
+        chdir: None,
     });
     let delegated = delegate.map(|name| (name.to_string(), HostVars::default()));
     let facts = LinkFacts::of(&transport, escalation.as_ref(), delegated.as_ref());

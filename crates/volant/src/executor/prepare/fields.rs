@@ -252,6 +252,20 @@ fn warn_embedded(task: &PlayTask, raw: &Map<String, Value>) {
     }
 }
 
+/// A render error of a task's arguments, in the reference's words when it failed resolving a
+/// value: `Finalization of task args for '<action>' failed: ...`.
+fn finalizing(task: &PlayTask, err: TemplateError) -> TemplateError {
+    if err.0.starts_with(crate::template::RESOLVING) {
+        TemplateError(format!(
+            "{FINALIZING}'{}' failed: {}",
+            crate::executor::run::action_fqcn(&task.module),
+            err.0
+        ))
+    } else {
+        err
+    }
+}
+
 fn render_args(
     task: &PlayTask,
     plan: &PlayPlan,
@@ -269,17 +283,7 @@ fn render_args(
     } else {
         std::borrow::Cow::Borrowed(&task.args)
     };
-    let finalizing = |err: TemplateError| {
-        if err.0.starts_with(crate::template::RESOLVING) {
-            TemplateError(format!(
-                "{FINALIZING}'{}' failed: {}",
-                crate::executor::run::action_fqcn(&task.module),
-                err.0
-            ))
-        } else {
-            err
-        }
-    };
+    let finalizing = |err| finalizing(task, err);
     let (rendered, read) =
         crate::template::watch_play_hosts(|| templar.render_map_tainted(&raw, vars));
     // Placed at each argument that names it: one read through another variable is not placed.
@@ -342,12 +346,17 @@ fn render_args(
     // mapping. A task's argument wins, `omit` included.
     if !task.module_defaults.is_empty() {
         let mut from_default = BTreeSet::new();
-        let resolve = |name: &str| plan.python.as_deref().and_then(|u| u.resolved_fqcn(name));
+        let resolved = &plan.steps().resolved;
+        let resolve = |name: &str| {
+            resolved
+                .action(name)
+                .or_else(|| plan.python.as_deref().and_then(|u| u.resolved_fqcn(name)))
+        };
         let mut defaults = crate::collection::defaults_for(
             &task.module,
             &resolve,
             &task.module_defaults,
-            &plan.steps().resolved.groups(),
+            &resolved.groups(),
             &mut |key, value| {
                 render_default(templar, vars, key, value, &mut from_default)
                     .map_err(|err| finalizing(err).0)

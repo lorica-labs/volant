@@ -1,5 +1,5 @@
 ---
-sourceHash: 480ffa167c92
+sourceHash: 40f537f587c4
 title: Schleifen und Wiederholungen
 description: loop, with_items und loop_control sowie wie until, retries und delay einen Task wiederholen.
 ---
@@ -105,5 +105,4 @@ Ein Task mit Schleife wiederholt jedes Element für sich und beendet die Versuch
 ## Unterschiede zu Ansible
 
 - Ein `until`-Ausdruck, der sich nicht auswerten lässt, wird mit dem Präfix von ansible-core und der eigenen Meldung von Volant gemeldet, genauso wie ein fehlschlagendes `when`.
-- `FAILED - RETRYING` für einen Task in einer Rolle zeigt den eigenen Namen des Tasks statt `role : name`.
 - Ein `loop_control.label`, das aus einem anderen Grund als einer undefinierten Variable fehlschlägt, etwa ein Lookup, das einen Fehler auslöst, lässt den Task fehlschlagen, bevor ein Element läuft. ansible-core beendet den Task, nachdem dieses Element gelaufen ist.

@@ -22,6 +22,7 @@ import importlib.util
 import io
 import json
 import os
+import pickle
 import re
 import struct
 import sys
@@ -198,8 +199,8 @@ def scan_once():
 
 class ShippedAsItself(RuntimeError):
     """A module ansible-core builds with no zip: one in another language that reads its arguments
-    from the file named on its command line (`WANT_JSON`), or an `old` one, a script reading them
-    as `key=value` words from that file. It ships as itself: ansible-core's own `_execute_module`
+    from the file named on its command line (`WANT_JSON`), a compiled `binary` one that reads them
+    the same way, or an `old` one, a script reading them as `key=value` words from that file. It ships as itself: ansible-core's own `_execute_module`
     copies it and its arguments file to the host and runs it there."""
 
 
@@ -265,7 +266,7 @@ def build(name):
         raise RuntimeError("building module %r: %s" % (name, failure))
     # Measured on ansible-core 2.19.12: a `library/a.py` that only prints its JSON runs, copied
     # with its arguments file. A documentation stub runs the same way there and says nothing.
-    if built.module_style in ("non_native_want_json", "old"):
+    if built.module_style in ("non_native_want_json", "binary", "old"):
         raise ShippedAsItself(name)
     if built.module_style != "new":
         raise RuntimeError(
@@ -723,9 +724,9 @@ def own_plugins():
 
 
 def actions(names):
-    """Whether each name a `module_defaults` key spells resolves to an action or a module."""
+    """The full name of the action or module each `module_defaults` key spells, or None."""
     loaders()
-    return {name: resolve_action(name) is not None for name in names}
+    return {name: resolve_action(name) for name in names}
 
 
 def connections(names):
@@ -1605,7 +1606,9 @@ def owned_connection(link, context, task, task_vars, templar):
     if task_vars.get("ansible_become") is not None:
         becomes = boolean(templar.template(task_vars["ansible_become"]))
     else:
-        becomes = task.become
+        # The controller settles the escalation of the link, a `become` written on the play or
+        # as a template included, and sends it on the play context: the task carries none of it.
+        becomes = task.become or context.become
     # A boolean, as `set_task_and_variable_override` leaves it: `network_cli` compares it with `^`.
     context.become = bool(becomes)
     become = None
@@ -1630,6 +1633,8 @@ def owned_connection(link, context, task, task_vars, templar):
     task_keys = task.dump_attrs()
     # The task's own `timeout` is not the connection's, and its `retries` are not either.
     task_keys["timeout"] = context.timeout
+    if context.become and not task_keys.get("become_user"):
+        task_keys["become_user"] = context.become_user
     if context.password:
         task_keys["password"] = context.password
     task_keys.pop("retries", None)
@@ -1940,6 +1945,18 @@ def run_action(ident, request):
             traceback = getattr(getattr(summary, "event", None), "formatted_traceback", None)
             if traceback:
                 result["exception"] = traceback
+    try:
+        # `WorkerProcess` pickles the result to send it back, and replaces one it cannot send.
+        pickle.dumps(result)
+    except Exception as unsent:
+        try:
+            raise AnsibleError("Task result omitted due to queue send failure.") from unsent
+        except AnsibleError as wrapped:
+            result = _error_utils.result_dict_from_exception(wrapped)
+        summary = result.pop("exception", None)
+        traceback = getattr(getattr(summary, "event", None), "formatted_traceback", None)
+        if traceback:
+            result["exception"] = traceback
     if isinstance(result, dict):
         captured_messages(result, warning_ctx)
     value = plain(result)

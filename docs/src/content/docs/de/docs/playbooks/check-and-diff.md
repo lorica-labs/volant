@@ -1,5 +1,5 @@
 ---
-sourceHash: 74edd923ede7
+sourceHash: 4a0054ff06cb
 title: Check-Modus, Diff und Auflistungen
 description: Was --check und --diff tun, welche Module sie beantworten, wie Tags Tasks auswählen und welche Befehle einen Lauf beschreiben, ohne ihn zu starten.
 ---
@@ -39,10 +39,7 @@ Ein Diff wird nur für einen Task ausgegeben, der etwas geändert hat. `copy` un
 
 ## Bekannte Lücken
 
-- `--step` fragt nicht vor einem `meta`- oder `flush_handlers`-Schritt nach. Das wurde nicht mit ansible-core verglichen.
-- `-vv` gibt die Benachrichtigungszeilen der Handler nicht aus.
 - `-vvvv` listet die Optionen auf, die ansible-core auflistet, in dessen Reihenfolge, und die Zeilen zur Einrichtung der Plugins. Seine ssh-Zeilen zeigen die Befehle, die diese Engine über `ssh` ausführt (die Sonde, den Upload und den Link zum Agent), nicht den `sftp`-Upload von ansible-core, und eine lokale Verbindung oder eine Moduldatei gibt keine Zeile aus.
-- Ein Task mit einem fehlenden Schlüssel in einem übersprungenen Ergebnis liefert eine andere Meldung als ansible-core.
 
 Die [Paritätsseite](/de/docs/reference/parity/) listet jede Option und jedes Keyword mit seinem Status auf.
 

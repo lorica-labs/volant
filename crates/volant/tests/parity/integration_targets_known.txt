@@ -29,7 +29,7 @@ inventory_script               #1282
 lookup_env                     #1282
 lookup_first_found             #1338
 loop-connection                #1337
-module_defaults                #1341
+module_defaults                #1345
 order                          #1340
 protomatter                    #1282
 remote_tmp                     #1336

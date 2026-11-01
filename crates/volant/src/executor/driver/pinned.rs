@@ -103,12 +103,12 @@ impl Driver<'_> {
     }
 
     /// Whether every host in front of `mine` has queued for the step at `pos`, moved past it, or
-    /// left the batch.
+    /// left the batch. Before the coordinator first says who is live, nobody has left.
     fn queued_before(&self, places: &[usize], mine: usize, pos: usize) -> bool {
         let live = Arc::clone(&self.progress.borrow().live_hosts);
         (0..mine).all(|host| {
             places.get(host).is_some_and(|&reached| reached > pos)
-                || !live.contains(&self.plan.queue[host])
+                || (!live.is_empty() && !live.contains(&self.plan.queue[host]))
         })
     }
 }

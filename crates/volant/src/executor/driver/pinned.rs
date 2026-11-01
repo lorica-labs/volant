@@ -5,7 +5,16 @@ use std::sync::Arc;
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 
-use super::Driver;
+use super::{Driver, PlayPlan};
+
+/// The host's place in the queue for forks: none under `free`, where each host runs at its own
+/// pace.
+pub(super) fn place(plan: &PlayPlan, name: &str) -> Option<usize> {
+    plan.queue
+        .iter()
+        .position(|h| h == name)
+        .filter(|_| !plan.strategy.free())
+}
 
 /// Where the hosts of the batch stand in the queue for forks, in the batch's order.
 pub(in crate::executor) struct Turns {
@@ -65,6 +74,14 @@ impl Drop for Turn<'_> {
 }
 
 impl Driver<'_> {
+    /// Says, when the host has a place in the queue, that every step before `pos` is behind it:
+    /// nobody waits on it to take a fork for those.
+    pub(super) fn standing_at(&self, pos: usize) {
+        if let Some(mine) = self.place {
+            self.plan.turns.reach(mine, pos);
+        }
+    }
+
     /// A fork for the batch at `pos`, `Some(None)` when the forks are gone. With a place in the
     /// queue, taken once every live host before this one has taken its own for that step or moved
     /// past it, as the reference hands its forks out in the play's host order. A throttled batch

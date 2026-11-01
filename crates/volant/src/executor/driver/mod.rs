@@ -98,9 +98,7 @@ pub(super) async fn drive_host(
         stop_broken: false,
         cleanup: None,
         peer_fatal: None,
-        place: (!plan.strategy.free())
-            .then(|| plan.queue.iter().position(|h| h == &name))
-            .flatten(),
+        place: pinned::place(&plan, &name),
     };
     // One entry per target user on this host: the connecting user's own agent, and one more
     // for each `become_user` the play escalates to. Connections this play never uses itself
@@ -347,6 +345,7 @@ pub(super) async fn drive_host(
             break 'run;
         }
         failed_before = failed;
+        driver.standing_at(pos);
         // Collect a batch of remote tasks up to the next boundary; report skips and run local
         // tasks as they come, in order.
         let mut batch: Vec<(usize, Vec<Item>)> = Vec::new();

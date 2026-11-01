@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Playbook loading: plays and tasks, with the keywords this release supports.
 
+mod action;
 mod connect;
 mod deferred;
 mod fields;

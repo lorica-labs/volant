@@ -105,6 +105,7 @@ fn the_preflight_refuses_by_name(#[case] text: String, #[case] needles: &[&str])
 #[case::free("- hosts: all\n  strategy: free\n  tasks:\n    - command: echo hi\n".to_string())]
 #[case::host_pinned("- hosts: all\n  strategy: host_pinned\n  tasks:\n    - command: echo hi\n".to_string())]
 #[case::debug("- hosts: all\n  strategy: debug\n  tasks:\n    - command: echo hi\n".to_string())]
+#[case::builtin_by_full_name("- hosts: all\n  strategy: ansible.builtin.free\n  tasks:\n    - command: echo hi\n".to_string())]
 #[case::unknown_argument_is_the_agents(task_play(
     "      command: /bin/true\n      args:\n        no_such_arg: 1\n"
 ))]

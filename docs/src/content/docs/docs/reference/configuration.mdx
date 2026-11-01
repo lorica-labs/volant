@@ -53,6 +53,10 @@ A file that exists but cannot be read is skipped, and the run continues with the
   How many hosts a play works on at once. Zero or a value that is not a number is rejected before the run starts. Playbooks read the current value as `ansible_forks`.
 </Option>
 
+<Option name="strategy" id="defaults-strategy" default="linear" env="ANSIBLE_STRATEGY">
+  The strategy of a play that names none: `linear`, `free`, `host_pinned` or `debug`, also under `ansible.builtin.`. Any other name prints ansible-core's deprecation of strategy plugins outside `ansible.builtin`, then is refused.
+</Option>
+
 <Option name="async_dir" id="defaults-async-dir" default="~/.ansible_async" env="ANSIBLE_ASYNC_DIR">
   The directory on each host that holds the status files of [async tasks](/docs/playbooks/how-a-play-runs/#async-tasks). `ansible_async_dir` overrides it.
 </Option>

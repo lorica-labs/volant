@@ -1,5 +1,5 @@
 ---
-sourceHash: 94ef043b1d7c
+sourceHash: b3d239daaa36
 title: 配置
 description: Volant 读取的 ansible.cfg 设置和环境变量，按段列出，并附带默认值。
 ---
@@ -52,6 +52,10 @@ Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第
 
 <Option name="forks" id="defaults-forks" default="5" flag="-f" env="ANSIBLE_FORKS">
   一个 play 同时处理多少台主机。零或不是数字的值会在运行开始前被拒绝。playbook 通过 `ansible_forks` 读取当前值。
+</Option>
+
+<Option name="strategy" id="defaults-strategy" default="linear" env="ANSIBLE_STRATEGY">
+  未指定策略的 play 所用的策略：`linear`、`free`、`host_pinned` 或 `debug`，也可写在 `ansible.builtin.` 之下。其他名称会先打印 ansible-core 对 `ansible.builtin` 之外策略插件的弃用警告，然后被拒绝。
 </Option>
 
 <Option name="async_dir" id="defaults-async-dir" default="~/.ansible_async" env="ANSIBLE_ASYNC_DIR">

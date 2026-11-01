@@ -235,10 +235,11 @@ impl VarStore {
                 names.remove(key);
             }
         }
-        self.included
-            .entry(host.to_string())
-            .or_default()
-            .insert(key.to_string(), value, tree);
+        Arc::make_mut(self.included.entry(host.to_string()).or_default()).insert(
+            key.to_string(),
+            value,
+            tree,
+        );
         self.forget_host(host);
     }
 
@@ -253,10 +254,11 @@ impl VarStore {
         if let Some(names) = self.untrusted.get_mut(host) {
             names.remove(key);
         }
-        self.facts
-            .entry(host.to_string())
-            .or_default()
-            .insert(key.to_string(), value, tree);
+        Arc::make_mut(self.facts.entry(host.to_string()).or_default()).insert(
+            key.to_string(),
+            value,
+            tree,
+        );
         self.forget_host(host);
     }
 

@@ -105,7 +105,7 @@ impl Object for TaintSink {}
 pub struct Vars<'a> {
     pub map: &'a Map<String, Value>,
     /// The tags of the values of `map`, by name.
-    pub tags: Option<&'a crate::tags::TagMap>,
+    pub tags: Option<&'a Arc<crate::tags::TagMap>>,
     pub hostvars: Option<&'a Arc<crate::vars::HostvarsMap>>,
     /// The values the whole inventory shares — `groups` and the play's host lists — read out of
     /// here rather than copied into every host's map for every task. Consulted *before* `map`,
@@ -185,7 +185,7 @@ impl Memo {
 pub(super) struct Context {
     pub(super) vars: Map<String, Value>,
     /// The tags of `vars` by name. `registry` holds those of the values the render read.
-    pub(super) tags: crate::tags::TagMap,
+    pub(super) tags: Option<Arc<crate::tags::TagMap>>,
     pub(super) registry: super::tagged::TagRegistry,
     /// The tags of the last expression's value, set as it is converted.
     pub(super) result: Mutex<Option<crate::tags::TagTree>>,
@@ -456,7 +456,7 @@ pub(super) fn context_tracking(
     let tainted: Tainted = Arc::new(AtomicBool::new(false));
     let ctx = minijinja::Value::from_object(Context {
         vars: vars.map.clone(),
-        tags: vars.tags.cloned().unwrap_or_default(),
+        tags: vars.tags.cloned(),
         registry: super::tagged::TagRegistry::default(),
         result: Mutex::new(None),
         base: vars.base.cloned(),

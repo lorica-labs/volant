@@ -6,6 +6,7 @@
 //! again. A value an operation builds is a new allocation and has none, as in Python.
 
 use std::collections::HashMap;
+use std::hash::{BuildHasherDefault, Hasher};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use minijinja::Value;
@@ -19,15 +20,42 @@ type Mapping = indexmap::IndexMap<Value, Value>;
 /// A number by kind and bits: integers apart from floats.
 type NumberKey = (bool, u128);
 
+/// Hashes an address or a number with one multiplication: the keys are never chosen by a
+/// playbook, so they need no protection from collisions made on purpose.
+#[derive(Default)]
+struct KeyHasher(u64);
+
+impl Hasher for KeyHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.write_u64(u64::from(b));
+        }
+    }
+
+    fn write_u64(&mut self, n: u64) {
+        self.0 = (self.0.rotate_left(5) ^ n).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+
+    fn write_usize(&mut self, n: usize) {
+        self.write_u64(n as u64);
+    }
+}
+
+type Keyed<K, V> = HashMap<K, V, BuildHasherDefault<KeyHasher>>;
+
 #[derive(Debug, Default)]
 pub(crate) struct TagRegistry {
     /// By address, with a clone that keeps the allocation alive, so that no other value takes
     /// its address while the render runs.
-    held: Mutex<HashMap<usize, (TagSetId, Value)>>,
+    held: Mutex<Keyed<usize, (TagSetId, Value)>>,
     /// Numbers have no allocation, so they are keyed by value, and a number two different sets
     /// meet in one render has none: `x: 1` and `y: 1` written on two lines leave `1` untagged.
     /// The ceiling of keying by value; the way past it is a tagged number type of its own.
-    numbers: Mutex<HashMap<NumberKey, Option<TagSetId>>>,
+    numbers: Mutex<Keyed<NumberKey, Option<TagSetId>>>,
 }
 
 impl TagRegistry {

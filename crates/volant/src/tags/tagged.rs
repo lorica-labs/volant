@@ -3,9 +3,11 @@
 //!
 //! The map is read through `Deref` and written only through the methods here, each of which
 //! updates or drops the written name's tree: a value written without its tree must never keep
-//! the tags of the value it replaced, which may have been trusted.
+//! the tags of the value it replaced, which may have been trusted. The trees are shared, and
+//! copied only when a layer that shares them is written.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
@@ -14,7 +16,7 @@ use super::{TagMap, TagTree};
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Tagged {
     values: Map<String, Value>,
-    tags: TagMap,
+    tags: Arc<TagMap>,
 }
 
 impl std::ops::Deref for Tagged {
@@ -30,7 +32,7 @@ impl From<Map<String, Value>> for Tagged {
     fn from(values: Map<String, Value>) -> Self {
         Self {
             values,
-            tags: TagMap::new(),
+            tags: Arc::default(),
         }
     }
 }
@@ -63,7 +65,28 @@ impl Tagged {
     /// `values` with the trees of `tags` whose name it holds.
     pub fn new(values: Map<String, Value>, mut tags: TagMap) -> Self {
         tags.retain(|name, _| values.contains_key(name));
-        Self { values, tags }
+        Self {
+            values,
+            tags: Arc::new(tags),
+        }
+    }
+
+    /// Puts `values` in place of these, the trees of `dropped` and of any name `values` lacks
+    /// left out.
+    pub fn replace_values(&mut self, values: Map<String, Value>, dropped: &[String]) {
+        let same_names = values.len() == self.values.len();
+        self.values = values;
+        self.drop_trees(dropped);
+        if !same_names {
+            let values = &self.values;
+            let gone: Vec<String> = self
+                .tags
+                .keys()
+                .filter(|name| !values.contains_key(*name))
+                .cloned()
+                .collect();
+            self.drop_trees(&gone);
+        }
     }
 
     pub fn as_map(&self) -> &Map<String, Value> {
@@ -75,10 +98,10 @@ impl Tagged {
     }
 
     pub fn into_parts(self) -> (Map<String, Value>, TagMap) {
-        (self.values, self.tags)
+        (self.values, Arc::unwrap_or_clone(self.tags))
     }
 
-    pub fn tags(&self) -> &TagMap {
+    pub fn tags(&self) -> &Arc<TagMap> {
         &self.tags
     }
 
@@ -89,26 +112,47 @@ impl Tagged {
     /// Writes `value` under `name` with `tree`; no tree leaves the value untagged.
     pub fn insert(&mut self, name: String, value: Value, tree: Option<TagTree>) -> Option<Value> {
         match tree {
-            Some(tree) => _ = self.tags.insert(name.clone(), tree),
-            None => _ = self.tags.shift_remove(&name),
+            Some(tree) => _ = Arc::make_mut(&mut self.tags).insert(name.clone(), tree),
+            None if self.tags.contains_key(&name) => {
+                _ = Arc::make_mut(&mut self.tags).shift_remove(&name);
+            }
+            None => {}
         }
         self.values.insert(name, value)
     }
 
     pub fn remove(&mut self, name: &str) -> Option<Value> {
-        self.tags.shift_remove(name);
+        if self.tags.contains_key(name) {
+            Arc::make_mut(&mut self.tags).shift_remove(name);
+        }
         self.values.shift_remove(name)
     }
 
     pub fn retain(&mut self, mut keep: impl FnMut(&String, &mut Value) -> bool) {
-        self.values.retain(|name, value| keep(name, value));
-        let values = &self.values;
-        self.tags.retain(|name, _| values.contains_key(name));
+        let mut dropped = Vec::new();
+        self.values.retain(|name, value| {
+            let kept = keep(name, value);
+            if !kept {
+                dropped.push(name.clone());
+            }
+            kept
+        });
+        self.drop_trees(&dropped);
+    }
+
+    /// Drops the trees of `names`, copying shared trees only when one of them has one.
+    fn drop_trees(&mut self, names: &[String]) {
+        if names.iter().any(|name| self.tags.contains_key(name)) {
+            let tags = Arc::make_mut(&mut self.tags);
+            for name in names {
+                tags.swap_remove(name);
+            }
+        }
     }
 
     pub fn clear(&mut self) {
         self.values.clear();
-        self.tags.clear();
+        self.tags = Arc::default();
     }
 
     /// Lays `value` over the variable `name`: `combine_vars` of ansible-core, which replaces it,
@@ -136,16 +180,53 @@ impl Tagged {
 
     /// Lays every variable of `other` over these.
     pub fn extend(&mut self, other: &Tagged) {
-        for (name, value) in &other.values {
-            self.combine_one(name, value, other.tags.get(name));
-        }
+        self.extend_except(other, &BTreeSet::new());
     }
 
     /// [`Tagged::extend`], leaving out the names in `skip`.
+    ///
+    /// The layers of a host's variables are laid under the store's lock, so this one walks each
+    /// side once instead of looking every name up in both maps of trees: a name of `other`
+    /// replaces ours, and takes its tree, or none, with it.
     pub fn extend_except(&mut self, other: &Tagged, skip: &BTreeSet<String>) {
+        if crate::vars::hash_merge() {
+            for (name, value) in &other.values {
+                if !skip.contains(name) {
+                    self.combine_one(name, value, other.tags.get(name));
+                }
+            }
+            return;
+        }
+        if self.values.is_empty() && skip.is_empty() {
+            self.values.clone_from(&other.values);
+            self.tags = Arc::clone(&other.tags);
+            return;
+        }
+        // Our trees of names `other` writes untagged: none when `other` tags every name.
+        if !self.tags.is_empty() && other.tags.len() < other.values.len() {
+            let stale: Vec<String> = other
+                .values
+                .keys()
+                .filter(|name| !skip.contains(*name) && !other.tags.contains_key(*name))
+                .filter(|name| self.tags.contains_key(*name))
+                .cloned()
+                .collect();
+            self.drop_trees(&stale);
+        }
         for (name, value) in &other.values {
             if !skip.contains(name) {
-                self.combine_one(name, value, other.tags.get(name));
+                self.values.insert(name.clone(), value.clone());
+            }
+        }
+        let written: Vec<(&String, &TagTree)> = other
+            .tags
+            .iter()
+            .filter(|(name, _)| !skip.contains(*name))
+            .collect();
+        if !written.is_empty() {
+            let tags = Arc::make_mut(&mut self.tags);
+            for (name, tree) in written {
+                tags.insert(name.clone(), tree.clone());
             }
         }
     }

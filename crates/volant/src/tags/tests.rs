@@ -135,6 +135,19 @@ fn a_value_written_without_its_tree_drops_the_old_one() {
     layer.insert("y".into(), json!(1), Some(TagTree::Leaf(trusted_at(51))));
     layer.overlay(&Tagged::from(json!({"y": 2}).as_object().unwrap().clone()));
     assert_eq!(layer.tree("y"), None);
+    // A layer laid over another one: its untagged names drop the trees under them, the names
+    // left out keep theirs.
+    let mut low = Tagged::default();
+    low.insert("a".into(), json!(1), Some(TagTree::Leaf(trusted_at(52))));
+    low.insert("b".into(), json!(1), Some(TagTree::Leaf(trusted_at(53))));
+    let mut high = Tagged::default();
+    high.insert("a".into(), json!(2), None);
+    high.insert("b".into(), json!(2), None);
+    high.insert("c".into(), json!(2), Some(TagTree::Leaf(trusted_at(54))));
+    low.extend_except(&high, &["b".to_string()].into());
+    assert_eq!(low.tree("a"), None);
+    assert_eq!(line_of(low.tree("b")), Some(53));
+    assert_eq!(line_of(low.tree("c")), Some(54));
 }
 
 #[test]

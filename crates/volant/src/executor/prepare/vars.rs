@@ -144,7 +144,7 @@ pub(in crate::executor) fn merged_vars(
         batch_hosts: Arc::clone(&live.live_hosts),
         all_play_hosts: Arc::clone(&plan.all_play_hosts),
     };
-    let mut vars = {
+    let (sources, hostvars, untrusted, untrusted_hosts) = {
         let mut store = store.lock().expect("vars lock");
         // The shared views first: a variable of this host's own can name `hostvars` or `groups`,
         // and `resolve_vars` below has to be able to answer it.
@@ -172,16 +172,23 @@ pub(in crate::executor) fn merged_vars(
                 .extend(["inventory_hostname", "inventory_hostname_short"].map(String::from));
             untrusted_hosts = Arc::new(hosts);
         }
-        let layers = store.layered_for_host(host, &scope);
-        HostVars {
-            map: layers.map,
-            base: layers.files,
+        (
+            store.host_sources(host, &scope),
             hostvars,
-            shared: layers.shared,
-            facts: layers.facts,
             untrusted,
             untrusted_hosts,
-        }
+        )
+    };
+    // Laid without the lock: see `HostSources`.
+    let layers = sources.layer(&scope);
+    let mut vars = HostVars {
+        map: layers.map,
+        base: layers.files,
+        hostvars,
+        shared: layers.shared,
+        facts: layers.facts,
+        untrusted,
+        untrusted_hosts,
     };
     // Before anything of the task's own `vars:` resolves, never after: a lookup one of them
     // calls (`first_found`, `template`) reads these two names to find its file, and a pass that

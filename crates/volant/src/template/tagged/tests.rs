@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use std::sync::Arc;
+
 use rstest::rstest;
 use serde_json::{Map, Value, json};
 
@@ -16,7 +18,7 @@ fn set(origin: &str, trusted: bool) -> TagSetId {
 
 /// The written variables: `text` and `list` tagged as loaded from `vars.yml`, and two sevens
 /// carrying different tags.
-fn written() -> (Map<String, Value>, TagMap) {
+fn written() -> (Map<String, Value>, Arc<TagMap>) {
     let vars = json!({"text": "hi", "list": [1, 2], "seven": 7, "other_seven": 7});
     let tags = TagMap::from_iter([
         ("text".into(), TagTree::Leaf(set("vars.yml", true))),
@@ -24,7 +26,7 @@ fn written() -> (Map<String, Value>, TagMap) {
         ("seven".into(), TagTree::Leaf(set("vars.yml", false))),
         ("other_seven".into(), TagTree::Leaf(set("other.yml", false))),
     ]);
-    (vars.as_object().unwrap().clone(), tags)
+    (vars.as_object().unwrap().clone(), Arc::new(tags))
 }
 
 /// The tags of what `template` renders to as the task argument `msg`, written in `task.yml`.

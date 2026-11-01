@@ -293,7 +293,7 @@ impl Context {
                 }
                 self.deferred.note(key);
             }
-            let tree = self.tags.get(key);
+            let tree = self.tags.as_ref().and_then(|tags| tags.get(key));
             return Some((to_template_tagged(value, tree, &self.registry), true));
         }
         // The variables the items of a loop share hold no template that a render could change:

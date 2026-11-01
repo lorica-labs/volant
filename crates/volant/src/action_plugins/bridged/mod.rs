@@ -320,6 +320,7 @@ pub(super) fn start(
             "connection": connection,
             "become": ctx.link.escalation.as_ref().map(|(method, _)| method),
             "verbosity": crate::transport::trace::verbosity(),
+            "keep": ctx.link.keep,
         })
     });
     let (to_plugin, asks) = channel();

@@ -195,10 +195,10 @@ pub struct PlayTask {
     pub module: String,
     pub args: Map<String, Value>,
     /// Templates that render to more of the module's arguments, lowest first, each with where it
-    /// was written: one given as `args:`, then one given as the action's own value
-    /// (`assert: "{{ checks }}"`). Rendered per item under `args`, as ansible-core's argument
-    /// splat is.
-    pub splats: Vec<(String, Option<Origin>)>,
+    /// was written and whether it is the action's own value (`assert: "{{ checks }}"`), which
+    /// comes last; a plugin that takes raw parameters gets it as `_raw_params`. Rendered per item
+    /// under `args`, as ansible-core's argument splat is.
+    pub splats: Vec<(String, Option<Origin>, bool)>,
     /// The tags written here and on everything above it, sorted and free of duplicates. An
     /// empty list is what the reference calls `untagged`.
     pub tags: Vec<String>,

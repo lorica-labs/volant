@@ -138,7 +138,7 @@ pub(super) fn render_rest(
         }
     }
     // The reference warns once for each template that renders to arguments, at the template.
-    for (_, at) in &task.splats {
+    for (_, at, _) in &task.splats {
         let place = at
             .as_ref()
             .map(|at| {
@@ -252,6 +252,20 @@ fn warn_embedded(task: &PlayTask, raw: &Map<String, Value>) {
     }
 }
 
+/// A render error of a task's arguments, in the reference's words when it failed resolving a
+/// value: `Finalization of task args for '<action>' failed: ...`.
+fn finalizing(task: &PlayTask, err: TemplateError) -> TemplateError {
+    if err.0.starts_with(crate::template::RESOLVING) {
+        TemplateError(format!(
+            "{FINALIZING}'{}' failed: {}",
+            crate::executor::run::action_fqcn(&task.module),
+            err.0
+        ))
+    } else {
+        err
+    }
+}
+
 fn render_args(
     task: &PlayTask,
     plan: &PlayPlan,
@@ -269,17 +283,7 @@ fn render_args(
     } else {
         std::borrow::Cow::Borrowed(&task.args)
     };
-    let finalizing = |err: TemplateError| {
-        if err.0.starts_with(crate::template::RESOLVING) {
-            TemplateError(format!(
-                "{FINALIZING}'{}' failed: {}",
-                crate::executor::run::action_fqcn(&task.module),
-                err.0
-            ))
-        } else {
-            err
-        }
-    };
+    let finalizing = |err| finalizing(task, err);
     let (rendered, read) =
         crate::template::watch_play_hosts(|| templar.render_map_tainted(&raw, vars));
     // Placed at each argument that names it: one read through another variable is not placed.
@@ -299,10 +303,15 @@ fn render_args(
     let (mut map, mut untrusted) = rendered.map_err(finalizing)?;
     // The splats lie under the arguments written as such, each over the one before it.
     let mut splatted: BTreeMap<String, (Value, bool)> = BTreeMap::new();
-    for (template, _) in &task.splats {
+    for (template, _, own) in &task.splats {
         let (value, tainted) = templar
             .render_value_tainted(&Value::String(template.clone()), vars)
             .map_err(|err| splat_failure(task, &super::undefined_name(template, err.0)))?;
+        // A plugin that takes raw parameters keeps the action's own value, rendered, as them.
+        if *own && crate::action_plugins::takes_raw_params(&task.module) {
+            splatted.insert("_raw_params".into(), (value, tainted));
+            continue;
+        }
         // A splat that is `omit` as a whole is left out, measured.
         if value.as_str() == Some(crate::vars::omit_token()) {
             continue;

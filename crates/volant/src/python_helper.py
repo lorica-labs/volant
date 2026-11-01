@@ -1849,6 +1849,9 @@ def run_action(ident, request):
             task_vars["hostvars"] = LazyHostVars(ident, names, loader)
             templar = Templar(loader=loader, variables=task_vars)
             fields["action"] = written
+            # The play wrote them, so they are templates, rendered when the plugin applies them.
+            if "module_defaults" in fields:
+                fields["module_defaults"] = trusted_as_template(fields["module_defaults"])
             # A play of its own, whose action groups loading the `module_defaults` fills.
             task = Task.load(fields, block=Block(play=Play()), loader=loader)
             task.post_validate(templar=templar._engine)

@@ -732,8 +732,8 @@ fn the_payload_path_takes_what_nothing_else_runs() {
         "a collection's module goes to the controller's ansible-core to resolve"
     );
     assert!(
-        !is_python_module("ansible.builtin.nosuch"),
-        "no collection can supply a name ansible-core owns"
+        is_python_module("ansible.builtin.formerly_core_ping"),
+        "ansible-core's runtime may route a name it owns to a collection"
     );
 }
 

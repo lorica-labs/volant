@@ -1,5 +1,5 @@
 ---
-sourceHash: bca51b95b831
+sourceHash: dd5a8cdb6098
 title: Role、include 与 import
 description: Volant 在哪里查找 role，依赖、参数规范和 role 变量如何工作，以及 import 和 include 如何把其他文件带入 play。
 ---
@@ -47,7 +47,7 @@ roles:
 
 这个 task 在破折号之后带有 role 的 `short_description`，所以 `--list-tasks` 显示 `Validating arguments against arg spec 'main' - The spec role`。它带有 `always` tag，所以任何 `--tags` 选择都不会丢掉它。
 
-检查按 Ansible 的顺序进行：先是缺少必需参数，然后是类型，然后是超出 `choices` 的值，最后是规范中没有出现的参数。子选项、`aliases`、`default` 和 `mutually_exclusive` 目前还不检查。
+检查按 Ansible 的顺序进行，并使用它的消息：缺少必需参数、类型（`bytes`、`bits`、`json` 等）、超出 `choices` 的值，然后是任意深度的子选项，每一层都有自己的 `required`、`aliases`、`mutually_exclusive` 和 `required_*` 规则。规范中没有出现的参数放在最后，合成一条消息。为 `dict` 选项提供的字符串按 JSON 或 `key=value` 解析；Volant 不会像 Ansible 那样把它当作 Python 字面量求值。
 
 ## Role 变量
 

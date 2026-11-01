@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! `Templar`: renders templates, expressions and conditionals against a set of variables.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use minijinja::machinery::{Instruction, Instructions};
 use minijinja::{Environment, ErrorKind};
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use crate::bridge::{Bridge, PluginKind};
 
@@ -19,7 +19,7 @@ use super::missing::{named, omitting, without_undefined};
 use super::vm::{
     TemplateReads, convert_error, eval_expr, keep_literal, single_expression, template_reads,
 };
-use super::{RESOLVING, Tainted, TemplateError, as_expression, inline_conditional};
+use super::{Tainted, TemplateError, as_expression, inline_conditional};
 
 /// A handle on the environment and the bridge, cheap to clone: a render's context holds one so
 /// that a variable whose value is a template can be rendered when a template reads it.
@@ -294,90 +294,8 @@ impl Templar {
     ) -> Result<(Value, bool), TemplateError> {
         let (ctx, tainted) = context_of(self, vars.into());
         let mut any = false;
-        let out = self.render_value_in(value, &ctx, &tainted, &mut any, true)?;
+        let (out, _) = self.render_value_in(value, &ctx, &tainted, &mut any, true, None)?;
         Ok((out, any))
-    }
-
-    /// `render_value` over a map, keeping the answer **per key**: the names whose own render
-    /// read a managed host come back beside the rendered map.
-    ///
-    /// A task's arguments are mostly data, and data is what a rendered value should be. A few
-    /// of them are not: an argument the engine reads back as source text - the name a
-    /// `debug: var:` compiles - is engine input, and the only moment its provenance exists is
-    /// the render that produced it. One answer for the whole map would refuse an argument the
-    /// playbook wrote because a sibling argument came from a host.
-    pub fn render_map_tainted<'a>(
-        &self,
-        map: &Map<String, Value>,
-        vars: impl Into<Vars<'a>>,
-    ) -> Result<(Map<String, Value>, BTreeSet<String>), TemplateError> {
-        let (ctx, tainted) = context_of(self, vars.into());
-        let mut out = Map::new();
-        let mut untrusted = BTreeSet::new();
-        for (key, value) in map {
-            let mut any = false;
-            let rendered = self
-                .render_value_in(value, &ctx, &tainted, &mut any, false)
-                .map_err(|err| {
-                    // Measured on ansible-core 2.19.12: a plugin's failure names the value it
-                    // was resolving, `Error while resolving value for 'msg': The lookup plugin
-                    // 'x' failed: …`.
-                    // A read with no value is worded the same way: `... for 'msg': 'x' is
-                    // undefined`.
-                    if bridged::is_plugin_failure(&err.0)
-                        || err.is_undefined()
-                        || err.0.starts_with(super::NO_FILTER)
-                        || err.0.starts_with("Error rendering template: ")
-                        || err.0.starts_with("Syntax error in template: ")
-                        || super::include::is_not_found(&err.0)
-                    {
-                        TemplateError(format!("{RESOLVING}'{key}': {}", err.0))
-                    } else if err.0.starts_with(crate::vault::UNDECRYPTABLE) {
-                        TemplateError(format!(
-                            "{RESOLVING}'{key}': Error rendering template: {}",
-                            err.0
-                        ))
-                    } else {
-                        err
-                    }
-                })?;
-            out.insert(key.clone(), rendered);
-            if any {
-                untrusted.insert(key.clone());
-            }
-        }
-        Ok((out, untrusted))
-    }
-
-    fn render_value_in(
-        &self,
-        value: &Value,
-        ctx: &minijinja::Value,
-        tainted: &Tainted,
-        any: &mut bool,
-        keep: bool,
-    ) -> Result<Value, TemplateError> {
-        Ok(match value {
-            Value::String(s) => {
-                let out = self.render_in(s, ctx, tainted)?;
-                *any |= tainted.load(Ordering::Relaxed) || (keep && is_literal(ctx));
-                out
-            }
-            Value::Array(items) => Value::Array(
-                items
-                    .iter()
-                    .map(|v| self.render_value_in(v, ctx, tainted, any, keep))
-                    .collect::<Result<_, _>>()?,
-            ),
-            Value::Object(map) => {
-                let mut out = Map::new();
-                for (k, v) in map {
-                    out.insert(k.clone(), self.render_value_in(v, ctx, tainted, any, keep)?);
-                }
-                Value::Object(out)
-            }
-            other => other.clone(),
-        })
     }
 
     /// Evaluates one expression and returns its value with its type.
@@ -436,6 +354,7 @@ impl Templar {
                 ctx,
             ));
         }
+        super::tagged::set_result(ctx, Some(&value));
         super::pymethods::bytes::to_json(&value)
             .map_err(|e| TemplateError(super::pymethods::bytes::result_error(&e)))
     }

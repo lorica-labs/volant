@@ -1,5 +1,5 @@
 ---
-sourceHash: 0228e4fa70e5
+sourceHash: 23af26d0458a
 title: Référence du langage de modèles
 description: Les méthodes Python, les règles sur les chaînes, les expressions régulières et les limites du Jinja2 de Volant, avec chaque différence avec ansible-core.
 ---
@@ -209,6 +209,10 @@ Un chemin qu'un hôte géré nomme est un cas à part, parce que le contrôleur 
 Volant suit la confiance par variable, pas par chaîne. Ansible étiquette chaque objet chaîne : une chaîne fiable garde donc sa confiance à travers un modèle et ne la perd que lorsqu'une expression construit une nouvelle chaîne à partir d'elle. Dans Volant, une valeur est non fiable quand le rendu qui l'a produite a lu quelque chose qu'un hôte a apporté. La réponse est la même partout où un hôte a joué un rôle. Volant est plus permissif sur une valeur que le playbook a calculée à partir de son propre texte.
 
 Un hôte géré ne peut pas non plus changer ses propres paramètres de connexion par les facts qu'un module renvoie. Volant retire les noms qu'ansible-core retire, comme `ansible_host`, `ansible_user` ou `ansible_ssh_common_args`, plus `ansible_remote_tmp`, et affiche le même avertissement.
+
+## Les plugins de `ansible._protomatter`
+
+ansible-core garde quelques filtres et tests sous `ansible._protomatter` pour ses propres tests d'intégration : `origin`, `tag_names`, `tagged`, `tagged_with`, `apply_trust`, `dump_object`, `finalize`, `python_literal_eval`, `true_type` et `unmask`. Volant les a aussi, pour que ces tests tournent contre lui. Ils montrent ce que Volant sait d'une valeur, comme le fichier et la ligne où elle est écrite. Ce n'est pas une interface publique, ni dans ansible-core ni dans Volant, et ils peuvent changer à chaque version.
 
 ## Limites sur YAML
 Volant refuse un texte YAML qu'il ne peut pas charger sans risque. L'erreur nomme la limite. Un playbook, un fichier de variables, un inventaire et le texte que lit un filtre `from_yaml` suivent tous les mêmes limites.

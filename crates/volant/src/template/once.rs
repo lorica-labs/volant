@@ -125,6 +125,7 @@ impl Templar {
             match emitted.single(&out) {
                 Node::None => return Ok(Value::Null),
                 Node::Value(value) => {
+                    super::tagged::set_result(ctx, Some(&value));
                     let value = super::pymethods::bytes::to_json(&value)
                         .map_err(|e| TemplateError(super::pymethods::bytes::result_error(&e)))?;
                     return Ok(with_line_ends(value, text));
@@ -132,6 +133,7 @@ impl Templar {
                 Node::Text => {}
             }
         }
+        super::tagged::set_result(ctx, None);
         Ok(with_line_ends(Value::String(out), text))
     }
 }

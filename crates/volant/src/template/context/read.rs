@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
+use super::super::tagged::to_template_tagged;
 use super::super::templar::Templar;
 use super::super::vm::holds_template;
 use super::super::{HOSTVARS_KEYS, RECURSION, TemplateError};
@@ -292,13 +293,16 @@ impl Context {
                 }
                 self.deferred.note(key);
             }
-            return Some((crate::template::bigint::to_template(value), true));
+            let tree = self.tags.get(key);
+            return Some((to_template_tagged(value, tree, &self.registry), true));
         }
         // The variables the items of a loop share hold no template that a render could change:
         // `HostVars::shared_by_items` keeps in `map` every value that has one, except the text of
         // a managed host, which is data. So a read of this layer has nothing to resolve.
-        let value = self.base.as_ref()?.get(key)?;
-        Some((crate::template::bigint::to_template(value), true))
+        let base = self.base.as_ref()?;
+        let value = base.get(key)?;
+        let tree = base.tree(key);
+        Some((to_template_tagged(value, tree, &self.registry), true))
     }
 }
 

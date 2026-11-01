@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use super::TagSetId;
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum TagTree {
     Leaf(TagSetId),
     /// A container: its own tags, which may be none, and its tagged children.
@@ -14,7 +14,7 @@ pub enum TagTree {
 }
 
 /// The tagged children of a container, in the container's order.
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Children {
     Map(Vec<(String, TagTree)>),
     Seq(Vec<(usize, TagTree)>),
@@ -35,6 +35,16 @@ impl TagTree {
             (false, true) => Some(TagTree::Leaf(own)),
             _ => Some(TagTree::Node(own, children)),
         }
+    }
+
+    /// Whether every set the tree names was interned by this process.
+    pub fn is_known(&self) -> bool {
+        let kids_known = match self {
+            TagTree::Leaf(_) => true,
+            TagTree::Node(_, Children::Map(kids)) => kids.iter().all(|(_, t)| t.is_known()),
+            TagTree::Node(_, Children::Seq(kids)) => kids.iter().all(|(_, t)| t.is_known()),
+        };
+        kids_known && super::is_known(self.own())
     }
 
     pub fn own(&self) -> TagSetId {

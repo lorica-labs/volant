@@ -20,6 +20,7 @@ use crate::compile::Step;
 use crate::executor::prepare::Item;
 use crate::executor::python_type;
 use crate::playbook::python_repr;
+use crate::tags::{TagMap, TagTree};
 use crate::vars::{
     Chain, Failure, HostVars, Scan, VarStore, include_dir, include_vars_paths, join_path,
     read_failure, read_vars_document,
@@ -32,6 +33,29 @@ use super::retry::raised;
 /// [`super::record::record_local_facts`]. Like every `_volant_` key it is taken off before anything
 /// shows or registers the result.
 pub(super) const DATA_KEY: &str = "_volant_data";
+
+/// The tags of the variables the result sets, by name, as JSON: a `_volant_` key too.
+pub(super) const TAGS_KEY: &str = "_volant_tags";
+
+/// Puts `tags`, those of the facts a result sets, under [`TAGS_KEY`] of the result `r`.
+pub(super) fn put_tags(r: &mut Map<String, Value>, tags: TagMap) {
+    if !tags.is_empty() {
+        r.insert(TAGS_KEY.into(), json!(tags.into_iter().collect::<Vec<_>>()));
+    }
+}
+
+/// The tags [`TAGS_KEY`] holds in `result`. A tree that names a set this process never interned
+/// is dropped, so a result can only carry tags the run gave it.
+pub(super) fn result_tags(result: &TaskResult) -> TagMap {
+    let Some(entries) = result.0.get(TAGS_KEY) else {
+        return TagMap::new();
+    };
+    serde_json::from_value::<Vec<(String, TagTree)>>(entries.clone())
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(_, tree)| tree.is_known())
+        .collect()
+}
 
 /// The options that only mean something for a directory, and so cannot be given with a file.
 const DIR_OPTIONS: [&str; 6] = [
@@ -123,7 +147,7 @@ pub(super) fn run_include_vars(item: &Item, step: &Step, store: &Mutex<VarStore>
         Some(dir) => read_directory(dir, item, step),
         None => read_file(item, step, store),
     };
-    let (facts, files, encrypted) = match outcome {
+    let (facts, files, encrypted, tags) = match outcome {
         Ok(read) => read,
         Err(Done::Raised(result)) => return result,
         Err(Done::Returned(failure)) => {
@@ -139,8 +163,9 @@ pub(super) fn run_include_vars(item: &Item, step: &Step, store: &Mutex<VarStore>
         Ok(facts) => facts,
         Err(result) => return result,
     };
+    let mut tags = wrap_tags(truthy("name"), tags);
     let (facts, data) = if args.get("hash_behaviour").and_then(Value::as_str) == Some("merge") {
-        merged_over(&item.vars, facts)
+        merged_over(&item.vars, facts, &mut tags)
     } else {
         (facts, Vec::new())
     };
@@ -155,6 +180,7 @@ pub(super) fn run_include_vars(item: &Item, step: &Step, store: &Mutex<VarStore>
     if !data.is_empty() {
         r.insert(DATA_KEY.into(), json!(data));
     }
+    put_tags(&mut r, tags);
     TaskResult(r)
 }
 
@@ -166,7 +192,22 @@ enum Done {
     Returned(Box<Returned>),
 }
 
-type Read = (Map<String, Value>, Vec<String>, bool);
+type Read = (Map<String, Value>, Vec<String>, bool, TagMap);
+
+/// The tags of what [`wrap`] made of the variables `tags` are the tags of.
+fn wrap_tags(name: Option<&Value>, tags: TagMap) -> TagMap {
+    let Some(name) = name else {
+        return tags;
+    };
+    let key = name
+        .as_str()
+        .map_or_else(|| name.to_string(), str::to_string);
+    let children = crate::tags::Children::Map(tags.into_iter().collect());
+    TagTree::node(crate::tags::TagSetId::NONE, children)
+        .map(|tree| (key, tree))
+        .into_iter()
+        .collect()
+}
 
 /// The variables under the one name `name:` gave, the reference's `scope[name] = results`, or as
 /// they are. A name that is not hashable fails the way Python's dict does.
@@ -193,17 +234,26 @@ fn wrap(name: Option<&Value>, facts: Map<String, Value>) -> Result<Map<String, V
 /// The second answer names the merged variables that hold what a managed host returned, whichever
 /// of their leaves it is: they are data, as a `set_fact` value built from such text is. A value
 /// that replaces another takes the status of the new value, which is the file's own text.
-fn merged_over(vars: &HostVars, facts: Map<String, Value>) -> (Map<String, Value>, Vec<String>) {
+fn merged_over(
+    vars: &HostVars,
+    facts: Map<String, Value>,
+    tags: &mut TagMap,
+) -> (Map<String, Value>, Vec<String>) {
     let mut data = Vec::new();
     let merged = facts
         .into_iter()
         .map(|(key, value)| {
             let merged = match (vars.get(&key), &value) {
-                (Some(Value::Object(old)), Value::Object(fresh)) => {
+                (Some(old @ Value::Object(old_map)), Value::Object(fresh)) => {
                     if vars.untrusted.contains(&key) {
                         data.push(key.clone());
                     }
-                    Value::Object(crate::vars::merge_hash(old, fresh))
+                    let tree = crate::tags::merge(vars.map.tree(&key), tags.get(&key), old, &value);
+                    match tree {
+                        Some(tree) => _ = tags.insert(key.clone(), tree),
+                        None => _ = tags.shift_remove(&key),
+                    }
+                    Value::Object(crate::vars::merge_hash(old_map, fresh))
                 }
                 _ => value,
             };
@@ -296,7 +346,8 @@ fn read_file(item: &Item, step: &Step, store: &Mutex<VarStore>) -> Result<Read, 
             crate::vars::reserved::warn_if_reserved(name, at.as_ref());
         }
     }
-    Ok((facts, vec![shown], document.encrypted))
+    let tags = crate::tags::top_level(document.tags);
+    Ok((facts, vec![shown], document.encrypted, tags))
 }
 
 /// Every file of a directory: the options checked in the order the reference checks them, the
@@ -359,7 +410,7 @@ fn read_directory(dir: &Value, item: &Item, step: &Step) -> Result<Read, Done> {
         ))
     })?;
     match include_dir(&top, &scan.with_depth(depth)) {
-        Ok(read) => Ok((read.facts, read.files, read.encrypted)),
+        Ok(read) => Ok((read.facts, read.files, read.encrypted, read.tags)),
         Err(Failure::Returned {
             message,
             facts,

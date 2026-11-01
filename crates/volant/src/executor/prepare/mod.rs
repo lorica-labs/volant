@@ -282,6 +282,7 @@ pub(super) fn prepare(
             label,
             args: fields.args,
             args_untrusted: fields.args_untrusted,
+            args_tags: fields.args_tags,
             vars,
             environment: fields.environment,
             skipped,
@@ -329,7 +330,7 @@ pub(super) fn prepare(
     }
     let delegate = delegate_for(task, &base, templar, &mut items)?;
     // A word that names no action fails on the controller before any link is opened.
-    if is_local(&task.module)
+    if carry::is_local(&task.module)
         || crate::action_plugins::controller_side(&task.module)
         || crate::playbook::names_no_action(&task.module)
     {
@@ -472,16 +473,13 @@ pub(in crate::executor) fn render_deferred(
     item.skipped = fields.skipped;
     item.args = fields.args;
     item.args_untrusted = fields.args_untrusted;
+    item.args_tags = fields.args_tags;
     item.environment = fields.environment;
     item.ignore_errors = fields.ignore_errors;
     item.check_mode = fields.check_mode;
     item.diff = fields.diff;
     settle_label(task, item);
     warnings
-}
-
-fn is_local(module: &str) -> bool {
-    volant_protocol::modules::local(module).is_some() && !crate::action_plugins::overridden(module)
 }
 
 /// The `(item=...)` label: Python's `str` of the item, which is a string as it is and anything

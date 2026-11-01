@@ -1,5 +1,5 @@
 ---
-sourceHash: 0228e4fa70e5
+sourceHash: 23af26d0458a
 title: 模板语言参考
 description: Volant 的 Jinja2 所支持的 Python 方法、字符串规则、正则表达式和限制，以及与 ansible-core 的每一处差异。
 ---
@@ -209,6 +209,10 @@ Task failed: Error while resolving `var` expression: Encountered untrusted templ
 Volant 按变量而不是按字符串跟踪信任。Ansible 给每个字符串对象打标记，所以可信字符串在经过模板后仍然可信，只有当表达式用它构建出新字符串时才失去信任。在 Volant 中，如果产生某个值的那次渲染读取了主机提供的内容，这个值就是不可信的。凡是主机参与了的地方，结论都相同。对于 playbook 根据自己的文本计算出的值，Volant 更宽松。
 
 受管主机也无法通过模块返回的 facts 改变自己的连接设置。Volant 会剥除 ansible-core 剥除的那些名字，例如 `ansible_host`、`ansible_user` 或 `ansible_ssh_common_args`，另外还有 `ansible_remote_tmp`，并打印同样的警告。
+
+## `ansible._protomatter` 插件
+
+ansible-core 在 `ansible._protomatter` 下保留了几个过滤器和测试，供它自己的集成测试使用：`origin`、`tag_names`、`tagged`、`tagged_with`、`apply_trust`、`dump_object`、`finalize`、`python_literal_eval`、`true_type` 和 `unmask`。Volant 也提供它们，让这些测试可以在 Volant 上运行。它们显示 Volant 对一个值所知道的信息，例如写下它的文件和行。无论在 ansible-core 还是 Volant 中，它们都不是公开接口，任何版本都可能改变。
 
 ## YAML 的限制
 

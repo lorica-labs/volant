@@ -47,6 +47,7 @@ pub(in crate::executor) fn record_registered(
         return;
     };
     let mut value = registered_value(task, results);
+    let tree = super::register::registered_tree(task, results);
     // The reference registers a module's result without its `invocation` (`_process_pending_results`
     // deletes the top-level key, and only that one: a loop's items keep theirs), so a playbook
     // reading `r.invocation` fails there. `-vvv` still shows it, from the result itself.
@@ -66,7 +67,7 @@ pub(in crate::executor) fn record_registered(
         }
     }
     for target in targets {
-        vars.set_untrusted_fact(target, reg, value.clone());
+        vars.set_registered(target, reg, value.clone(), tree.clone());
     }
 }
 
@@ -320,6 +321,7 @@ pub(in crate::executor) fn record_local_facts(
         } else {
             included_data(result)
         };
+        let tags = super::include_vars::result_tags(result);
         let cacheable = set_fact
             && item.args.get("cacheable").is_some_and(|v| match v {
                 Value::Bool(on) => *on,
@@ -333,11 +335,12 @@ pub(in crate::executor) fn record_local_facts(
                     written.insert(host.clone());
                 }
                 if !set_fact {
-                    vars.set_included(host, key, value.clone(), None, data.contains(key));
+                    let tree = tags.get(key).cloned();
+                    vars.set_included(host, key, value.clone(), tree, data.contains(key));
                 } else if data.contains(key) {
                     vars.set_untrusted_fact(host, key, value.clone());
                 } else {
-                    vars.set_fact(host, key, value.clone(), None);
+                    vars.set_fact(host, key, value.clone(), tags.get(key).cloned());
                 }
             }
         }

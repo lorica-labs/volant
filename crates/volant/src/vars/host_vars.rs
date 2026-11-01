@@ -205,6 +205,7 @@ impl<'a> From<&'a HostVars> for Vars<'a> {
     fn from(vars: &'a HostVars) -> Self {
         Vars {
             map: &vars.map,
+            tags: Some(vars.map.tags()),
             hostvars: Some(&vars.hostvars),
             shared: Some(&vars.shared),
             facts: Some(&vars.facts),

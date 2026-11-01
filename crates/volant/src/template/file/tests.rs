@@ -17,6 +17,7 @@ fn a_host_value_in_a_template_is_written_as_text() {
     let untrusted: BTreeSet<String> = ["motd".to_string()].into();
     let vars = Vars {
         map: &map,
+        tags: None,
         hostvars: None,
         shared: None,
         facts: None,

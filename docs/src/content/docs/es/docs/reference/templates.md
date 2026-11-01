@@ -1,5 +1,5 @@
 ---
-sourceHash: 0228e4fa70e5
+sourceHash: 23af26d0458a
 title: Referencia del lenguaje de plantillas
 description: Los métodos de Python, las reglas de cadenas, las expresiones regulares y los límites del Jinja2 de Volant, con todas las diferencias con ansible-core.
 ---
@@ -209,6 +209,10 @@ Una ruta que nombra un host administrado es un caso aparte, porque el controlado
 Volant sigue la confianza por variable, no por cadena. Ansible etiqueta cada objeto cadena, así que una cadena fiable conserva su confianza a través de una plantilla y la pierde solo cuando una expresión construye una cadena nueva a partir de ella. En Volant, un valor es no fiable cuando el renderizado que lo produjo leyó algo que aportó un host. La respuesta es la misma dondequiera que un host participó. Volant es más permisivo con un valor que el playbook calculó a partir de su propio texto.
 
 Un host administrado tampoco puede cambiar sus propios ajustes de conexión mediante los facts que devuelve un módulo. Volant elimina los nombres que elimina ansible-core, como `ansible_host`, `ansible_user` o `ansible_ssh_common_args`, además de `ansible_remote_tmp`, e imprime el mismo aviso.
+
+## Los plugins de `ansible._protomatter`
+
+ansible-core tiene algunos filtros y tests bajo `ansible._protomatter` para sus propias pruebas de integración: `origin`, `tag_names`, `tagged`, `tagged_with`, `apply_trust`, `dump_object`, `finalize`, `python_literal_eval`, `true_type` y `unmask`. Volant también los tiene, para que esas pruebas se ejecuten contra él. Muestran lo que Volant sabe de un valor, como el archivo y la línea donde se escribió. No son una interfaz pública, ni en ansible-core ni en Volant, y pueden cambiar en cualquier versión.
 
 ## Límites de YAML
 

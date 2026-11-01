@@ -278,6 +278,14 @@ pub(super) fn without_undefined(value: &minijinja::Value) -> minijinja::Value {
     }
 }
 
+/// What `undef()` says with no hint of its own.
+pub(super) const MANDATORY: &str = "Mandatory variable has not been overridden";
+
+/// Whether the last value handed back undefined on purpose was an `undef()` with no hint.
+pub(super) fn handed_mandatory() -> bool {
+    HANDED.with(|h| h.borrow().as_deref() == Some(MANDATORY))
+}
+
 /// Forgets what an `undef()` said when its value was not the one used, a `default` that did not
 /// apply, so that a later failure is not worded by it.
 pub(super) fn forget_handed() {

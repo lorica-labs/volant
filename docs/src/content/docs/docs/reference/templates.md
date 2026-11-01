@@ -209,6 +209,10 @@ Volant tracks trust per variable, not per string. Ansible tags each string objec
 
 A managed host also cannot change its own connection settings through the facts a module returns. Volant strips the names ansible-core strips, such as `ansible_host`, `ansible_user` or `ansible_ssh_common_args`, plus `ansible_remote_tmp`, and prints the same warning.
 
+## The `ansible._protomatter` plugins
+
+ansible-core keeps a few filters and tests under `ansible._protomatter` for its own integration tests: `origin`, `tag_names`, `tagged`, `tagged_with`, `apply_trust`, `dump_object`, `finalize`, `python_literal_eval`, `true_type` and `unmask`. Volant has them too, so that those tests run against it. They show what Volant knows about a value, such as the file and line it was written at. They are not a public interface, in ansible-core or in Volant, and they may change in any release.
+
 ## Limits on YAML
 Volant refuses a YAML text that it cannot load without risk. The error names the limit. A playbook, a variable file, an inventory and the text a `from_yaml` filter reads all follow the same limits.
 

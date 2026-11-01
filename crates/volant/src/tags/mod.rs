@@ -23,7 +23,8 @@ pub use tree::{Children, TagMap, TagTree, merge, uniform};
 pub struct OriginId(u32);
 
 /// An interned [`TagSet`]. [`TagSetId::NONE`] is the empty set; trees never store it on a leaf.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+/// It means something only in the process that interned it.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub struct TagSetId(u32);
 
 impl TagSetId {
@@ -179,6 +180,11 @@ pub fn intern(set: TagSet) -> TagSetId {
     tables.sets.push(set.clone());
     tables.set_ids.insert(set, id);
     TagSetId(id)
+}
+
+/// Whether `id` names a set this process interned: one read back from JSON may not.
+pub fn is_known(id: TagSetId) -> bool {
+    (id.0 as usize) < tables().sets.len()
 }
 
 pub fn get(id: TagSetId) -> TagSet {

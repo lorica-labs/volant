@@ -8,7 +8,7 @@ use volant_protocol::TaskResult;
 use volant_protocol::modules::short_name;
 
 use crate::playbook::{Flag, PlayTask};
-use crate::template::{Templar, TemplateError};
+use crate::template::{RenderedArgs, Templar, TemplateError};
 use crate::vars::HostVars;
 
 use super::escalation::remove_omit;
@@ -24,6 +24,7 @@ pub(super) struct Fields {
     pub(super) deferred: bool,
     pub(super) args: Map<String, Value>,
     pub(super) args_untrusted: BTreeSet<String>,
+    pub(super) args_tags: crate::tags::TagMap,
     pub(super) ignore_errors: Option<bool>,
     pub(super) check_mode: Option<bool>,
     pub(super) diff: Option<bool>,
@@ -38,6 +39,7 @@ impl Fields {
             deferred: false,
             args: Map::new(),
             args_untrusted: BTreeSet::new(),
+            args_tags: crate::tags::TagMap::new(),
             ignore_errors: None,
             check_mode: None,
             diff: None,
@@ -154,7 +156,7 @@ pub(super) fn render_rest(
             "Using a template for task args is unsafe in some situations (see https://docs.ansible.com/ansible/devel/reference_appendices/faq.html#argsplat-unsafe).{place}"
         ));
     }
-    let (args, args_untrusted) = render_args(task, plan, templar, vars)?;
+    let (args, args_untrusted, args_tags) = render_args(task, plan, templar, vars)?;
     // Per item, against the item's own variables: the reference evaluates the conditional
     // before it renders the task's keywords.
     let ignore_errors = match &task.ignore_errors {
@@ -168,6 +170,7 @@ pub(super) fn render_rest(
         deferred: false,
         args,
         args_untrusted,
+        args_tags,
         ignore_errors,
         check_mode,
         diff,
@@ -266,26 +269,56 @@ fn finalizing(task: &PlayTask, err: TemplateError) -> TemplateError {
     }
 }
 
+/// The arguments as written, rendered. Only a `set_fact` keeps the tags of what they rendered
+/// to: the facts it sets carry them.
+fn render_written(
+    task: &PlayTask,
+    templar: &Templar,
+    raw: &Map<String, Value>,
+    vars: &HostVars,
+) -> Result<RenderedArgs, TemplateError> {
+    if short_name(&task.module) != "set_fact" {
+        let (map, untrusted) = templar.render_map_tainted(raw, vars)?;
+        return Ok((map, untrusted, crate::tags::TagMap::new()));
+    }
+    let origin_of = |key: &str| {
+        let at = task.value_origins.get(&format!("args.{key}"))?;
+        let number = |n: usize| u32::try_from(n).unwrap_or(0);
+        Some(crate::tags::origin_at(
+            &at.path,
+            number(at.line),
+            number(at.col),
+        ))
+    };
+    templar.render_map_tagged(raw, vars, &origin_of)
+}
+
 fn render_args(
     task: &PlayTask,
     plan: &PlayPlan,
     templar: &Templar,
     vars: &HostVars,
-) -> Result<(Map<String, Value>, BTreeSet<String>), TemplateError> {
+) -> Result<RenderedArgs, TemplateError> {
     // `assert` reads `that` off the task as written and evaluates it the way `when` is
     // evaluated, so it is not rendered here: a render error in it would fail the task in the
     // render's words before the conditional could report it, which the reference's
     // `finalize_task_arg` for `assert` does not do.
-    let raw = if short_name(&task.module) == "assert" {
+    // `ansible._protomatter.debug` evaluates its `expression` the same way.
+    let unrendered = match short_name(&task.module) {
+        "assert" => Some("that"),
+        crate::executor::run::PROTOMATTER_DEBUG => Some("expression"),
+        _ => None,
+    };
+    let raw = if let Some(key) = unrendered {
         let mut raw = task.args.clone();
-        raw.remove("that");
+        raw.remove(key);
         std::borrow::Cow::Owned(raw)
     } else {
         std::borrow::Cow::Borrowed(&task.args)
     };
     let finalizing = |err| finalizing(task, err);
     let (rendered, read) =
-        crate::template::watch_play_hosts(|| templar.render_map_tainted(&raw, vars));
+        crate::template::watch_play_hosts(|| render_written(task, templar, &raw, vars));
     // Placed at each argument that names it: one read through another variable is not placed.
     if read {
         for (key, value) in raw.iter() {
@@ -300,7 +333,7 @@ fn render_args(
         }
     }
     warn_embedded(task, &raw);
-    let (mut map, mut untrusted) = rendered.map_err(finalizing)?;
+    let (mut map, mut untrusted, tags) = rendered.map_err(finalizing)?;
     // The splats lie under the arguments written as such, each over the one before it.
     let mut splatted: BTreeMap<String, (Value, bool)> = BTreeMap::new();
     for (template, _, own) in &task.splats {
@@ -373,7 +406,7 @@ fn render_args(
     let Value::Object(map) = rendered else {
         unreachable!("an object renders to an object")
     };
-    Ok((map, untrusted))
+    Ok((map, untrusted, tags))
 }
 
 /// One `module_defaults` value as the mapping it stands for: a mapping with each of its values

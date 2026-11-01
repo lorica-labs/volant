@@ -207,6 +207,18 @@ pub(super) fn set_fact_data(task: &PlayTask, item: &Item, templar: &Templar) -> 
         .collect()
 }
 
+/// The tags of the values a `set_fact` item sets, by the names it sets: those its arguments
+/// rendered to.
+fn set_fact_tags(item: &Item) -> crate::tags::TagMap {
+    let Some(Ok(names)) = item.set_fact_names.get() else {
+        return crate::tags::TagMap::new();
+    };
+    names
+        .iter()
+        .filter_map(|(key, name, _)| Some((name.clone(), item.args_tags.get(key)?.clone())))
+        .collect()
+}
+
 /// The keys of a `set_fact` as written, in the order [`set_fact_names`] gives the names.
 fn written_keys(item: &Item) -> Vec<String> {
     item.set_fact_names
@@ -275,6 +287,9 @@ fn local_result(
     store: &Mutex<VarStore>,
     verbosity: u8,
 ) -> TaskResult {
+    if task.module == super::protomatter::DEBUG {
+        return TaskResult(super::protomatter::debug(task, item, templar));
+    }
     let mut r = Map::new();
     match short_name(&task.module) {
         "assert" => return assert_module(task, item, templar),
@@ -316,6 +331,7 @@ fn local_result(
                 })
                 .collect();
             r.insert("ansible_facts".into(), Value::Object(facts));
+            super::include_vars::put_tags(&mut r, set_fact_tags(item));
             r.insert("changed".into(), json!(false));
             r.insert("failed".into(), json!(false));
         }

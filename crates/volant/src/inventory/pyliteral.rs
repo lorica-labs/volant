@@ -12,7 +12,7 @@ const MAX_DEPTH: usize = 200;
 
 /// `text` read as `ast.literal_eval` reads it, or `None` where it raises and the plugin keeps the
 /// text, as for `1abc`, `01`, a name or an f-string.
-pub(super) fn literal_eval(text: &str) -> Option<Value> {
+pub(crate) fn literal_eval(text: &str) -> Option<Value> {
     let mut parser = Parser {
         text,
         at: 0,

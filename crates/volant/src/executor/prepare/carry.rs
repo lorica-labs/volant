@@ -24,7 +24,7 @@ use crate::executor::run::set_fact_names;
 /// after each pause, so its items cannot be rendered before the first one runs.
 pub(super) fn paced(task: &crate::playbook::PlayTask, options: &super::LoopOptions) -> bool {
     options.pause.is_some_and(|pause| !pause.is_zero())
-        && (super::is_local(&task.module) || crate::action_plugins::controller_side(&task.module))
+        && (is_local(&task.module) || crate::action_plugins::controller_side(&task.module))
 }
 
 /// Lays what item `ii - 1` set over item `ii` before it renders, when the items of a looped
@@ -168,6 +168,14 @@ fn spells(text: &str, name: &str) -> bool {
         let after = text[at + name.len()..].chars().next();
         !before.is_some_and(word) && !after.is_some_and(word)
     })
+}
+
+/// Whether the module runs on the controller: a builtin no plugin of the run's own overrides, or
+/// `ansible._protomatter.debug`.
+pub(super) fn is_local(module: &str) -> bool {
+    let builtin = volant_protocol::modules::local(module).is_some();
+    builtin && !crate::action_plugins::overridden(module)
+        || module == crate::executor::run::PROTOMATTER_DEBUG
 }
 
 #[cfg(test)]

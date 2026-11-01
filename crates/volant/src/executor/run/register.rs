@@ -7,10 +7,39 @@ use volant_protocol::modules::short_name;
 use crate::compile::Compiled;
 use crate::executor::prepare::{Item, display};
 use crate::playbook::PlayTask;
+use crate::tags::{Children, TagSetId, TagTree};
 use crate::template::Templar;
 
 use super::interpreter::action_fqcn;
 use super::judge::{empty_loop_result, loops, task_fails};
+
+/// The tags of what [`registered_value`] stores: those of the facts a `set_fact` or an
+/// `include_vars` result sets, under `ansible_facts` and, for a loop, under each item.
+pub(in crate::executor) fn registered_tree(
+    task: &PlayTask,
+    results: &[(Option<Value>, TaskResult)],
+) -> Option<TagTree> {
+    let facts = |r: &TaskResult| {
+        let tags = super::include_vars::result_tags(r);
+        let facts = TagTree::node(TagSetId::NONE, Children::Map(tags.into_iter().collect()))?;
+        let children = Children::Map(vec![("ansible_facts".into(), facts)]);
+        TagTree::node(TagSetId::NONE, children)
+    };
+    if crate::executor::prepare::raised_by_label(results).is_some() {
+        return None;
+    }
+    if !loops(task, results.first().map(|(element, _)| element)) {
+        return facts(&results.first()?.1);
+    }
+    let items = results
+        .iter()
+        .enumerate()
+        .filter_map(|(i, (_, r))| Some((i, facts(r)?)))
+        .collect();
+    let items = TagTree::node(TagSetId::NONE, Children::Seq(items))?;
+    let children = Children::Map(vec![("results".into(), items)]);
+    TagTree::node(TagSetId::NONE, children)
+}
 
 /// What `register` stores: the single result, or Ansible's loop aggregate.
 pub(in crate::executor) fn registered_value(

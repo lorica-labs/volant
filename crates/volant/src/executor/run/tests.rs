@@ -94,6 +94,7 @@ async fn every_local_module_has_an_arm_in_run_local() {
             label: None,
             args: Map::new(),
             args_untrusted: BTreeSet::new(),
+            args_tags: crate::tags::TagMap::new(),
             vars: HostVars::default(),
             environment: BTreeMap::new(),
             ignore_errors: None,
@@ -637,10 +638,6 @@ async fn an_interrupted_pause_ends_at_once() {
 fn the_argument_check_speaks_the_reference_s_sentences() {
     let check = |provided: Value, host: Value| {
         let item = Item {
-            deferred: false,
-            escalation: None,
-            element: None,
-            label: None,
             args: vars(json!({
                 "argument_spec": {
                     "zeta": {"type": "str", "required": true},
@@ -652,17 +649,8 @@ fn the_argument_check_speaks_the_reference_s_sentences() {
                 "provided_arguments": provided,
                 "validate_args_context": {"argument_spec_name": "main", "name": "types", "type": "role"},
             })),
-            args_untrusted: BTreeSet::new(),
             vars: hvars(host),
-            environment: BTreeMap::new(),
-            ignore_errors: None,
-            check_mode: None,
-            diff: None,
-            skipped: None,
-            set_fact_names: std::sync::OnceLock::new(),
-            label_error: None,
-            label_raised: None,
-            notify: Vec::new(),
+            ..local_item(json!({}))
         };
         validate_argument_spec(&item)
     };
@@ -831,6 +819,7 @@ fn a_result_that_ran_says_whether_it_failed() {
         label: None,
         args: Map::new(),
         args_untrusted: BTreeSet::new(),
+        args_tags: crate::tags::TagMap::new(),
         vars: HostVars::default(),
         environment: BTreeMap::new(),
         ignore_errors: None,
@@ -883,6 +872,7 @@ fn the_recap_counts_changed_the_way_the_reference_does() {
         label: None,
         args: Map::new(),
         args_untrusted: BTreeSet::new(),
+        args_tags: crate::tags::TagMap::new(),
         vars: HostVars::default(),
         environment: BTreeMap::new(),
         ignore_errors: None,
@@ -943,6 +933,7 @@ fn failed_when_false_rescues_a_non_zero_rc() {
         label: None,
         args: Map::new(),
         args_untrusted: BTreeSet::new(),
+        args_tags: crate::tags::TagMap::new(),
         vars: HostVars::default(),
         environment: BTreeMap::new(),
         ignore_errors: None,

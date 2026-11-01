@@ -29,10 +29,13 @@ mod missing;
 mod once;
 mod one_pass;
 mod order;
+mod protomatter;
 mod pymethods;
 pub(crate) use pymethods::bytes::{keeping as keeping_bytes, kept_repr, kept_text};
 mod register;
+mod render_map;
 mod resolve;
+mod tagged;
 mod templar;
 mod test_plugins;
 pub(crate) mod unknown;
@@ -52,6 +55,7 @@ pub(crate) use env::{
     add_filter, add_test, add_text_filter, holds_undefined, truthy, type_name, undefined_through,
 };
 use env::{any_undefined, environment};
+pub use render_map::RenderedArgs;
 pub use templar::Templar;
 pub(crate) use vm::{EMBEDDED_HELP, EMBEDDED_WARNING, embeds, holds_template};
 use vm::{as_expression, as_template, convert_error, inline_conditional, jinja_syntax};

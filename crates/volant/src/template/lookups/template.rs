@@ -160,6 +160,7 @@ pub(super) fn render_template_at(
             &map[&var],
             Vars {
                 map: &map,
+                tags: None,
                 hostvars,
                 shared,
                 facts,
@@ -221,6 +222,7 @@ pub(super) fn render_template_at(
     });
     let vars = Vars {
         map: &map,
+        tags: None,
         hostvars,
         shared,
         facts: facts.as_ref(),

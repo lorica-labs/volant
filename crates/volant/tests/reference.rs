@@ -93,6 +93,7 @@ fn every_golden_case_matches_the_reference() {
             .collect();
         let vars = volant::template::Vars {
             map: &vars,
+            tags: None,
             hostvars: None,
             shared: None,
             facts: None,

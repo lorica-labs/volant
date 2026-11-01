@@ -158,6 +158,8 @@ pub(in crate::executor) struct Item {
     /// engine reads back as source text consult it; everything else treats an argument as the
     /// data it is and ships it to the agent.
     pub(in crate::executor) args_untrusted: BTreeSet<String>,
+    /// The tags of what each argument rendered to, kept for a `set_fact` only.
+    pub(in crate::executor) args_tags: crate::tags::TagMap,
     /// Variables in force for this item, for `changed_when`, `failed_when` and local modules.
     pub(in crate::executor) vars: HostVars,
     /// The variables the module runs with, this item's layers merged and rendered. Per item

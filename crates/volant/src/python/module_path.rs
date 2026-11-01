@@ -19,7 +19,7 @@ pub fn module_path() -> Vec<std::path::PathBuf> {
         .clone()
 }
 
-/// The names of the modules in the `library/` of each of `dirs` and in the [`module_path`]
+/// The names of the modules in the `library/` of each of `dirs` and in the [`module_path()`]
 /// directories, as the module loader finds them: a file's name less its extension. A Windows
 /// module (`.ps1`) is left out, as a POSIX host never runs one.
 pub(crate) fn library_modules(dirs: &[std::path::PathBuf]) -> std::collections::BTreeSet<String> {

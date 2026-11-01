@@ -23,7 +23,6 @@ interpreter_discovery_python   #1284
 inventory_cache                #1334
 inventory_script               #1282
 lookup_env                     #1282
-lookup_first_found             #1338
 loop-connection                #1353
 module_defaults                #1345
 order                          #1340
@@ -36,5 +35,4 @@ strategy-external              #1335
 task-args                      #1284
 template                       #1339
 templating                     #1282
-templating_lookup_args         #1338
 var_templating                 #1336

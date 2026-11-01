@@ -212,7 +212,7 @@ pub(super) fn lookup(
     super::lookups::taint(state);
     bridge
         .call(kind, name, &args, &kwargs, Some(&vars))
-        .map(|value| super::bigint::to_template(&value))
+        .map(|value| revived(&value))
         .map_err(|err| failed(kind, name, err))
 }
 
@@ -295,9 +295,10 @@ fn keyword_values(kwargs: &Value) -> Result<Vec<(String, Value)>, Error> {
     Ok(out)
 }
 
-/// The arguments as JSON. An undefined value inside one is an undefined read here, where the
-/// reference raises once the plugin reads it; a macro, `loop`, `caller` or function is refused
-/// by name, as nothing in JSON carries it.
+/// The arguments as JSON. An undefined value inside a filter's or a test's is an undefined read
+/// here, where the reference raises once the plugin reads it; a lookup's goes as a mark, which
+/// the helper hands the plugin as ansible-core's marker. A macro, `loop`, `caller` or function is
+/// refused by name, as nothing in JSON carries it.
 fn sendable(
     kind: PluginKind,
     name: &str,
@@ -305,7 +306,7 @@ fn sendable(
     keywords: Vec<(String, Value)>,
 ) -> Result<(Vec<serde_json::Value>, Map<String, serde_json::Value>), Error> {
     let all = || positional.iter().chain(keywords.iter().map(|(_, v)| v));
-    if all().any(super::holds_undefined) {
+    if !matches!(kind, PluginKind::Lookup) && all().any(super::holds_undefined) {
         return Err(Error::from(ErrorKind::UndefinedError));
     }
     if all().any(jinja_object) {
@@ -331,13 +332,64 @@ fn sendable(
     Ok((args, kwargs))
 }
 
+/// What an undefined value travels to the helper and back as: `{UNDEFINED_MARK: hint}`.
+const UNDEFINED_MARK: &str = "__volant_undefined__";
+
 fn to_json(kind: PluginKind, name: &str, value: &Value) -> Result<serde_json::Value, Error> {
+    if value.is_undefined() {
+        return Ok(serde_json::json!({ UNDEFINED_MARK: super::UNDEFINED }));
+    }
+    if super::holds_undefined(value) {
+        if value.kind() == ValueKind::Map {
+            let mut out = Map::new();
+            for key in value.try_iter()? {
+                out.insert(
+                    key.to_string(),
+                    to_json(kind, name, &value.get_item(&key)?)?,
+                );
+            }
+            return Ok(serde_json::Value::Object(out));
+        }
+        return value
+            .try_iter()?
+            .map(|item| to_json(kind, name, &item))
+            .collect::<Result<_, _>>()
+            .map(serde_json::Value::Array);
+    }
     super::bigint::to_json(value).map_err(|err| {
         raise(format!(
             "{} '{name}' was given a value that cannot be sent to the Python helper: {err}",
             kind.as_str()
         ))
     })
+}
+
+/// A lookup's answer as the template holds it: a mark the helper sent back is undefined again,
+/// where it stands, so it fails only where it is used.
+fn revived(value: &serde_json::Value) -> Value {
+    fn holds_mark(value: &serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::Array(items) => items.iter().any(holds_mark),
+            serde_json::Value::Object(map) => {
+                (map.len() == 1 && map.contains_key(UNDEFINED_MARK)) || map.values().any(holds_mark)
+            }
+            _ => false,
+        }
+    }
+    match value {
+        serde_json::Value::Object(map) if map.len() == 1 && map.contains_key(UNDEFINED_MARK) => {
+            Value::UNDEFINED
+        }
+        serde_json::Value::Array(items) if holds_mark(value) => {
+            Value::from(items.iter().map(revived).collect::<Vec<_>>())
+        }
+        serde_json::Value::Object(map) if holds_mark(value) => Value::from_object(
+            map.iter()
+                .map(|(k, v)| (Value::from(k.as_str()), revived(v)))
+                .collect::<indexmap::IndexMap<_, _>>(),
+        ),
+        other => super::bigint::to_template(other),
+    }
 }
 
 /// Whether `value` is, or holds, something only Jinja has: a macro or `caller`, `loop`, a

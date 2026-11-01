@@ -1,5 +1,5 @@
 ---
-sourceHash: 40f537f587c4
+sourceHash: a518b6925ec5
 title: 循环与重试
 description: loop、with_items 和 loop_control，以及 until、retries 和 delay 如何重复运行一个 task。
 ---
@@ -70,7 +70,7 @@ description: loop、with_items 和 loop_control，以及 until、retries 和 del
 
 两者都像任何 `with_<name>` 形式一样，对一个 lookup 做循环：`with_first_found` 逐个检查它的条目，直到某个条目指向一个存在的文件；`with_fileglob` 收集一个 glob 模式的所有匹配项。`with_first_found` 还会在每个搜索条目本身之前，先搜索该条目的一个子目录：当 task 的 action 名为 `template` 时是 `templates/`，名为 `include_vars` 时是 `vars/`，其他情况是 `files/`，也就是普通的 `template:` 或 `include_vars:` task 自己会搜索的那个目录。
 
-什么也找不到时，task 以 ansible-core 自己的语句 `No file was found when using first_found.` 失败，除非该条目是带有 `skip: true` 的映射，此时循环为空运行。渲染为未定义的条目会被丢弃，而不是让整个 lookup 失败，这样 role 就可以读取尚无主机设置过的 fact，并仍然走到它的 `when`。任一 lookup 找到的路径如果仍然含有模板标记（`{{`、`{%` 或 `{#`），会按名称被拒绝，而不是再渲染一次。
+什么也找不到时，task 以 ansible-core 自己的语句 `No file was found when using first_found.` 失败，除非该条目是带有 `skip: true` 的映射，此时循环为空运行。渲染为未定义的条目会被丢弃，而不是让整个 lookup 失败；写成单个字符串的循环值渲染出的列表中的未定义值也会被丢弃，这样 role 就可以读取尚无主机设置过的 fact，并仍然走到它的 `when`。任一 lookup 找到的路径如果仍然含有模板标记（`{{`、`{%` 或 `{#`），会按名称被拒绝，而不是再渲染一次。
 
 lookup 在控制节点上找到的路径属于 playbook 自己的内容；部分由主机的值构成的 item，例如读取 `ansible_distribution` 的条目，则作为数据绑定，与对已注册的值做 `loop:` 得到的 item 相同。
 

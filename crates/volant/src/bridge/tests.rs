@@ -48,7 +48,7 @@ while True:
         call = request["call"]
         names = call["args"]
         if call["kind"] == "actions":
-            value = {n: n != "ansible.legacy.nosuch" for n in names}
+            value = {n: None if n == "ansible.legacy.nosuch" else n for n in names}
         else:
             value = {n: {"missing": True} if n.endswith("nosuch") else {"actions": ["ansible.builtin.ping"]} for n in names}
         put(json.dumps({"id": request["id"], "value": value}).encode())
@@ -91,8 +91,11 @@ fn the_module_defaults_requests_read_the_helper_s_answers() {
     assert_eq!(
         found.into_iter().collect::<Vec<_>>(),
         [
-            ("ansible.legacy.foo".to_string(), true),
-            ("ansible.legacy.nosuch".to_string(), false)
+            (
+                "ansible.legacy.foo".to_string(),
+                Some("ansible.legacy.foo".to_string())
+            ),
+            ("ansible.legacy.nosuch".to_string(), None)
         ]
     );
     let held = bridge

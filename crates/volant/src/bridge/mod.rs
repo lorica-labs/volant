@@ -291,20 +291,21 @@ impl Bridge {
         .map(drop)
     }
 
-    /// Whether each name a `module_defaults` key spells resolves to a module or an action plugin
-    /// ansible-core knows.
+    /// The full name of the action plugin or module each name resolves to, as ansible-core
+    /// resolves a `module_defaults` key, or `None` for a name nothing answers to.
     ///
     /// # Errors
     /// [`BridgeError`] when the helper cannot start or answers out of shape.
     pub fn actions_resolve(
         &self,
         names: &[String],
-    ) -> Result<std::collections::BTreeMap<String, bool>, BridgeError> {
+    ) -> Result<std::collections::BTreeMap<String, Option<String>>, BridgeError> {
         let answer = self.defaults_request("actions", names)?;
         names
             .iter()
             .map(|name| match answer.get(name) {
-                Some(Value::Bool(found)) => Ok((name.clone(), *found)),
+                Some(Value::String(found)) => Ok((name.clone(), Some(found.clone()))),
+                Some(Value::Null) => Ok((name.clone(), None)),
                 _ => Err(defaults_shape()),
             })
             .collect()

@@ -50,7 +50,6 @@ impl Wanted {
 pub fn prepare(
     collections: &[Collection],
     ignore_certs: bool,
-    verbose: u8,
 ) -> Result<(Vec<Wanted>, Vec<tempfile::TempDir>), Failure> {
     let mut wanted = Vec::new();
     let mut clones = Vec::new();
@@ -63,7 +62,7 @@ pub fn prepare(
             }
             Kind::Dir => Wanted::Dir(Source::read(&super::resolve(source))?),
             Kind::Git => {
-                let checkout = super::git::checkout(source, &c.version, ignore_certs, verbose)?;
+                let checkout = super::git::checkout(source, &c.version, ignore_certs)?;
                 let read = Source::read(&checkout.collection)?;
                 clones.push(checkout.clone);
                 Wanted::Dir(read)

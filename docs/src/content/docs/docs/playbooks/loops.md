@@ -104,5 +104,4 @@ A looping task retries each item on its own and finishes one item's attempts bef
 ## Differences from Ansible
 
 - An `until` expression that cannot be evaluated is reported with ansible-core's prefix and Volant's own message, the same way a failing `when` is.
-- `FAILED - RETRYING` for a task inside a role shows the task's own name rather than `role : name`.
 - A `loop_control.label` that fails for a reason other than an undefined variable, such as a lookup that raises, fails the task before any item runs. ansible-core ends the task after that item has run.

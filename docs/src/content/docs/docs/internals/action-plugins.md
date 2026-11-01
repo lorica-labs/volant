@@ -172,7 +172,6 @@ The plugin reads the link's key and user (the host variable, `--private-key`, `-
 
 ### Known gaps
 
-- `wait_for_connection` on a host that is down from the first connection ends `UNREACHABLE` for a plugin item that never got a link; ansible-core reports `failed` with `timed out waiting for ping module test`.
 - A delegated `add_host` or `group_by` applies to the task's own host.
 
 ## A source file a managed host named

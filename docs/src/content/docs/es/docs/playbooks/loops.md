@@ -1,5 +1,5 @@
 ---
-sourceHash: c2d8411de0e5
+sourceHash: a518b6925ec5
 title: Bucles y reintentos
 description: loop, with_items y loop_control, y cómo until, retries y delay repiten una tarea.
 ---
@@ -105,5 +105,4 @@ Una tarea con bucle reintenta cada elemento por separado y termina los intentos 
 ## Diferencias con Ansible
 
 - Una expresión `until` que no se puede evaluar se informa con el prefijo de ansible-core y el mensaje propio de Volant, igual que un `when` que falla.
-- `FAILED - RETRYING` para una tarea dentro de un rol muestra el nombre propio de la tarea en lugar de `role : name`.
 - Un `loop_control.label` que falla por un motivo distinto de una variable sin definir, como un lookup que lanza una excepción, hace fallar la tarea antes de que se ejecute ningún elemento. ansible-core termina la tarea después de que ese elemento se haya ejecutado.

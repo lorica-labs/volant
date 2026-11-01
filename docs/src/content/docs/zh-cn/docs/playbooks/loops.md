@@ -1,5 +1,5 @@
 ---
-sourceHash: c2d8411de0e5
+sourceHash: a518b6925ec5
 title: 循环与重试
 description: loop、with_items 和 loop_control，以及 until、retries 和 delay 如何重复运行一个 task。
 ---
@@ -105,5 +105,4 @@ lookup 在控制节点上找到的路径属于 playbook 自己的内容；部分
 ## 与 Ansible 的差异
 
 - 无法求值的 `until` 表达式，会带着 ansible-core 的前缀和 Volant 自己的消息报告，方式与失败的 `when` 相同。
-- role 内部 task 的 `FAILED - RETRYING` 显示 task 自己的名字，而不是 `role : name`。
 - 因未定义变量以外的原因而失败的 `loop_control.label`，例如抛出异常的 lookup，会在任何 item 运行之前就让 task 失败。ansible-core 则在那一项运行之后才结束 task。

@@ -104,6 +104,34 @@ pub struct Repo {
     pub tags: Vec<String>,
 }
 
+/// A `.quiet-git` directory under `tmp` holding a `git` that runs the real one and prints
+/// nothing, as `golden/reference/galaxy.py` runs the reference: `git`'s own wording changes
+/// between its versions. Returns `PATH` with that directory first.
+pub fn quiet_git(tmp: &Path) -> std::ffi::OsString {
+    let real = Command::new("sh")
+        .args(["-c", "command -v git"])
+        .output()
+        .expect("sh runs");
+    let real = String::from_utf8_lossy(&real.stdout).trim().to_string();
+    let dir = tmp.join(".quiet-git");
+    std::fs::create_dir(&dir).expect("a directory");
+    let script = dir.join("git");
+    let text = format!("#!/bin/sh\nexec \"{real}\" \"$@\" >/dev/null 2>&1\n");
+    std::fs::write(&script, text).expect("a script");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
+            .expect("executable");
+    }
+    let mut path = std::ffi::OsString::from(dir);
+    if let Some(rest) = std::env::var_os("PATH") {
+        path.push(":");
+        path.push(rest);
+    }
+    path
+}
+
 /// Makes the case's repositories as `golden/reference/galaxy.py` makes them, with the same author
 /// and dates so their commits have the same hashes, and returns their top directories.
 pub fn make_repos(repos: &[Repo], tmp: &Path) -> Vec<String> {

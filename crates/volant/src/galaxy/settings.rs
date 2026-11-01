@@ -84,6 +84,18 @@ impl<'a> Settings<'a> {
             .map_or_else(|| ansible_home().join("galaxy_cache"), PathBuf::from)
     }
 
+    /// The server a requirement's `source` URL names when no configured one is it, built as
+    /// the reference builds it: no token, the run's certificate checks, `GalaxyAPI`'s 60 seconds.
+    pub fn explicit(&self, options: &Options, name: &str, url: &str) -> ServerSettings {
+        ServerSettings {
+            name: format!("explicit_requirement_{name}"),
+            url: url.to_string(),
+            token: None,
+            validate_certs: !(options.ignore_certs || self.ignore_certs()),
+            timeout: 60,
+        }
+    }
+
     /// The servers to ask, in order: the one `-s` names (a configured one when the name
     /// matches), else the server list, else `GALAXY_SERVER` as `default`.
     pub fn servers(&self, options: &Options) -> Vec<ServerSettings> {

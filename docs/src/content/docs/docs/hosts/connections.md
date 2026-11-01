@@ -199,7 +199,7 @@ Everything else about the run is unchanged: loops, `when`, `register`, `changed_
 - The lines the plugin prints at `-vvv`, such as `<host> ESTABLISH ... CONNECTION`, are printed under the task at the same verbosity.
 - `ansible_password`, the plugin's other secret variables and the become password are written `********` in every line and every result.
 - No more helper processes run at once than `forks` allows.
-- `become` takes the escalation method of the task, `sudo` or `su`.
+- `become` takes the escalation method of the task, `sudo` or `su`, whether the task, its block or its play asks for it. Written as a template such as `become: "{{ item }}"`, it is rendered for each loop item.
 
 Each task pays for starting the plugin's connection, as `ansible-playbook` does, so this route is slower per task than the agent's.
 

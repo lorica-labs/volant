@@ -1,5 +1,5 @@
 ---
-sourceHash: 559a3a1df643
+sourceHash: 31bbd0638724
 title: Connexions et become
 description: Comment Volant atteint un hôte, les variables d'hôte et les paramètres d'ansible.cfg qu'il lit, et comment become fonctionne avec sudo et su.
 ---
@@ -200,7 +200,7 @@ Tout le reste de l'exécution est inchangé : boucles, `when`, `register`, `chan
 - Les lignes que le plugin affiche à `-vvv`, comme `<host> ESTABLISH ... CONNECTION`, s'affichent sous la tâche à la même verbosité.
 - `ansible_password`, les autres variables secrètes du plugin et le mot de passe de become sont écrits `********` dans chaque ligne et chaque résultat.
 - Jamais plus de processus assistants ne tournent à la fois que `forks` ne le permet.
-- `become` prend la méthode d'escalade de la tâche, `sudo` ou `su`.
+- `become` prend la méthode d'escalade de la tâche, `sudo` ou `su`, que la tâche, son bloc ou son play le demande. Écrit comme un template, par exemple `become: "{{ item }}"`, il est rendu pour chaque élément de la boucle.
 
 Chaque tâche paie le démarrage de la connexion du plugin, comme avec `ansible-playbook`, donc cette voie est plus lente par tâche que celle de l'agent.
 

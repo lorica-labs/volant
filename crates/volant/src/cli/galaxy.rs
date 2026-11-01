@@ -9,7 +9,7 @@ pub use args::GalaxyArgs;
 use args::{Collection, Kind, Role};
 
 use crate::config::Config;
-use crate::galaxy::api::servers::Servers;
+use crate::galaxy::api::servers::{Servers, pins};
 use crate::galaxy::api::{Files, Server};
 use crate::galaxy::build::Source;
 use crate::galaxy::requirements::{self, Requirements};
@@ -208,7 +208,13 @@ fn role_install(
         return Ok(0);
     }
     let paths = galaxy::roles_paths(roles_path, &config.roles_path);
-    let mut servers = servers(common, (false, false), config, options.verbose, false);
+    let mut servers = servers(
+        common,
+        (false, false),
+        config,
+        (options.verbose, false),
+        &[],
+    )?;
     role::install(
         &wanted,
         only,
@@ -274,7 +280,7 @@ fn collection_verify(
         }
     }
     // `verify` has no cache options, and the reference runs it without the response cache.
-    let mut servers = servers(common, (true, false), config, verbose, offline);
+    let mut servers = servers(common, (true, false), config, (verbose, offline), &wanted)?;
     let options = inventory::Verify {
         paths: &paths,
         offline,
@@ -301,10 +307,10 @@ fn collection_download(
             .map(|name| requirements::from_string(name))
             .collect::<Result<_, _>>()?,
     };
-    let (wanted, _clones) = install::prepare(&wanted, common.ignore_certs, verbose)?;
+    let mut servers = servers(common, cache, config, (verbose, false), &wanted)?;
+    let (wanted, _clones) = install::prepare(&wanted, common.ignore_certs)?;
     let output = galaxy::resolve(download_path.unwrap_or("./collections"));
     std::fs::create_dir_all(&output).map_err(|e| Failure::error(e.to_string()))?;
-    let mut servers = servers(common, cache, config, verbose, false);
     download::collections(wanted, &output, &mut servers, options, verbose)
 }
 
@@ -338,7 +344,15 @@ fn collection_install(
     if install.signatures.keyring.is_some() || !install.signatures.signatures.is_empty() {
         return Err(not_yet("with signatures"));
     }
-    let (wanted, _clones) = install::prepare(&wanted, install.common.ignore_certs, verbose)?;
+    // A `source` is read with the requirements, before a git source is cloned.
+    let mut servers = servers(
+        &install.common,
+        (install.cache.no_cache, install.cache.clear_response_cache),
+        config,
+        (verbose, install.offline),
+        &wanted,
+    )?;
+    let (wanted, _clones) = install::prepare(&wanted, install.common.ignore_certs)?;
     // The runtime's own directory, which Volant appends to the search path, is not one the
     // reference would name.
     let runtime = crate::runtime::collections::active_dir();
@@ -369,13 +383,6 @@ fn collection_install(
         no_deps: install.no_deps,
         pre: install.pre,
     };
-    let mut servers = servers(
-        &install.common,
-        (install.cache.no_cache, install.cache.clear_response_cache),
-        config,
-        verbose,
-        install.offline,
-    );
     install::collections(
         wanted,
         &galaxy::collections_root(&path),
@@ -397,18 +404,15 @@ fn configured_collections(config: &Config) -> Vec<std::path::PathBuf> {
         .collect()
 }
 
-/// The servers a run asks, from the options, the environment and `ansible.cfg`. None under
-/// `--offline`.
+/// The servers a run asks, from the options, the environment and `ansible.cfg`, and the one the
+/// `source` of each of `wanted` names. None under `--offline`.
 fn servers(
     common: &args::Common,
     (no_cache, clear_cache): (bool, bool),
     config: &Config,
-    verbose: u8,
-    offline: bool,
-) -> Servers {
-    if offline {
-        return Servers { list: Vec::new() };
-    }
+    (verbose, offline): (u8, bool),
+    wanted: &[requirements::Collection],
+) -> Result<Servers, Failure> {
     let env = |name: &str| std::env::var(name).ok();
     let settings = Settings::new(&config.galaxy, &env);
     let options = settings::Options {
@@ -417,6 +421,14 @@ fn servers(
         ignore_certs: common.ignore_certs,
         timeout: common.timeout,
     };
+    let mut list = settings.servers(&options);
+    let shared = list.len();
+    let pinned = pins(&mut list, wanted, |name, url| {
+        settings.explicit(&options, name, url)
+    })?;
+    if offline {
+        return Ok(Servers::new(Vec::new()));
+    }
     let cache_dir = settings.cache_dir();
     let token_path = settings.token_path();
     let files = Files {
@@ -424,13 +436,14 @@ fn servers(
         clear_cache,
         token_path: &token_path,
     };
-    Servers {
-        list: settings
-            .servers(&options)
+    Ok(Servers {
+        list: list
             .iter()
             .map(|s| Server::new(s, &files, verbose))
             .collect(),
-    }
+        pinned,
+        shared,
+    })
 }
 
 /// The requirements file `-r` names, announced at `-vvv` as the reference does.

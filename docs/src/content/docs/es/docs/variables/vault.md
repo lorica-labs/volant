@@ -1,5 +1,5 @@
 ---
-sourceHash: 836ff8730f11
+sourceHash: 4847309baf43
 title: Vault
 description: Cómo lee Volant los datos de Ansible Vault, de dónde obtiene las contraseñas y por qué nunca salen del proceso del controlador.
 ---
@@ -76,8 +76,6 @@ mykey: !vault |
 ## Carencias conocidas
 
 - El argumento `wrap_object` del filtro `vault` se rechaza como no admitido todavía. Su argumento `salt` funciona como en Ansible: la misma sal da siempre el mismo texto.
-- Un valor `!vault` escrito en las propias `vars:` de un play no imprime ninguna línea `Origin:` cuando ningún secreto lo abre.
-- Un `set_fact` de un `{{ x }}` desnudo que contiene un valor cifrado pierde la etiqueta de vault, así que `is vault_encrypted` responde falso sobre el fact donde ansible-core responde verdadero.
 - Con `-vvvvv`, `vault view`, `decrypt` y `rekey` no imprimen la traza de ansible-core de cada secreto que prueban (`Trying secret FileVaultSecret(...) for vault_id=...`). Los secretos se prueban en el mismo orden.
 
 La [página de la línea de comandos](/es/docs/reference/cli/#vault) tiene las opciones.

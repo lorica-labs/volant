@@ -1,5 +1,5 @@
 ---
-sourceHash: 480ffa167c92
+sourceHash: 40f537f587c4
 title: Boucles et nouvelles tentatives
 description: loop, with_items et loop_control, et comment until, retries et delay répètent une tâche.
 ---
@@ -105,5 +105,4 @@ Une tâche en boucle réessaie chaque élément séparément et termine les tent
 ## Différences avec Ansible
 
 - Une expression `until` qui ne peut pas être évaluée est signalée avec le préfixe d'ansible-core et le message propre à Volant, de la même façon qu'un `when` en échec.
-- `FAILED - RETRYING` pour une tâche dans un rôle affiche le nom propre de la tâche plutôt que `role : name`.
 - Un `loop_control.label` qui échoue pour une raison autre qu'une variable non définie, comme un lookup qui lève une erreur, fait échouer la tâche avant l'exécution de tout élément. ansible-core termine la tâche après l'exécution de cet élément.

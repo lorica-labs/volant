@@ -1,5 +1,5 @@
 ---
-sourceHash: 74edd923ede7
+sourceHash: 4a0054ff06cb
 title: 检查模式、diff 与列表输出
 description: --check 和 --diff 做什么，哪些模块能应答它们，tag 如何选择 task，以及不启动运行就描述运行的命令。
 ---
@@ -39,10 +39,7 @@ profile（`--profile`）会写出每次交还的原因：“the task runs in che
 
 ## 已知缺口
 
-- `--step` 在 `meta` 或 `flush_handlers` 步骤之前不会询问。这一点没有与 ansible-core 比较过。
-- `-vv` 不打印 handler 通知行。
 - `-vvvv` 按 ansible-core 的顺序列出 ansible-core 列出的选项，以及插件设置行。它的 ssh 行显示的是这个引擎通过 `ssh` 运行的命令（探测、上传和到 agent 的链接），而不是 ansible-core 的 `sftp` 上传，本地连接或模块文件不打印任何行。
-- 在被跳过的结果上缺少键的 task，给出的消息与 ansible-core 不同。
 
 [对等性页面](/zh-cn/docs/reference/parity/)列出了每个选项和关键字及其状态。
 

@@ -17,6 +17,9 @@ pub mod download;
 pub mod git;
 #[cfg(test)]
 mod git_tests;
+pub mod init;
+#[cfg(test)]
+mod init_tests;
 pub mod install;
 pub mod inventory;
 #[cfg(test)]

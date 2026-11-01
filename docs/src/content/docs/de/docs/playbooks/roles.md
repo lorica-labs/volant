@@ -1,5 +1,5 @@
 ---
-sourceHash: bca51b95b831
+sourceHash: dd5a8cdb6098
 title: Rollen, Includes und Imports
 description: Wo Volant nach Rollen sucht, wie Abhängigkeiten, Argument-Specs und Rollenvariablen funktionieren und wie Imports und Includes andere Dateien in ein Play holen.
 ---
@@ -47,7 +47,7 @@ roles:
 
 Der Task trägt die `short_description` der Rolle nach einem Bindestrich, sodass `--list-tasks` `Validating arguments against arg spec 'main' - The spec role` zeigt. Er ist mit `always` getaggt, daher entfernt ihn keine Auswahl mit `--tags`.
 
-Die Prüfungen laufen in der Reihenfolge, in der Ansible sie ausführt: ein fehlendes Pflichtargument, dann ein Typ, dann ein Wert außerhalb von `choices`, dann ein Argument, das der Spec nicht nennt. Unteroptionen, `aliases`, `default` und `mutually_exclusive` werden noch nicht geprüft.
+Die Prüfungen laufen in der Reihenfolge von Ansible und mit dessen Meldungen: ein fehlendes Pflichtargument, ein Typ (`bytes`, `bits`, `json` und die übrigen), ein Wert außerhalb von `choices`, dann Unteroptionen in jeder Tiefe, jede mit ihren eigenen Regeln für `required`, `aliases`, `mutually_exclusive` und `required_*`. Argumente, die der Spec nicht nennt, kommen zuletzt in einer einzigen Meldung. Ein String für eine `dict`-Option wird als JSON oder `key=value` gelesen; Volant wertet ihn nicht wie Ansible als Python-Literal aus.
 
 ## Rollenvariablen
 

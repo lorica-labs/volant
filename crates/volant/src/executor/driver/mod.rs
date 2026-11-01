@@ -1349,9 +1349,9 @@ pub(super) async fn drive_host(
                     // `ansible_port` or `ansible_connection` without being a boundary of any
                     // other kind, so a batch built from its first task's view alone would run it
                     // on the machine the first task chose.
-                    let delegate_name = delegate.as_ref().map(|(name, _)| name.clone());
+                    let delegate_name = delegate.as_deref().map(|(name, _)| name.clone());
                     let target = delegate_name.clone().unwrap_or_else(|| name.clone());
-                    let target_vars = running_host_vars(delegate.as_ref(), &items);
+                    let target_vars = running_host_vars(delegate.as_deref(), &items);
                     // The host's own map is enough here: every connection setting is a name a
                     // gather strips, so none of them is ever in the facts layer beside it.
                     let vars = &*target_vars.own_variables();
@@ -1481,7 +1481,7 @@ pub(super) async fn drive_host(
                     batch_action = action.map(|kind| PluginBatch {
                         kind,
                         asked: requested_interpreter(target_vars),
-                        delegate: delegate.clone(),
+                        delegate: delegate.as_deref().cloned(),
                     });
                     batch_escalation = escalation;
                     batch_throttle = throttle;

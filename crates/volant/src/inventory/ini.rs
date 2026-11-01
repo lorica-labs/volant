@@ -4,6 +4,7 @@
 use std::path::Path;
 use std::sync::LazyLock;
 
+use crate::tags::{TagTree, Tagged};
 use regex::Regex;
 use serde_json::Value;
 
@@ -135,7 +136,7 @@ fn parse_into(
                     if name.is_empty() {
                         return Err(err("Invalid empty host name provided: ".to_string()));
                     }
-                    inv.add_source_host(&name, port, vars.clone(), file);
+                    inv.add_source_host(&name, port, line_tagged(&vars, file, idx + 1), file);
                     inv.add_member(&name, &group);
                 }
             }
@@ -152,7 +153,10 @@ fn parse_into(
                         inv.group_mut(&group).priority = Some(priority);
                     }
                 } else {
-                    crate::vars::combine_one(&mut inv.group_mut(&group).vars, key, &value);
+                    let tree = line_tree(&value, file, idx + 1);
+                    inv.group_mut(&group)
+                        .vars
+                        .combine_one(key, &value, tree.as_ref());
                 }
             }
             _ => {
@@ -296,6 +300,23 @@ fn key_values(words: &[String]) -> Result<serde_json::Map<String, Value>, String
 /// What Ansible's INI plugin does with a value: `ast.literal_eval`, falling back to the text,
 /// with the escapes of its template literals kept as written (see `yaml::escape_strings`).
 /// See `pyliteral`; a text it refuses, `yes` or `010` included, stays a string.
+/// The tags the reference gives a value of an INI line: its file and line, and trust for its
+/// strings.
+fn line_tree(value: &Value, file: Option<&Path>, line: usize) -> Option<TagTree> {
+    let path = std::path::absolute(file?).ok()?;
+    let line = u32::try_from(line).unwrap_or(0);
+    let origin = crate::tags::origin_at(&path.display().to_string(), line, 0);
+    crate::tags::uniform(value, origin, true)
+}
+
+fn line_tagged(vars: &serde_json::Map<String, Value>, file: Option<&Path>, line: usize) -> Tagged {
+    let mut out = Tagged::default();
+    for (key, value) in vars {
+        out.insert(key.clone(), value.clone(), line_tree(value, file, line));
+    }
+    out
+}
+
 fn literal(text: &str) -> Value {
     let mut value = python_literal(text);
     crate::yaml::escape_strings(&mut value);

@@ -25,6 +25,9 @@ pub(crate) struct LinkFacts {
     pub local: bool,
     /// The connection plugin the helper reaches the host through, for a host no agent runs on.
     pub owned: Option<String>,
+    /// The name an owned link's connection stays open under between the items of one task, until
+    /// the bridge's `release`.
+    pub keep: Option<String>,
 }
 
 impl LinkFacts {

@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Keyword inheritance down a block.
 
-use serde_json::{Map, Value};
-
 use crate::playbook::PlayTask;
 use crate::roles::{OwnVars, RoleVars};
+use crate::tags::Tagged;
 
-pub(super) fn extend(target: &mut Map<String, Value>, source: &Map<String, Value>) {
-    crate::vars::extend(target, source);
+pub(super) fn extend(target: &mut Tagged, source: &Tagged) {
+    target.extend(source);
 }
 
 /// Lays what the rest of the play lends under one role's own values.
@@ -17,11 +16,7 @@ pub(super) fn extend(target: &mut Map<String, Value>, source: &Map<String, Value
 /// other, a dependency and the role that asked for it, public or not; it is kept with the role's
 /// own values so that the next public statement can lay its variables under the role again
 /// without losing it.
-pub(crate) fn lay_under(
-    role: &mut RoleVars,
-    exported: &RoleVars,
-    group: Option<(Map<String, Value>, Map<String, Value>)>,
-) {
+pub(crate) fn lay_under(role: &mut RoleVars, exported: &RoleVars, group: Option<(Tagged, Tagged)>) {
     let own = role.own.get_or_insert_with(|| {
         Box::new(OwnVars {
             defaults: role.defaults.clone(),
@@ -48,8 +43,8 @@ pub(crate) fn lay_under(
 }
 
 /// Layers in one copy, the lowest first.
-fn stacked(layers: &[&Map<String, Value>]) -> Map<String, Value> {
-    let mut out = Map::new();
+fn stacked(layers: &[&Tagged]) -> Tagged {
+    let mut out = Tagged::default();
     for layer in layers {
         extend(&mut out, layer);
     }
@@ -187,7 +182,7 @@ pub(super) fn merge(outer: &PlayTask, inner: &PlayTask) -> PlayTask {
     }
     // The outer map first, so a name the task sets itself keeps the task's value.
     let mut vars = outer.vars.clone();
-    vars.extend(inner.vars.clone());
+    vars.overlay(&inner.vars);
     task.vars = vars;
     task
 }

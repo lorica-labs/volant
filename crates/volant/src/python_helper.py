@@ -1111,6 +1111,11 @@ def call(request):
         return {"value": actions(request["args"])}
     if kind == "own_plugins":
         return {"value": own_plugins()}
+    if kind == "release":
+        connection = KEPT.pop(request["args"][0], None)
+        if connection is not None:
+            connection.close()
+        return {"value": connection is not None}
     if kind == "connections":
         return {"value": connections(request["args"])}
     if kind == "lookup_needs":
@@ -1236,6 +1241,9 @@ def blocks(failure):
 # The pipes `main` reads requests from and writes frames to: an action plugin's questions to the
 # controller travel over them while its request is in hand.
 PIPES = {}
+# The connection of each owned link `link.keep` names, left open between the items of one task
+# and closed by `release` once the task is done with it.
+KEPT = {}
 # One question at a time: a plugin that asks from two threads would interleave the frames.
 ASKING = threading.Lock()
 
@@ -1622,12 +1630,16 @@ def handler_for(action):
     return "ansible.legacy.normal"
 
 
-def owned_connection(link, context, task, task_vars, templar):
+def owned_connection(link, context, task, task_vars, templar, kept=None):
     """The connection plugin `link` names, made as `TaskExecutor._get_connection` and
     `_set_connection_options` make it: loaded with the play context, its become plugin set when
     the task becomes (the one `link` names, else the task's method), and the options of the
     connection, its shell and its become plugin read from the task's variables and keywords. It
-    is not connected yet."""
+    is not connected yet.
+
+    `kept` is the connection an earlier item of the same task left: still connected, of the same
+    plugin and to the same address, it is the one set up again, as `TaskExecutor._execute` reuses
+    its connection from one loop item to the next; else it is closed."""
     from ansible import constants as C
     from ansible.errors import AnsibleError, AnsibleValueOmittedError
     from ansible.module_utils.parsing.convert_bool import boolean
@@ -1641,9 +1653,21 @@ def owned_connection(link, context, task, task_vars, templar):
     context.connection = templar.template(written) if isinstance(written, str) else name
     if task_vars.get("ansible_network_os"):
         context.network_os = templar.template(task_vars["ansible_network_os"])
-    connection = plugin_loader.connection_loader.get(
-        name, context, new_stdin=None, task_uuid=task._uuid, ansible_playbook_pid=str(os.getppid())
-    )
+    if (
+        kept is not None
+        and getattr(kept, "connected", False)
+        and kept.matches_name([name])
+        and kept._play_context.remote_addr == context.remote_addr
+    ):
+        connection = kept
+        connection._play_context = context
+    else:
+        if kept is not None:
+            kept.close()
+        connection = plugin_loader.connection_loader.get(
+            name, context, new_stdin=None, task_uuid=task._uuid,
+            ansible_playbook_pid=str(os.getppid()),
+        )
     if not connection:
         raise AnsibleError("the connection plugin '%s' was not found" % name)
     if task_vars.get("ansible_become") is not None:
@@ -1827,7 +1851,8 @@ def run_action(ident, request):
 
     With `link.kind` `owned` the connection is a real connection plugin the helper makes
     ([`owned_connection`]), connected before the plugin runs and closed once after it, on every
-    path; what `Display` says comes back in the value as `_volant_display`, and no secret of the
+    path, unless `link.keep` names it: then it stays open for the task's next item, until
+    `release`. What `Display` says comes back in the value as `_volant_display`, and no secret of the
     task's is in the value. A connection that keeps a process of its own starts it first
     ([`persistent`]), and its socket comes back as `_volant_socket`."""
     from ansible._internal import _display_utils
@@ -1845,6 +1870,7 @@ def run_action(ident, request):
     parts = shim()
     link = request.get("link") or {}
     owned = link.get("kind") == "owned"
+    keep = link.get("keep") if owned else None
     events = []
     socket_path = None
     if owned and "verbosity" in link:
@@ -1922,7 +1948,8 @@ def run_action(ident, request):
                 if task.delegate_to:
                     delegated = task_vars.get("ansible_delegated_vars") or {}
                     connection_vars = delegated.get(task.delegate_to) or {}
-                connection = owned_connection(link, context, task, connection_vars, templar)
+                kept = KEPT.pop(keep, None) if keep else None
+                connection = owned_connection(link, context, task, connection_vars, templar, kept)
             else:
                 connection = parts["Link"](ident, shell, context, ssh_options)
             try:
@@ -1968,7 +1995,9 @@ def run_action(ident, request):
                 finally:
                     action.cleanup()
             finally:
-                if owned:
+                if owned and keep and socket_path is None:
+                    KEPT[keep] = connection
+                elif owned:
                     connection.close()
         except Exception as failure:
             # As `TaskExecutor._execute` shapes it: what the exception contributes comes first, so a

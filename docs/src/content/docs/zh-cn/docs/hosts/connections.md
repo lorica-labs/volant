@@ -1,5 +1,5 @@
 ---
-sourceHash: 31bbd0638724
+sourceHash: 8baaf4b329f9
 title: 连接与 become
 description: Volant 如何连接到主机、它读取的主机变量和 ansible.cfg 设置，以及 become 如何通过 sudo 和 su 工作。
 ---
@@ -192,7 +192,7 @@ agent 用 `buildah run [--user U] <容器> -- <agent>` 启动。Volant 从不运
 
 ## 只有 ansible-core 才有的连接
 
-Volant 用两种方式之一到达主机。对于 `ssh`、`local` 和上面列出的连接，它在主机上运行自己的 agent 并把 task 发给它。对于控制器的 ansible-core 能加载的其他任何连接插件，不运行 agent：每个需要主机的 task 都交给 Volant 的 Python 辅助进程，由它加载连接插件、建立连接、像 `ansible-playbook` 那样通过它运行 task 的 action 插件，然后关闭连接。ansible-core 照常从主机变量、`ansible.cfg` 和环境中读取插件的每个选项。
+Volant 用两种方式之一到达主机。对于 `ssh`、`local` 和上面列出的连接，它在主机上运行自己的 agent 并把 task 发给它。对于控制器的 ansible-core 能加载的其他任何连接插件，不运行 agent：每个需要主机的 task 都交给 Volant 的 Python 辅助进程，由它加载连接插件、建立连接、像 `ansible-playbook` 那样通过它运行 task 的 action 插件，task 结束后关闭连接。循环的各个 item 共用一个连接，与 `ansible-playbook` 相同。ansible-core 照常从主机变量、`ansible.cfg` 和环境中读取插件的每个选项。
 
 运行的其他部分都不变：循环、`when`、`register`、`changed_when`、`failed_when`、`until` 和 `retries`、`ignore_errors`、`no_log`、`serial`、`delegate_to`、handler、带 `poll: 0` 的 `async` 和 `async_status`、检查模式以及汇总。在控制器上运行的 task，例如 `debug` 或 `set_fact`，照旧在控制器上运行。
 

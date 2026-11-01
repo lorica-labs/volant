@@ -12,6 +12,7 @@ use super::{RunState, python_type};
 use crate::inventory::Host;
 use crate::playbook::Play;
 use crate::render::Renderer;
+use crate::tags::Tagged;
 use crate::template::{Templar, Vars};
 use crate::vars::{Scope, VarsFiles, load_play_vars_file};
 
@@ -149,7 +150,7 @@ fn recheck_gather_keywords(play: &Play, state: &RunState, files: &VarsFiles) -> 
     }
     let mut vars = state.vars.lock().expect("vars lock").play_scope(&play.vars);
     for file in files.maps() {
-        vars.extend(file.clone());
+        vars.extend(file.as_map().clone());
     }
     check_gather(play, &state.templar, &vars, false)
 }
@@ -262,9 +263,9 @@ pub(super) fn load_play_vars_files(
     if play.vars_files.is_empty() {
         return Ok(per_host);
     }
-    let mut loaded: HashMap<PathBuf, Arc<Map<String, Value>>> = HashMap::new();
+    let mut loaded: HashMap<PathBuf, Arc<Tagged>> = HashMap::new();
     // Hosts that read the same files share one merge of them.
-    let mut merged: HashMap<Vec<*const Map<String, Value>>, Arc<VarsFiles>> = HashMap::new();
+    let mut merged: HashMap<Vec<*const Tagged>, Arc<VarsFiles>> = HashMap::new();
     // One warning per entry, not one per host: two hosts reading the same unresolvable entry
     // are one complaint.
     let mut warned: HashSet<&String> = HashSet::new();
@@ -335,9 +336,9 @@ pub(super) fn read_vars_files<'a>(
     templar: &Templar,
     vars: Vars<'_>,
     playbook_dir: &Path,
-    loaded: &mut HashMap<PathBuf, Arc<Map<String, Value>>>,
+    loaded: &mut HashMap<PathBuf, Arc<Tagged>>,
     on_undefined: &mut dyn FnMut(&'a String),
-) -> anyhow::Result<Vec<Arc<Map<String, Value>>>> {
+) -> anyhow::Result<Vec<Arc<Tagged>>> {
     let mut files = Vec::new();
     // An entry's alternatives are tried in order and the first file that exists is read. Measured
     // on ansible-core 2.19.12: an undefined variable in one of them skips the whole entry, even

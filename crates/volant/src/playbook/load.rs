@@ -204,7 +204,7 @@ fn rendered_play(
     if !play.roles.iter().any(|r| Templar::is_template(&r.name)) {
         return Ok(play);
     }
-    let mut vars = play.vars.clone();
+    let mut vars = play.vars.as_map().clone();
     vars.extend(rendering.vars.iter().map(|(k, v)| (k.clone(), v.clone())));
     vars.insert(
         "playbook_dir".into(),

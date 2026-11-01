@@ -34,6 +34,7 @@ pub(crate) mod runtime;
 pub mod shadow;
 pub(crate) mod splitter;
 pub(crate) mod stats;
+pub mod tags;
 pub mod template;
 #[cfg(test)]
 pub(crate) mod testing;

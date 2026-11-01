@@ -12,6 +12,10 @@ use crate::vars::HostVars;
 use super::argspec::refusal;
 use super::plugin::{protocol_task, with_modes};
 
+mod fallback;
+
+pub(in crate::executor) use fallback::{Fallback, Found, fallback};
+
 /// One step's items, as the tasks to send and the results of those that cannot be sent at all.
 ///
 /// The results go in here rather than at the call site so that they cannot be dropped there: an

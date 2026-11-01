@@ -106,7 +106,10 @@ pub(super) fn render_template(
     // A template that writes nothing at all, a comment alone say, is `None` there: the engine
     // joins no piece of output into no value, and has no output to give the file's last newline
     // back to. One that prints an empty string is `''`, and plain text is itself.
-    out.map(|s| {
+    out.map(|(s, node)| {
+        if let Some(value) = node {
+            return value;
+        }
         let written = if text.ends_with('\n') {
             s.strip_suffix('\n').unwrap_or(&s)
         } else {
@@ -130,7 +133,7 @@ pub(super) fn render_template_at(
     base_dir: &Path,
     bridge: Option<&Arc<Bridge>>,
     options: &FileRender,
-) -> Result<String, TemplateError> {
+) -> Result<(String, Option<Value>), TemplateError> {
     let templar = Templar::with_bridge(base_dir.to_path_buf(), bridge.cloned());
     let root = state.lookup(crate::template::CONTEXT_KEY);
     let ctx = root
@@ -225,7 +228,7 @@ pub(super) fn render_template_at(
         untrusted_hosts,
         base: None,
     };
-    templar.render_file(text, vars, options)
+    templar.render_file_node(text, vars, options)
 }
 
 pub(super) fn lookup_error(name: &str, e: &TemplateError) -> Error {

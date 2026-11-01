@@ -1,5 +1,5 @@
 ---
-sourceHash: 1d836c016a17
+sourceHash: 6874b1c1e49e
 title: 模板
 description: 控制节点上的 Jinja2、严格模式、条件、Volant 提供的过滤器、测试器和 lookup，以及模板文件如何渲染。
 ---
@@ -137,6 +137,8 @@ Volant 没有某个名称的 Rust 版本时，这个名称就需要 Python。[�
 | `output_encoding` | `utf-8` | 写出文件的编码。仅适用于 `template`。 |
 
 `lookup('template')` 接受四个变量和注释分隔符以及 `trim_blocks`，别的都不接受。
+
+只由一个节点组成的模板（单独一个 `{{ }}`，前后没有别的内容），会让 `lookup('template')` 得到该表达式的值并保留其类型，与 ansible-core 相同：`{{ {'a': 1} }}` 得到一个映射。主体只有一个节点的宏也同样返回该值。
 
 自定义分隔符会替换默认分隔符：设置了 `variable_start_string: '[['` 时，文件中的 `{{` 就是纯文本。三个起始字符串必须互不相同。不包含这三个起始字符串中任何一个的文本不是模板，会原样写出，包括换行符，无论 `newline_sequence` 怎么设置。
 

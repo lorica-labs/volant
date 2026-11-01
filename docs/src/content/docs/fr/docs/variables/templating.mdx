@@ -1,5 +1,5 @@
 ---
-sourceHash: 1d836c016a17
+sourceHash: 6874b1c1e49e
 title: Templating
 description: Jinja2 sur le contrôleur, mode strict, conditions, filtres, tests et lookups fournis par Volant, et rendu des fichiers modèles.
 ---
@@ -135,6 +135,8 @@ Il prend les options que lit le module `template` :
 | `output_encoding` | `utf-8` | L'encodage du fichier écrit. `template` seulement. |
 
 `lookup('template')` prend les quatre délimiteurs de variable et de commentaire et `trim_blocks`, et rien d'autre.
+
+Un modèle fait d'un seul nœud, un `{{ }}` sans rien autour, donne à `lookup('template')` la valeur de cette expression avec son type, comme ansible-core : `{{ {'a': 1} }}` donne un mapping. Une macro dont le corps est un seul nœud répond sa valeur de la même façon.
 
 Un délimiteur personnalisé remplace celui par défaut : avec `variable_start_string: '[['`, un `{{` dans le fichier est du texte brut. Les trois chaînes de début doivent être différentes les unes des autres. Un texte qui ne contient aucune des trois chaînes de début n'est pas un modèle, et il est écrit tel quel, fins de ligne comprises, quoi que dise `newline_sequence`.
 

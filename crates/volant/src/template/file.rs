@@ -8,7 +8,8 @@ use std::borrow::Cow;
 
 use minijinja::syntax::SyntaxConfig;
 
-use super::{Templar, TemplateError, Vars, context_of, convert_error, render_str, take_failure};
+use super::vm::{Node, render_counted};
+use super::{Templar, TemplateError, Vars, context_of, convert_error, take_failure};
 
 mod overrides;
 
@@ -168,9 +169,9 @@ impl Default for FileRender {
 }
 
 impl Templar {
-    /// Renders a template file's text **once**, as the `template` module does: `render_str`, not
-    /// `render_in`'s further passes, so a value read from a managed host lands in the output as
-    /// text and is never rendered a second time. The file's own `trim_blocks`/`lstrip_blocks`
+    /// Renders a template file's text **once**, as the `template` module does: `render_counted`,
+    /// not `render_in`'s further passes, so a value read from a managed host lands in the output
+    /// as text and is never rendered a second time. The file's own `trim_blocks`/`lstrip_blocks`
     /// are compile settings, so the `Templar`'s environment runs it unchanged.
     ///
     /// Four things ansible-core's own `template` action does around Jinja2's render are
@@ -197,6 +198,18 @@ impl Templar {
         vars: impl Into<Vars<'a>>,
         options: &FileRender,
     ) -> Result<String, TemplateError> {
+        self.render_file_node(text, vars, options)
+            .map(|(text, _)| text)
+    }
+
+    /// `render_file`, and the value of the one node the template made when it made only one:
+    /// what `lookup('template')` answers, as ansible-core's native render does.
+    pub(super) fn render_file_node<'a>(
+        &self,
+        text: &str,
+        vars: impl Into<Vars<'a>>,
+        options: &FileRender,
+    ) -> Result<(String, Option<minijinja::Value>), TemplateError> {
         // Before anything reads the text for a start string, so a long one costs nothing.
         options
             .syntax
@@ -206,7 +219,7 @@ impl Templar {
         let (body, effective) = match &header {
             Some((body, effective)) => (*body, Cow::Borrowed(effective)),
             None if options.syntax.is_possibly_template(text) => (text, Cow::Borrowed(options)),
-            None => return Ok(text.to_string()),
+            None => return Ok((text.to_string(), None)),
         };
         let syntax = effective
             .syntax
@@ -227,16 +240,20 @@ impl Templar {
         }
         let (ctx, _tainted) = context_of(self, vars.into());
         let name = options.name.as_deref().unwrap_or("<string>");
-        let render = || render_str(self, name, &normalized, &ctx, syntax);
+        let render = || render_counted(self, name, &normalized, &ctx, syntax);
         let rendered = if options.include_path.is_empty() {
             render()
         } else {
             super::include::with_search_path(options.include_path.clone(), render)
         }
         .map_err(convert_error);
-        let mut rendered = match take_failure(&ctx) {
+        let (mut rendered, emitted) = match take_failure(&ctx) {
             Some(error) => return Err(error),
             None => rendered?,
+        };
+        let node = match emitted.single(&rendered) {
+            Node::Value(value) => Some(value),
+            Node::None | Node::Text => None,
         };
         if effective.newline_sequence != "\n" {
             rendered = rendered.replace('\n', &effective.newline_sequence);
@@ -246,7 +263,7 @@ impl Templar {
         if wanted > got {
             rendered.push_str(&options.newline_sequence.repeat(wanted - got));
         }
-        Ok(rendered)
+        Ok((rendered, node))
     }
 }
 

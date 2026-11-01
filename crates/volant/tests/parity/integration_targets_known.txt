@@ -17,7 +17,6 @@ deprecations                   #1282
 filter_encryption              #1282
 fork_safe_stdio                #1333
 gather_facts-errors            #1330
-gathering_facts                #1285
 include_vars                   #1282
 interpreter_discovery_python   #1361
 inventory_cache                #1334
@@ -31,6 +30,6 @@ roles_arg_spec                 #1360
 set_fact                       #1282
 shell                          #1336
 strategy-external              #1335
-template                       #1339
+template                       #1355
 templating                     #1282
 var_templating                 #1336

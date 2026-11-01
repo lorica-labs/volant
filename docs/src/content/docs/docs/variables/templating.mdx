@@ -137,6 +137,8 @@ It takes the options the `template` module reads:
 
 `lookup('template')` takes the four variable and comment delimiters and `trim_blocks`, and nothing else.
 
+A template made of one node, a lone `{{ }}` with nothing around it, gives `lookup('template')` that expression's value with its type, as in ansible-core: `{{ {'a': 1} }}` gives a mapping. A macro whose body is one node answers its value the same way.
+
 A custom delimiter replaces the default: with `variable_start_string: '[['`, a `{{` in the file is plain text. The three start strings must differ from each other. A text that holds none of the three start strings is not a template, and is written as it is, line endings included, whatever `newline_sequence` says.
 
 The first line of a template file can override the options. It starts with `#jinja2:` and holds `key: value` pairs, split on commas, with a Python literal as the value:

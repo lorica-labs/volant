@@ -24,6 +24,7 @@ mod include;
 mod keys;
 mod lipsum;
 mod lookups;
+mod macros;
 mod missing;
 mod once;
 mod one_pass;
@@ -53,7 +54,7 @@ pub(crate) use env::{
 use env::{any_undefined, environment};
 pub use templar::Templar;
 pub(crate) use vm::{EMBEDDED_HELP, EMBEDDED_WARNING, embeds, holds_template};
-use vm::{as_expression, as_template, convert_error, inline_conditional, jinja_syntax, render_str};
+use vm::{as_expression, as_template, convert_error, inline_conditional, jinja_syntax};
 
 pub(crate) use bridged::is_plugin_failure;
 pub use bridged::{bridged_name, not_sent_reason};
@@ -168,6 +169,8 @@ const SLICE_KEY: &str = "volant::slice";
 /// literal as JSON: minijinja folds a literal of constants into one shared value, and a template
 /// that changes a list needs a new one each time the literal runs.
 const CONST_KEY: &str = "volant::const:";
+/// Prefix of the name a call of a macro the template defines is routed through, see [`macros`].
+const MACRO_KEY: &str = "volant::macro:";
 /// Prefix of the name a variable read is routed through in such a template.
 const VAR_KEY: &str = "volant::var:";
 /// `ITEM_KEY` for such a template.

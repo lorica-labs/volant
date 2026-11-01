@@ -28,7 +28,7 @@ pub(crate) fn configure<'a>(
 ) {
     let mut names: Vec<String> = config.facts_modules.clone();
     for play in plays {
-        names.extend(literal(play.vars.get(VARIABLE)));
+        names.extend(named(|key| play.vars.get(key)));
         let tasks = play
             .pre_tasks
             .iter()
@@ -53,7 +53,8 @@ pub(crate) fn configure<'a>(
         }
     }
     for host in inventory.all_host_names() {
-        names.extend(literal(inventory.host_with_vars(&host).vars.get(VARIABLE)));
+        let host = inventory.host_with_vars(&host);
+        names.extend(named(|key| host.vars.get(key)));
     }
     let mut out: Vec<&'static str> = Vec::new();
     for name in names {
@@ -113,21 +114,68 @@ pub(crate) fn modules() -> &'static [&'static str] {
     })
 }
 
-/// The names a literal value of the variable holds: a list of strings or one string.
 /// The names the tasks' and blocks' `vars` write, at any depth.
 fn tasks_naming<'a>(items: impl IntoIterator<Item = &'a TaskOrBlock>, names: &mut Vec<String>) {
     let mut open: Vec<&TaskOrBlock> = items.into_iter().collect();
     while let Some(entry) = open.pop() {
         match entry {
-            TaskOrBlock::Task(task) => names.extend(literal(task.vars.get(VARIABLE))),
+            TaskOrBlock::Task(task) => names.extend(named(|key| task.vars.get(key))),
             TaskOrBlock::Block(block) => {
-                names.extend(literal(block.keywords.vars.get(VARIABLE)));
+                names.extend(named(|key| block.keywords.vars.get(key)));
                 open.extend(block.body.iter().chain(&block.rescue).chain(&block.always));
             }
         }
     }
 }
 
+/// The fact modules one set of variables names: its `ansible_facts_modules`, and the module
+/// `CONNECTION_FACTS_MODULES` gives its `ansible_network_os`, which `gather_facts` adds.
+fn named<'v>(get: impl Fn(&str) -> Option<&'v Value>) -> Vec<String> {
+    let mut names = literal(get(VARIABLE));
+    for os in literal(get("ansible_network_os")) {
+        let found = CONNECTION_FACTS_MODULES
+            .iter()
+            .find(|(name, _)| *name == os);
+        names.extend(found.map(|(_, module)| (*module).to_string()));
+    }
+    names
+}
+
+/// ansible-core 2.19.12's default `CONNECTION_FACTS_MODULES`: the fact module of each network OS.
+const CONNECTION_FACTS_MODULES: [(&str, &str); 24] = [
+    ("asa", "ansible.legacy.asa_facts"),
+    ("cisco.asa.asa", "cisco.asa.asa_facts"),
+    ("eos", "ansible.legacy.eos_facts"),
+    ("arista.eos.eos", "arista.eos.eos_facts"),
+    ("frr", "ansible.legacy.frr_facts"),
+    ("frr.frr.frr", "frr.frr.frr_facts"),
+    ("ios", "ansible.legacy.ios_facts"),
+    ("cisco.ios.ios", "cisco.ios.ios_facts"),
+    ("iosxr", "ansible.legacy.iosxr_facts"),
+    ("cisco.iosxr.iosxr", "cisco.iosxr.iosxr_facts"),
+    ("junos", "ansible.legacy.junos_facts"),
+    (
+        "junipernetworks.junos.junos",
+        "junipernetworks.junos.junos_facts",
+    ),
+    ("nxos", "ansible.legacy.nxos_facts"),
+    ("cisco.nxos.nxos", "cisco.nxos.nxos_facts"),
+    ("vyos", "ansible.legacy.vyos_facts"),
+    ("vyos.vyos.vyos", "vyos.vyos.vyos_facts"),
+    ("exos", "ansible.legacy.exos_facts"),
+    ("extreme.exos.exos", "extreme.exos.exos_facts"),
+    ("slxos", "ansible.legacy.slxos_facts"),
+    ("extreme.slxos.slxos", "extreme.slxos.slxos_facts"),
+    ("voss", "ansible.legacy.voss_facts"),
+    ("extreme.voss.voss", "extreme.voss.voss_facts"),
+    ("ironware", "ansible.legacy.ironware_facts"),
+    (
+        "community.network.ironware",
+        "community.network.ironware_facts",
+    ),
+];
+
+/// The names a literal value of a variable holds: a list of strings or one string.
 fn literal(value: Option<&Value>) -> Vec<String> {
     let text = |v: &Value| {
         v.as_str()
@@ -138,5 +186,22 @@ fn literal(value: Option<&Value>) -> Vec<String> {
         Some(Value::Array(items)) => items.iter().filter_map(text).collect(),
         Some(one @ Value::String(_)) => text(one).into_iter().collect(),
         _ => Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A network OS names the fact module `gather_facts` adds for it; one the table lacks, none.
+    #[test]
+    fn a_network_os_names_its_fact_module() {
+        let vars = serde_json::json!({
+            "ansible_facts_modules": ["mine"],
+            "ansible_network_os": "cisco.ios.ios",
+        });
+        assert_eq!(named(|key| vars.get(key)), ["mine", "cisco.ios.ios_facts"]);
+        let vars = serde_json::json!({"ansible_network_os": ["ios", "nosuch"]});
+        assert_eq!(named(|key| vars.get(key)), ["ansible.legacy.ios_facts"]);
     }
 }

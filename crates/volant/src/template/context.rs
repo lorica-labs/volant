@@ -20,8 +20,8 @@ use super::pymethods::mutable::{identity, mutable};
 use super::templar::Templar;
 use super::{
     ADD_KEY, ATTR_KEY, BYTES_ADD_KEY, CONCAT_KEY, CONST_KEY, CONTEXT_KEY, HOSTVARS_KEYS, ITEM_KEY,
-    MATTR_KEY, MITEM_KEY, MKLIST_KEY, MKMAP_KEY, QUERY_KEY, REM_KEY, REMT_KEY, SLICE_KEY, SUB_KEY,
-    TAINT_KEY, Tainted, TemplateError, VAR_KEY,
+    MACRO_KEY, MATTR_KEY, MITEM_KEY, MKLIST_KEY, MKMAP_KEY, QUERY_KEY, REM_KEY, REMT_KEY,
+    SLICE_KEY, SUB_KEY, TAINT_KEY, Tainted, TemplateError, VAR_KEY,
 };
 
 /// The name, in the variables an extended loop shares between its items, under which the list of
@@ -350,6 +350,9 @@ impl Object for Context {
         }
         if let Some(json) = key.strip_prefix(CONST_KEY) {
             return fresh_const(json);
+        }
+        if let Some(name) = key.strip_prefix(MACRO_KEY) {
+            return Some(super::macros::call(name.to_string()));
         }
         if let Some(name) = key.strip_prefix(VAR_KEY) {
             return Some(mutable_var(name.to_string()));

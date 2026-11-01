@@ -93,7 +93,7 @@ impl Scan {
             self.text(&text, &place);
         }
         if let Ok(map) = crate::vars::load_vars_file(path) {
-            let value = Value::Object(map);
+            let value = Value::Object(map.into_values());
             if path.components().any(|c| c.as_os_str() == "meta") {
                 self.define_all(&value);
             } else if let Value::Object(map) = &value {

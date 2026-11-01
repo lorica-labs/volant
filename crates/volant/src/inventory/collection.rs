@@ -59,7 +59,7 @@ pub(super) fn read(
     };
     for host in list(answer.get("hosts"))? {
         let host_name = named(host).ok_or_else(bad)?;
-        into.add_source_host(&host_name, None, vars_of(host)?, origin);
+        into.add_source_host(&host_name, None, vars_of(host)?.into(), origin);
     }
     for group in list(answer.get("groups"))? {
         let group_name = named(group).ok_or_else(bad)?;
@@ -77,7 +77,7 @@ pub(super) fn read(
                     into.group_mut(&group_name).priority = Some(p);
                 }
             } else {
-                into.group_mut(&group_name).vars.insert(key, value);
+                into.group_mut(&group_name).vars.insert(key, value, None);
             }
         }
         if group_name == "all" || group_name == "ungrouped" {

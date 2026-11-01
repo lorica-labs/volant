@@ -48,8 +48,7 @@ pub(in crate::executor) fn carry_on(
     }
     carry.lay_over(&mut item.vars);
     let (resolved, untrusted) = templar.resolve_vars_tainted(&item.vars);
-    item.vars.map = resolved;
-    item.vars.untrusted = untrusted;
+    item.vars.set_resolved(resolved, untrusted);
 }
 
 /// What the items before the current one set, for one host.
@@ -184,11 +183,13 @@ mod tests {
     #[test]
     fn the_variables_an_item_renders_again_are_the_ones_built_from_a_carried_name() {
         let mut merged = HostVars::default();
-        merged.map.insert("built".into(), json!("{{ x }}"));
-        merged.map.insert("other".into(), json!("{{ 1 + 1 }}"));
+        merged.map.insert("built".into(), json!("{{ x }}"), None);
+        merged
+            .map
+            .insert("other".into(), json!("{{ 1 + 1 }}"), None);
         let mut base = HostVars::default();
-        base.map.insert("built".into(), json!("old"));
-        base.map.insert("other".into(), json!(2));
+        base.map.insert("built".into(), json!("old"), None);
+        base.map.insert("other".into(), json!(2), None);
         let mut carry = Carry::new(merged);
         carry.facts.insert("x".into(), json!(1));
         carry.reach.insert("x".into());
@@ -203,9 +204,11 @@ mod tests {
     #[test]
     fn a_variable_two_hops_from_a_carried_name_is_followed() {
         let mut merged = HostVars::default();
-        merged.map.insert("e".into(), json!("{{ [x] }}"));
-        merged.map.insert("ee".into(), json!("{{ e | length }}"));
-        merged.map.insert("other".into(), json!("{{ y }}"));
+        merged.map.insert("e".into(), json!("{{ [x] }}"), None);
+        merged
+            .map
+            .insert("ee".into(), json!("{{ e | length }}"), None);
+        merged.map.insert("other".into(), json!("{{ y }}"), None);
         let mut carry = Carry::new(merged);
         carry.reach.insert("x".into());
         carry.follow();

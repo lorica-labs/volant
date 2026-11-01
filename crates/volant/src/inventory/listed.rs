@@ -61,7 +61,13 @@ impl Inventory {
     /// entry of its own.
     pub fn dump(&self) -> Value {
         self.dump_with(
-            &|host| self.host_with_vars(host).vars.into_iter().collect(),
+            &|host| {
+                self.host_with_vars(host)
+                    .vars
+                    .into_values()
+                    .into_iter()
+                    .collect()
+            },
             None,
         )
     }
@@ -281,7 +287,7 @@ impl Inventory {
         let Some(group) = self.group(name) else {
             return serde_json::Map::new();
         };
-        let mut vars = group.vars.clone();
+        let mut vars = group.vars.as_map().clone();
         // The reference keeps it among the group's variables, here it has a field of its own.
         if let Some(priority) = group.priority {
             vars.insert("ansible_group_priority".into(), priority.into());

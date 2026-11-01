@@ -15,6 +15,8 @@ pub(crate) mod reserved;
 mod shared;
 mod store;
 
+pub use crate::tags::Tagged;
+
 pub(crate) use host_vars::PENDING_PYTHON;
 
 /// The `hostvars` map: every host's view, each one shared on its own. A host whose variables
@@ -46,7 +48,7 @@ pub use load::{
     VaultFile, include_vars_paths, load_play_vars_file, load_vars_file, parse_extra_vars,
     read_vars_document, set_hash_merge,
 };
-pub(crate) use load::{combine_one, extend, hash_merge, load_vars_dir, merge_hash};
+pub(crate) use load::{extend, hash_merge, load_vars_dir, merge_hash};
 pub use magic::ansible_version;
 pub(crate) use play_view::PlayView;
 
@@ -64,18 +66,18 @@ use crate::template::Templar;
 /// What a play and a task contribute on top of inventory-level sources.
 #[derive(Debug, Default, Clone)]
 pub struct Scope {
-    pub play_vars: Map<String, Value>,
+    pub play_vars: Tagged,
     pub vars_files: Arc<VarsFiles>,
-    pub task_vars: Map<String, Value>,
+    pub task_vars: Tagged,
     /// A role's `defaults/main.yml`, the lowest layer of all: measured, it loses even to an
     /// inventory variable of the same name.
-    pub role_defaults: Map<String, Value>,
+    pub role_defaults: Tagged,
     /// A role's `vars/main.yml`: measured, it beats the play's own `vars:` and loses to a task's
     /// `vars:`, to `set_fact` and to `-e`.
-    pub role_vars: Map<String, Value>,
+    pub role_vars: Tagged,
     /// The free keys written on a role entry: measured, they beat a `set_fact` and lose to `-e`,
     /// and they are gone again once the role is over.
-    pub role_params: Map<String, Value>,
+    pub role_params: Tagged,
     /// Hosts of the whole play that have not failed, in inventory order - the hosts of the
     /// batches still to come included. This is `ansible_play_hosts`.
     pub play_hosts: Arc<[String]>,
@@ -94,19 +96,19 @@ pub struct Scope {
 pub struct VarsFiles {
     /// The names whose value holds no template, `!unsafe` or `!vault` text, which no render
     /// changes: the [`HostVars::base`] of every task of the hosts that read these files.
-    pub plain: Arc<Map<String, Value>>,
+    pub plain: Arc<Tagged>,
     /// The names whose value does, copied into the host's map where they are rendered.
-    pub templated: Map<String, Value>,
+    pub templated: Tagged,
 }
 
 impl VarsFiles {
-    pub fn new(files: &[Arc<Map<String, Value>>]) -> Self {
+    pub fn new(files: &[Arc<Tagged>]) -> Self {
         // Merged mappings cannot be split between two layers read one after the other, so under
         // `hash_behaviour = merge` every name is copied into the map.
         if hash_merge() {
-            let mut templated = Map::new();
+            let mut templated = Tagged::default();
             for file in files {
-                extend(&mut templated, file);
+                templated.extend(file);
             }
             return Self {
                 plain: Arc::default(),
@@ -118,10 +120,10 @@ impl VarsFiles {
         {
             return Self {
                 plain: Arc::clone(file),
-                templated: Map::new(),
+                templated: Tagged::default(),
             };
         }
-        let (mut plain, mut templated) = (Map::new(), Map::new());
+        let (mut plain, mut templated) = (Tagged::default(), Tagged::default());
         for file in files {
             for (name, value) in file.iter() {
                 let (into, other) = if crate::template::holds_template(value) {
@@ -129,8 +131,8 @@ impl VarsFiles {
                 } else {
                     (&mut plain, &mut templated)
                 };
-                other.shift_remove(name);
-                into.insert(name.clone(), value.clone());
+                other.remove(name);
+                into.insert(name.clone(), value.clone(), file.tree(name).cloned());
             }
         }
         Self {
@@ -144,7 +146,7 @@ impl VarsFiles {
     }
 
     /// Both halves, which hold no name in common.
-    pub fn maps(&self) -> [&Map<String, Value>; 2] {
+    pub fn maps(&self) -> [&Tagged; 2] {
         [&self.plain, &self.templated]
     }
 }
@@ -158,17 +160,17 @@ pub struct VarStore {
     playbook_dir: PathBuf,
     /// Group vars from `group_vars/` directories: one per inventory source, in source order,
     /// then the playbook's, last.
-    group_files: Vec<BTreeMap<String, Map<String, Value>>>,
+    group_files: Vec<BTreeMap<String, Tagged>>,
     /// Host vars from `host_vars/` directories, in the same order as `group_files`.
-    host_files: Vec<BTreeMap<String, Map<String, Value>>>,
-    inventory_vars: BTreeMap<String, Map<String, Value>>,
-    host_line_vars: BTreeMap<String, Map<String, Value>>,
+    host_files: Vec<BTreeMap<String, Tagged>>,
+    inventory_vars: BTreeMap<String, Tagged>,
+    host_line_vars: BTreeMap<String, Tagged>,
     group_names: BTreeMap<String, Vec<String>>,
     groups: BTreeMap<String, Vec<String>>,
     /// What `include_vars` read, per host: the reference's vars cache, a layer of its own above a
     /// task's `vars:` and under `facts`, so a `set_fact` of the same name wins whichever ran last.
-    included: BTreeMap<String, Map<String, Value>>,
-    facts: BTreeMap<String, Map<String, Value>>,
+    included: BTreeMap<String, Tagged>,
+    facts: BTreeMap<String, Tagged>,
     /// What modules returned under `ansible_facts`, flat and namespaced: the reference's host
     /// facts, a layer of their own that ranks over the inventory and under the play. Every name
     /// in it is untrusted.
@@ -196,7 +198,7 @@ pub struct VarStore {
     /// taints the render, so the name is shown as it is and never evaluated.
     data_hosts: BTreeSet<String>,
     data_groups: BTreeSet<String>,
-    extra: Map<String, Value>,
+    extra: Tagged,
     /// What `ansible_forks` reports, which the reference sets from the run's own `forks`.
     forks: usize,
     /// What `ansible_run_tags` and `ansible_skip_tags` report: the run's own tag selection.

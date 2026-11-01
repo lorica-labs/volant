@@ -46,7 +46,7 @@ pub(in crate::executor) enum Prepared {
     Remote(
         Vec<Item>,
         Option<Box<Escalation>>,
-        Option<(String, HostVars)>,
+        Option<Box<(String, HostVars)>>,
         /// Present when this task is a Python module: the module's half of the payload every
         /// item of it runs with. One per task rather than one per item, because the module is
         /// the task's, not the item's - a loop varies the arguments, never the module.

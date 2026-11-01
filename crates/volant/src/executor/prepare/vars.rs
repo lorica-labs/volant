@@ -4,7 +4,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use crate::compile::{IncludeParams, Origin};
 use crate::template::Templar;
@@ -30,7 +30,7 @@ use crate::executor::coordinator::Progress;
 pub(in crate::executor) fn host_vars(
     host: &str,
     plan: &PlayPlan,
-    task_vars: &Map<String, Value>,
+    task_vars: &crate::tags::Tagged,
     role: Option<usize>,
     include_params: Option<&IncludeParams>,
     live: &Progress,
@@ -78,7 +78,7 @@ pub(in crate::executor) fn delegate_host_vars(
     host: &str,
     named: Named,
     plan: &PlayPlan,
-    task_vars: &Map<String, Value>,
+    task_vars: &crate::tags::Tagged,
     role: Option<usize>,
     include_params: Option<&IncludeParams>,
     live: &Progress,
@@ -113,7 +113,7 @@ pub(in crate::executor) fn merged_vars(
     host: &str,
     named: Named,
     plan: &PlayPlan,
-    task_vars: &Map<String, Value>,
+    task_vars: &crate::tags::Tagged,
     role: Option<usize>,
     include_params: Option<&IncludeParams>,
     live: &Progress,
@@ -129,7 +129,7 @@ pub(in crate::executor) fn merged_vars(
     // measured, it beats a `set_fact` of the same name, which a task's own `vars:` does not.
     let mut role_params = role.params.clone();
     for (key, value) in include_params.iter().flat_map(|p| &p.values) {
-        crate::vars::combine_one(&mut role_params, key, value);
+        role_params.combine_one(key, value, None);
     }
     let scope = Scope {
         play_vars: plan.play_vars.clone(),
@@ -261,7 +261,6 @@ pub(in crate::executor) fn resolved(mut vars: HostVars, templar: &Templar) -> Ho
     // from a registered value is data too, and this resolution is the only place that can tell.
     crate::profile::count(crate::profile::Counter::RenderVars, 1);
     let (map, untrusted) = templar.resolve_vars_tainted(&vars);
-    vars.map = map;
-    vars.untrusted = untrusted;
+    vars.set_resolved(map, untrusted);
     vars
 }

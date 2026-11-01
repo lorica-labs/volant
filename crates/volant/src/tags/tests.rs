@@ -116,3 +116,64 @@ fn a_node_without_tags_is_no_tree() {
         Some(trusted_at(40))
     );
 }
+
+fn line_of(tree: Option<&TagTree>) -> Option<u32> {
+    let origin = get(tree?.own()).origin?;
+    origin_place(origin).map(|(_, line, _)| line)
+}
+
+#[test]
+fn a_value_written_without_its_tree_drops_the_old_one() {
+    let mut layer = Tagged::default();
+    layer.insert(
+        "x".into(),
+        json!("{{ a }}"),
+        Some(TagTree::Leaf(trusted_at(50))),
+    );
+    layer.insert("x".into(), json!("{{ a }}"), None);
+    assert_eq!(layer.tree("x"), None);
+    layer.insert("y".into(), json!(1), Some(TagTree::Leaf(trusted_at(51))));
+    layer.overlay(&Tagged::from(json!({"y": 2}).as_object().unwrap().clone()));
+    assert_eq!(layer.tree("y"), None);
+}
+
+#[test]
+fn a_hash_merge_keeps_the_origins_of_both_sides() {
+    crate::vars::set_hash_merge(true);
+    let tree = |key: &str, line| map(vec![(key, TagTree::Leaf(trusted_at(line)))]);
+    let mut low = Tagged::default();
+    low.insert("x".into(), json!({"a": 1}), Some(tree("a", 60)));
+    let mut high = Tagged::default();
+    high.insert("x".into(), json!({"b": 2}), Some(tree("b", 61)));
+    low.extend(&high);
+    crate::vars::set_hash_merge(false);
+    assert_eq!(low.get("x"), Some(&json!({"a": 1, "b": 2})));
+    let x = low.tree("x");
+    assert_eq!(line_of(x.and_then(|t| t.at("a"))), Some(60));
+    assert_eq!(line_of(x.and_then(|t| t.at("b"))), Some(61));
+}
+
+#[test]
+fn loaded_strings_are_trusted_and_unsafe_ones_are_not() {
+    let text = "a: text\nb: !unsafe '{{ x }}'\nn: 3\n";
+    let (docs, origins) = crate::yaml::load_with_origins(text, "t.yml").unwrap();
+    let tree = crate::yaml::tags_of(&docs[0], &origins, Some("/t.yml"), true).unwrap();
+    let a = get(tree.at("a").unwrap().own());
+    assert!(a.trusted);
+    assert_eq!(line_of(tree.at("a")), Some(1));
+    let b = get(tree.at("b").unwrap().own());
+    assert!(!b.trusted);
+    assert_eq!(line_of(tree.at("b")), Some(2));
+    assert!(!get(tree.at("n").unwrap().own()).trusted);
+}
+
+#[test]
+fn an_extra_variable_comes_from_the_cli_option_and_is_trusted() {
+    let vars = crate::vars::parse_extra_vars(&["k=v".into()], std::path::Path::new(".")).unwrap();
+    let set = get(vars.tree("k").unwrap().own());
+    assert!(set.trusted);
+    assert_eq!(
+        origin_text(set.origin.unwrap()),
+        "<CLI option 'extra_vars'>"
+    );
+}

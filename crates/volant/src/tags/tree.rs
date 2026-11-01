@@ -63,6 +63,38 @@ impl TagTree {
     }
 }
 
+/// The tree of a value whose every part comes from one place: each string, number, list and
+/// mapping carries `origin`, and each string is trusted when `trusted` says so.
+pub fn uniform(value: &Value, origin: super::OriginId, trusted: bool) -> Option<TagTree> {
+    let set = |trusted| {
+        super::intern(super::TagSet {
+            origin: Some(origin),
+            trusted,
+            ..super::TagSet::default()
+        })
+    };
+    match value {
+        Value::Null | Value::Bool(_) => None,
+        Value::String(_) => Some(TagTree::Leaf(set(trusted))),
+        Value::Number(_) => Some(TagTree::Leaf(set(false))),
+        Value::Array(items) => {
+            let children = items
+                .iter()
+                .enumerate()
+                .filter_map(|(i, item)| Some((i, uniform(item, origin, trusted)?)))
+                .collect();
+            TagTree::node(set(false), Children::Seq(children))
+        }
+        Value::Object(map) => {
+            let children = map
+                .iter()
+                .filter_map(|(k, v)| Some((k.clone(), uniform(v, origin, trusted)?)))
+                .collect();
+            TagTree::node(set(false), Children::Map(children))
+        }
+    }
+}
+
 /// The tree of `merge_hash(old, new)`, from the trees of `old` and `new`: mappings merge key by
 /// key all the way down, so each leaf keeps the tags of the side its value came from; anything
 /// else is `new`'s, with `new`'s tree or none. The merged mapping keeps `old`'s own tags, as

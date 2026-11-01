@@ -53,7 +53,7 @@ pub fn with_allitems(fields: &Map<String, Value>, all: &Value) -> Map<String, Va
 #[derive(Debug)]
 struct LoopView {
     fields: Map<String, Value>,
-    base: Arc<Map<String, Value>>,
+    base: Arc<crate::tags::Tagged>,
 }
 
 impl Object for LoopView {
@@ -122,7 +122,7 @@ pub struct Vars<'a> {
     pub untrusted_hosts: Option<&'a crate::vars::UntrustedHosts>,
     /// Variables an item shares with the others of its loop, read after `map`: a name in `map`
     /// answers first. A caller that owns its whole map leaves it empty.
-    pub base: Option<&'a Arc<Map<String, Value>>>,
+    pub base: Option<&'a Arc<crate::tags::Tagged>>,
 }
 
 impl<'a> From<&'a Map<String, Value>> for Vars<'a> {
@@ -181,7 +181,7 @@ impl Memo {
 #[derive(Debug)]
 pub(super) struct Context {
     pub(super) vars: Map<String, Value>,
-    pub(super) base: Option<Arc<Map<String, Value>>>,
+    pub(super) base: Option<Arc<crate::tags::Tagged>>,
     pub(super) hostvars: Option<Arc<crate::vars::HostvarsMap>>,
     pub(super) shared: Option<Arc<Map<String, Value>>>,
     pub(super) facts: Option<Arc<Map<String, Value>>>,
@@ -296,7 +296,11 @@ impl Context {
     /// The host's own variables as one map: the base shared by the items of a loop, then the
     /// map over it.
     pub(super) fn flat_vars(&self) -> Map<String, Value> {
-        let mut all = self.base.as_deref().cloned().unwrap_or_default();
+        let mut all = self
+            .base
+            .as_deref()
+            .map(|base| base.as_map().clone())
+            .unwrap_or_default();
         all.extend(self.vars.iter().map(|(k, v)| (k.clone(), v.clone())));
         complete_loop(&mut all);
         all

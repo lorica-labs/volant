@@ -243,7 +243,7 @@ fn scalar_array(items: &[Yaml<'_>]) -> Value {
 /// A mapping key as a JSON object holds it: a string as written, and a number, a boolean or null
 /// as the reference shows it, measured on ansible-core 2.19.12: `1:` is `"1"`, `2.5:` is
 /// `"2.5"`, `true:` is `"true"` and `~:` is `"None"`. `template::keys` finds them by value.
-fn key_text(key: &Yaml<'_>) -> anyhow::Result<String> {
+pub(super) fn key_text(key: &Yaml<'_>) -> anyhow::Result<String> {
     Ok(match key {
         Yaml::Value(Scalar::Integer(i)) => i.to_string(),
         Yaml::Value(Scalar::FloatingPoint(f)) => {

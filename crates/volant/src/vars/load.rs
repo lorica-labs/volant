@@ -7,6 +7,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, bail};
 use serde_json::{Map, Value};
 
+use super::Tagged;
+use crate::tags::{TagTree, top_level};
 use crate::yaml;
 
 /// `hash_behaviour = merge`, set once from the configuration before anything is read.
@@ -44,7 +46,7 @@ pub(crate) fn merge_hash(
 
 /// Lays one value over the variable of that name: `combine_vars` of ansible-core, which replaces
 /// it, or merges two mappings under `hash_behaviour = merge`.
-pub(crate) fn combine_one(target: &mut Map<String, Value>, key: &str, value: &Value) {
+fn combine_one(target: &mut Map<String, Value>, key: &str, value: &Value) {
     let merged = match (hash_merge(), target.get(key), value) {
         (true, Some(Value::Object(old)), Value::Object(fresh)) => {
             Value::Object(merge_hash(old, fresh))
@@ -76,8 +78,8 @@ pub(super) fn extend_except(
 /// `group_vars/` or `host_vars/`: for each entry, a file `name`, `name.yml`, `name.yaml`,
 /// `name.json`, or a directory `name/` whose files are merged in name order. Hidden files,
 /// editor backups and `.retry` files are ignored, like Ansible does.
-pub(crate) fn load_vars_dir(dir: &Path) -> anyhow::Result<BTreeMap<String, Map<String, Value>>> {
-    let mut out: BTreeMap<String, Map<String, Value>> = BTreeMap::new();
+pub(crate) fn load_vars_dir(dir: &Path) -> anyhow::Result<BTreeMap<String, Tagged>> {
+    let mut out: BTreeMap<String, Tagged> = BTreeMap::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Ok(out);
     };
@@ -106,10 +108,10 @@ pub(crate) fn load_vars_dir(dir: &Path) -> anyhow::Result<BTreeMap<String, Map<S
                 {
                     continue;
                 }
-                extend(target, &load_group_file(&file)?);
+                target.extend(&load_group_file(&file)?);
             }
         } else {
-            extend(target, &load_group_file(&path)?);
+            target.extend(&load_group_file(&path)?);
         }
     }
     Ok(out)
@@ -117,7 +119,7 @@ pub(crate) fn load_vars_dir(dir: &Path) -> anyhow::Result<BTreeMap<String, Map<S
 
 /// A `group_vars` or `host_vars` file. The reference stops a vaulted one it cannot read with
 /// exit 4 and the bare reason.
-fn load_group_file(path: &Path) -> anyhow::Result<Map<String, Value>> {
+fn load_group_file(path: &Path) -> anyhow::Result<Tagged> {
     load_vars_file(path).map_err(|err| match err.downcast_ref::<VaultFile>() {
         Some(vault) => crate::stats::Refusal::at(4, &vault.reason),
         None => err,
@@ -163,6 +165,8 @@ pub struct VarsDocument {
     pub value: Value,
     /// Whether the file was vaulted: `include_vars` hides the result of a task that read one.
     pub encrypted: bool,
+    /// The tags of `value`: where each part was written, every string trusted.
+    pub tags: Option<TagTree>,
 }
 
 /// The first document of a YAML or JSON file. A vaulted file is decrypted with the run's secrets
@@ -180,27 +184,31 @@ pub fn read_vars_document(path: &Path) -> anyhow::Result<VarsDocument> {
     }
     let text = String::from_utf8(bytes).with_context(|| format!("reading {}", path.display()))?;
     let source = path.display().to_string();
-    // Where a `!vault` value is written is read only for a file that holds one: an error that
-    // names the value points there.
-    let (docs, origins) = if text.contains("!vault") {
-        yaml::load_with_origins(&text, &source)?
-    } else {
-        (yaml::load(&text, &source)?, yaml::Origins::default())
-    };
-    let value = match docs.first() {
-        None => Value::Null,
-        Some(doc) => yaml::to_json(doc).with_context(|| format!("in {}", path.display()))?,
+    let (docs, origins) = yaml::load_with_origins(&text, &source)?;
+    let (value, tags) = match docs.first() {
+        None => (Value::Null, None),
+        Some(doc) => {
+            let value = yaml::to_json(doc).with_context(|| format!("in {}", path.display()))?;
+            let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+            let absolute = absolute.display().to_string();
+            (value, yaml::tags_of(doc, &origins, Some(&absolute), true))
+        }
     };
     yaml::note_value_origins(&docs, &origins, &source, &text);
-    Ok(VarsDocument { value, encrypted })
+    Ok(VarsDocument {
+        value,
+        encrypted,
+        tags,
+    })
 }
 
 /// A YAML or JSON file whose document is a mapping. An empty file is an empty mapping. A vaulted
 /// file is decrypted with the run's secrets first.
-pub fn load_vars_file(path: &Path) -> anyhow::Result<Map<String, Value>> {
-    match read_vars_document(path)?.value {
-        Value::Object(map) => Ok(map),
-        Value::Null => Ok(Map::new()),
+pub fn load_vars_file(path: &Path) -> anyhow::Result<Tagged> {
+    let document = read_vars_document(path)?;
+    match document.value {
+        Value::Object(map) => Ok(Tagged::new(map, top_level(document.tags))),
+        Value::Null => Ok(Tagged::default()),
         _ => bail!(
             "{}: a variables file must contain a mapping",
             path.display()
@@ -210,13 +218,18 @@ pub fn load_vars_file(path: &Path) -> anyhow::Result<Map<String, Value>> {
 
 /// A play's `vars_files` file: a mapping, or a list of mappings merged in order, a later one
 /// winning, as ansible-core 2.19.12's `preprocess_vars` reads one.
-pub fn load_play_vars_file(path: &Path) -> anyhow::Result<Map<String, Value>> {
-    match read_vars_document(path)?.value {
+pub fn load_play_vars_file(path: &Path) -> anyhow::Result<Tagged> {
+    let document = read_vars_document(path)?;
+    match document.value {
         Value::Array(items) if items.iter().all(Value::is_object) => {
-            let mut merged = Map::new();
-            for item in items {
+            let mut merged = Tagged::default();
+            for (i, item) in items.into_iter().enumerate() {
                 if let Value::Object(map) = item {
-                    merged.extend(map);
+                    let tags = top_level(document.tags.as_ref().and_then(|t| t.index(i)).cloned());
+                    for (name, value) in map {
+                        let tree = tags.get(&name).cloned();
+                        merged.insert(name, value, tree);
+                    }
                 }
             }
             Ok(merged)
@@ -260,22 +273,35 @@ pub fn include_vars_paths(
 
 /// `-e` values: `key=value` pairs (strings), inline JSON or YAML mappings, and `@file`.
 /// Later items win over earlier ones.
-pub fn parse_extra_vars(items: &[String], base: &Path) -> anyhow::Result<Map<String, Value>> {
-    let mut out = Map::new();
+///
+/// A value given inline carries the origin `<CLI option 'extra_vars'>` and is trusted, as the
+/// reference tags the option's text; a file's values carry their place in it.
+pub fn parse_extra_vars(items: &[String], base: &Path) -> anyhow::Result<Tagged> {
+    let mut out = Tagged::default();
+    let origin = crate::tags::origin_described("<CLI option 'extra_vars'>");
+    let inline = |out: &mut Tagged, map: &Map<String, Value>| {
+        for (name, value) in map {
+            out.combine_one(
+                name,
+                value,
+                crate::tags::uniform(value, origin, true).as_ref(),
+            );
+        }
+    };
     for item in items {
         let item = item.trim();
         if let Some(file) = item.strip_prefix('@') {
-            extend(&mut out, &load_vars_file(&base.join(file))?);
+            out.extend(&load_vars_file(&base.join(file))?);
         } else if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(item) {
             // JSON is read as ansible-core's own decoder reads it, `__ansible_unsafe` and all:
             // measured, `-e '{"x": {"__ansible_unsafe": "{{ 1 }}"}}'` keeps `{{ 1 }}` as text.
             if let Value::Object(map) = yaml::unsafe_markers(&Value::Object(map)) {
-                extend(&mut out, &map);
+                inline(&mut out, &map);
             }
         } else if item.starts_with('{') || item.starts_with('[') {
             let docs = yaml::load(item, "extra vars")?;
             match docs.first().map(yaml::to_json).transpose()? {
-                Some(Value::Object(map)) => extend(&mut out, &map),
+                Some(Value::Object(map)) => inline(&mut out, &map),
                 _ => bail!("extra vars must be a mapping: {item}"),
             }
         } else {
@@ -283,9 +309,11 @@ pub fn parse_extra_vars(items: &[String], base: &Path) -> anyhow::Result<Map<Str
             if let Some(word) = raw {
                 bail!("extra var '{word}' is not key=value");
             }
-            for (k, v) in options {
-                combine_one(&mut out, &k, &Value::String(yaml::literal_escapes(&v)));
-            }
+            let map = options
+                .into_iter()
+                .map(|(k, v)| (k, Value::String(yaml::literal_escapes(&v))))
+                .collect();
+            inline(&mut out, &map);
         }
     }
     Ok(out)

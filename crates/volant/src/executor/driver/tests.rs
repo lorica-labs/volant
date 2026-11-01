@@ -2,7 +2,7 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 use volant_protocol::modules::is_builtin;
 
 use super::super::run::first_batch_id;
@@ -45,7 +45,7 @@ fn with_arg(module: &str, key: &str, value: &str) -> PlayTask {
 #[case::arguments(|t: &mut PlayTask| { t.args.insert("cmd".into(), json!("echo {{ hostvars['a'].x }}")); }, true)]
 #[case::when(|t: &mut PlayTask| t.when = vec!["inventory_hostname in ansible_play_hosts".into()], true)]
 #[case::name(|t: &mut PlayTask| t.name = "count {{ ansible_play_batch | length }}".into(), true)]
-#[case::vars(|t: &mut PlayTask| { t.vars.insert("peer".into(), json!("{{ hostvars['a'].y }}")); }, true)]
+#[case::vars(|t: &mut PlayTask| { t.vars.insert("peer".into(), json!("{{ hostvars['a'].y }}"), None); }, true)]
 #[case::loop_items(|t: &mut PlayTask| t.loop_items = Some(json!("{{ ansible_play_hosts }}")), true)]
 #[case::changed_when(|t: &mut PlayTask| t.changed_when = vec!["hostvars['a'].rc == 0".into()], true)]
 #[case::failed_when(|t: &mut PlayTask| t.failed_when = vec!["play_hosts | length > 1".into()], true)]
@@ -402,7 +402,7 @@ fn a_role_is_marked_where_it_crosses_hosts(
 #[case::local_connection_writes_nothing(
     || {
         let mut local = task("command");
-        local.vars.insert("ansible_connection".into(), json!("local"));
+        local.vars.insert("ansible_connection".into(), json!("local"), None);
         vec![local, task("debug"), with_arg("copy", "src", "out.txt")]
     },
     &[false, false, true],
@@ -435,7 +435,7 @@ fn a_fact_still_holding_a_template_makes_every_step_a_boundary() {
             &crate::inventory::Inventory::parse_ini("h1\n").expect("an inventory"),
             None,
             Path::new("."),
-            Map::new(),
+            crate::tags::Tagged::default(),
         )
         .expect("a store"),
     );
@@ -444,7 +444,7 @@ fn a_fact_still_holding_a_template_makes_every_step_a_boundary() {
     store
         .lock()
         .unwrap()
-        .set_fact("h1", "plain", json!({"a": ["x"]}));
+        .set_fact("h1", "plain", json!({"a": ["x"]}), None);
     store
         .lock()
         .unwrap()
@@ -453,7 +453,7 @@ fn a_fact_still_holding_a_template_makes_every_step_a_boundary() {
     store
         .lock()
         .unwrap()
-        .set_fact("h1", "loaded", json!({"url": ["{{ api_url }}"]}));
+        .set_fact("h1", "loaded", json!({"url": ["{{ api_url }}"]}), None);
     assert!(strict(true, &store));
 }
 

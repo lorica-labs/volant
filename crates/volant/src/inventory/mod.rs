@@ -64,7 +64,7 @@ pub fn plugin_names() -> impl Iterator<Item = &'static str> {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Host {
     pub name: String,
-    pub vars: serde_json::Map<String, Value>,
+    pub vars: crate::tags::Tagged,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -72,7 +72,7 @@ struct Group {
     name: String,
     hosts: Vec<String>,
     children: Vec<String>,
-    vars: serde_json::Map<String, Value>,
+    vars: crate::tags::Tagged,
     /// `ansible_group_priority`, which the reference keeps out of the group's variables. A
     /// group without one ranks at 1.
     priority: Option<i64>,
@@ -160,7 +160,7 @@ impl Inventory {
         &mut self,
         name: &str,
         port: Option<i64>,
-        vars: serde_json::Map<String, Value>,
+        vars: crate::tags::Tagged,
         file: Option<&Path>,
     ) -> bool {
         // `InventoryData.set_variable` looks a name up among the groups first, and `all` and
@@ -171,23 +171,23 @@ impl Inventory {
             matches!(name, "all" | "ungrouped") || self.groups.iter().any(|g| g.name == name);
         let known = self.hosts.iter().any(|h| h.name == name);
         if known && to_group {
-            crate::vars::extend(&mut self.group_mut(name).vars, &vars);
+            self.group_mut(name).vars.extend(&vars);
             return false;
         }
         if let Some(host) = self.hosts.iter_mut().find(|h| h.name == name) {
             self.unsafe_vars
                 .retain(|(h, v), _| h != name || !vars.contains_key(v));
-            crate::vars::extend(&mut host.vars, &vars);
+            host.vars.extend(&vars);
             return false;
         }
-        let mut all = serde_json::Map::new();
+        let mut all = crate::tags::Tagged::default();
         if let Some(port) = port.filter(|p| *p != 0) {
-            all.insert("ansible_port".to_string(), Value::from(port));
+            all.insert("ansible_port".to_string(), Value::from(port), None);
         }
         if to_group {
-            crate::vars::extend(&mut self.group_mut(name).vars, &vars);
+            self.group_mut(name).vars.extend(&vars);
         } else {
-            all.extend(vars);
+            all.extend(&vars);
         }
         self.hosts.push(Host {
             name: name.to_string(),
@@ -404,12 +404,12 @@ impl Inventory {
             .find(|h| h.name == name)
             .cloned()
             .unwrap_or_default();
-        let mut vars = serde_json::Map::new();
+        let mut vars = crate::tags::Tagged::default();
         // `combine_vars`, as the reference layers them: mappings merge under `hash_behaviour = merge`.
         for g in self.sorted_groups_of(name) {
-            crate::vars::extend(&mut vars, &g.vars);
+            vars.extend(&g.vars);
         }
-        crate::vars::extend(&mut vars, &host.vars);
+        vars.extend(&host.vars);
         Host {
             name: host.name,
             vars,
@@ -417,7 +417,7 @@ impl Inventory {
     }
 
     /// The variables set on the host line itself, before any group is merged in.
-    pub fn host_line_vars(&self, name: &str) -> Option<&serde_json::Map<String, Value>> {
+    pub fn host_line_vars(&self, name: &str) -> Option<&crate::tags::Tagged> {
         self.hosts.iter().find(|h| h.name == name).map(|h| &h.vars)
     }
 }
@@ -434,10 +434,11 @@ pub fn is_localhost(name: &str) -> bool {
 pub const LOCALHOST_NAMES: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
 
 fn implicit_localhost(name: &str) -> Host {
-    let mut vars = serde_json::Map::new();
+    let mut vars = crate::tags::Tagged::default();
     vars.insert(
         "ansible_connection".to_string(),
         Value::String("local".into()),
+        None,
     );
     Host {
         name: name.to_string(),

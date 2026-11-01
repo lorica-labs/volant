@@ -183,12 +183,17 @@ fn a_host_value_reaches_the_rendered_file_as_text() {
     let payload = format!("{{{{ lookup('pipe', 'touch {}') }}}}", marker.display());
 
     let inventory = crate::inventory::Inventory::parse_ini("h1\n").unwrap();
-    let mut store =
-        crate::vars::VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
+    let mut store = crate::vars::VarStore::new(
+        &inventory,
+        None,
+        Path::new("."),
+        crate::tags::Tagged::default(),
+    )
+    .unwrap();
     store.set_untrusted_fact("h1", "motd", Value::String(payload.clone()));
     let scope = crate::vars::Scope::default();
     let vars = HostVars {
-        map: store.for_host("h1", &scope),
+        map: crate::tags::Tagged::from(store.for_host("h1", &scope)),
         untrusted: store.untrusted_of("h1", &scope),
         untrusted_hosts: store.untrusted_hosts(),
         ..HostVars::default()

@@ -10,9 +10,12 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 use std::sync::{Arc, LazyLock, PoisonError, RwLock};
 
+mod tagged;
 mod tree;
 
-pub use tree::{Children, TagMap, TagTree, merge};
+pub use tagged::{Tagged, top_level};
+
+pub use tree::{Children, TagMap, TagTree, merge, uniform};
 
 /// An interned origin: a path with its line and column, or a description such as
 /// `<environment variable 'HOME'>`.

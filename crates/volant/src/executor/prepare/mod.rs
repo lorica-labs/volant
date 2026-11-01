@@ -175,7 +175,7 @@ pub(super) fn prepare(
     // The list of all the items is one value for the loop: an item reads it through
     // `ansible_loop.allitems`, see `ALLITEMS_KEY`.
     if let Some(all) = &list_value {
-        Arc::make_mut(&mut base.base).insert(ALLITEMS_KEY.into(), all.clone());
+        Arc::make_mut(&mut base.base).insert(ALLITEMS_KEY.into(), all.clone(), None);
     }
     let mut notify_failures = 0;
     let mut first_notify_error: Option<TemplateError> = None;
@@ -224,8 +224,7 @@ pub(super) fn prepare(
             // them may be built from the item, so this pass widens the set the same way.
             crate::profile::count(crate::profile::Counter::RenderVars, 1);
             let (resolved, untrusted) = templar.resolve_vars_tainted(&vars);
-            vars.map = resolved;
-            vars.untrusted = untrusted;
+            vars.set_resolved(resolved, untrusted);
         }
         let (label, label_error, label_raised) =
             raises(label_for(task, element.as_ref(), &vars, templar))?;
@@ -369,7 +368,7 @@ pub(super) fn prepare(
             &step.origin,
             &playbook_dir,
         );
-        (name, vars)
+        Box::new((name, vars))
     });
     // From the delegating host's own variables, measured on ansible-core 2.19.12:
     // `ansible_become_user` under a `delegate_to` still reads the value the **delegating**

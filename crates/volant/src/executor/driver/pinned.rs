@@ -20,10 +20,27 @@ pub(super) fn place(plan: &PlayPlan, name: &str) -> Option<usize> {
 pub(in crate::executor) struct Turns {
     /// `free` and `host_pinned`: how many hosts have had their turn at their first fork.
     pub(in crate::executor) first: watch::Sender<usize>,
-    /// `linear` with fewer forks than hosts: for each host, the number of steps it has held a fork
-    /// for or moved past. A host takes a fork for a step once every host before it has, so the
-    /// forks go out in the play's host order and not in the order the drivers get there.
-    pub(in crate::executor) places: watch::Sender<Vec<usize>>,
+    /// `linear` with fewer forks than hosts: where each host stands. A host takes a fork for a
+    /// step once every host before it has, so the forks go out in the play's host order and not
+    /// in the order the drivers get there.
+    pub(in crate::executor) places: watch::Sender<Vec<Place>>,
+}
+
+/// Where one host stands in the queue for forks.
+#[derive(Clone, Copy, Default, Debug, PartialEq)]
+pub(in crate::executor) struct Place {
+    /// How many steps it is done with: run, skipped or failed.
+    passed: usize,
+    /// The first step of a batch it has collected and not yet taken a fork for. Collecting walks
+    /// past steps the batch will run later, so `passed` alone would let the hosts behind it in.
+    held: Option<usize>,
+}
+
+impl Place {
+    /// The first step this host may still take a fork for.
+    fn next(self) -> usize {
+        self.held.map_or(self.passed, |held| held.min(self.passed))
+    }
 }
 
 impl Default for Turns {
@@ -36,14 +53,19 @@ impl Default for Turns {
 }
 
 impl Turns {
-    /// Records that the host at `mine` is done queueing for every step before `reached`.
-    pub(super) fn reach(&self, mine: usize, reached: usize) {
+    /// Changes the place of the host at `mine`.
+    fn at(&self, mine: usize, change: impl FnOnce(&mut Place)) {
         self.places.send_modify(|places| {
             if places.len() <= mine {
-                places.resize(mine + 1, 0);
+                places.resize(mine + 1, Place::default());
             }
-            places[mine] = places[mine].max(reached);
+            change(&mut places[mine]);
         });
+    }
+
+    /// Records that the host at `mine` is done with every step before `passed`.
+    pub(super) fn reach(&self, mine: usize, passed: usize) {
+        self.at(mine, |place| place.passed = place.passed.max(passed));
     }
 }
 
@@ -69,16 +91,28 @@ impl Turn<'_> {
 impl Drop for Turn<'_> {
     fn drop(&mut self) {
         self.pass();
-        self.gate.reach(self.mine, usize::MAX);
+        self.gate.at(self.mine, |place| {
+            place.passed = usize::MAX;
+            place.held = None;
+        });
     }
 }
 
 impl Driver<'_> {
-    /// Says, when the host has a place in the queue, that every step before `pos` is behind it:
-    /// nobody waits on it to take a fork for those.
-    pub(super) fn standing_at(&self, pos: usize) {
+    /// Says, when the host has a place in the queue, that it is done with the step at `index`.
+    pub(super) fn passed(&self, index: usize) {
         if let Some(mine) = self.place {
-            self.plan.turns.reach(mine, pos);
+            self.plan.turns.reach(mine, index + 1);
+        }
+    }
+
+    /// Says, when the host has a place in the queue, that its batch starts at `pos`: until it
+    /// takes its fork, the hosts behind it wait for it there.
+    pub(super) fn hold(&self, pos: usize) {
+        if let Some(mine) = self.place {
+            self.plan.turns.at(mine, |place| {
+                place.held = Some(place.held.map_or(pos, |held| held.min(pos)));
+            });
         }
     }
 
@@ -115,16 +149,19 @@ impl Driver<'_> {
             }
         }
         let permit = Arc::clone(forks).acquire_owned().await.ok();
-        self.plan.turns.reach(mine, pos + 1);
+        self.plan.turns.at(mine, |place| {
+            place.passed = place.passed.max(pos + 1);
+            place.held = None;
+        });
         Some(permit)
     }
 
     /// Whether every host in front of `mine` has queued for the step at `pos`, moved past it, or
     /// left the batch. Before the coordinator first says who is live, nobody has left.
-    fn queued_before(&self, places: &[usize], mine: usize, pos: usize) -> bool {
+    fn queued_before(&self, places: &[Place], mine: usize, pos: usize) -> bool {
         let live = Arc::clone(&self.progress.borrow().live_hosts);
         (0..mine).all(|host| {
-            places.get(host).is_some_and(|&reached| reached > pos)
+            places.get(host).is_some_and(|place| place.next() > pos)
                 || (!live.is_empty() && !live.contains(&self.plan.queue[host]))
         })
     }
@@ -134,18 +171,28 @@ impl Driver<'_> {
 mod tests {
     use super::*;
 
-    /// A host's place only moves forward, and a host that leaves holds nobody up.
+    /// A host's place only moves forward, a batch in hand keeps it at the batch's first step,
+    /// and a host that leaves holds nobody up.
     #[test]
     fn a_place_only_moves_forward_and_leaving_frees_it() {
         let turns = Turns::default();
         turns.reach(1, 3);
         turns.reach(1, 2);
-        assert_eq!(*turns.places.borrow(), [0, 3]);
+        turns.at(1, |place| place.held = Some(1));
+        let next = |turns: &Turns| {
+            turns
+                .places
+                .borrow()
+                .iter()
+                .map(|p| p.next())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(next(&turns), [0, 1]);
         drop(Turn {
             gate: &turns,
             mine: 0,
             passed: true,
         });
-        assert_eq!(*turns.places.borrow(), [usize::MAX, 3]);
+        assert_eq!(next(&turns), [usize::MAX, 1]);
     }
 }

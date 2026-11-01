@@ -345,7 +345,6 @@ pub(super) async fn drive_host(
             break 'run;
         }
         failed_before = failed;
-        driver.standing_at(pos);
         // Collect a batch of remote tasks up to the next boundary; report skips and run local
         // tasks as they come, in order.
         let mut batch: Vec<(usize, Vec<Item>)> = Vec::new();
@@ -1522,6 +1521,7 @@ pub(super) async fn drive_host(
                         discovering.insert(pos, !silent_discovery(target_vars));
                     }
                     Seen::mark(&mut seen, pos, task);
+                    driver.hold(pos);
                     batch.push((pos, items));
                     // Where this host goes after a step a `rescue` would catch depends on how that
                     // step ends, so the batch stops here: moving `pos` now would step over that

@@ -8,14 +8,11 @@ ansible-galaxy-collection-scm  #1342
 ansible-playbook-callbacks     #1333
 ansible_log                    #1336
 assert                         #1283
-become_su                      #1285
-become_sudo                    #1284
 binary_modules_posix           #1281
 cache-plugins                  #1334
 callback-dispatch              #1333
 callback_results               #1333
 conditionals                   #1282
-connection_delegation          #1265
 connection_local               #1337
 deprecations                   #1282
 filter_encryption              #1282
@@ -28,7 +25,7 @@ inventory_cache                #1334
 inventory_script               #1282
 lookup_env                     #1282
 loop-connection                #1337
-module_defaults                #1341
+module_defaults                #1345
 order                          #1340
 protomatter                    #1282
 remote_tmp                     #1336

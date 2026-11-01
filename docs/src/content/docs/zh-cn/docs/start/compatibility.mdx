@@ -1,5 +1,5 @@
 ---
-sourceHash: "27377717e493"
+sourceHash: 72e07b4420ea
 title: 我的 playbook 能运行吗？
 description: 几秒钟内对照当前版本检查现有的 Ansible 项目，不接触任何主机。
 ---
@@ -81,7 +81,7 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 
 | 内容 | 消息形式 | 退出码 |
 |---|---|---|
-| `strategy` 不是 `linear`、`free`、`host_pinned` 和 `debug` 之一 | `strategy 'x' is not supported yet` | 4 |
+| `strategy` 不是 `linear`、`free`、`host_pinned` 和 `debug` 之一，无论来自 play 还是 `ANSIBLE_STRATEGY` | 先打印 ansible-core 对 `ansible.builtin` 之外策略插件的弃用警告，然后是 `strategy 'x' is not supported yet` | 4 |
 | `include_tasks` 或 `include_role` 上的 `until`、`retries` 或 `delay` | `keyword 'until' is not supported yet on 'include_tasks'` | 4 |
 | 标准输入是终端时，同时带 `prompt` 和 `seconds` 或 `minutes` 的 `pause` | `pause cannot wait for a prompt and a duration together on a terminal ...` | 4 |
 | ansible-core 有、而这个版本不处理的模块参数 | `argument 'x' is not supported yet on 'module'`，只有该值被拒绝时再加上 ` with 'v'` | 4 |

@@ -79,7 +79,7 @@ pub(in crate::executor) enum Strategy {
 impl Strategy {
     /// The strategy a play names. The pre-flight has refused every other name by now.
     pub(in crate::executor) fn named(name: Option<&str>) -> Self {
-        match name {
+        match name.and_then(crate::preflight::builtin_strategy) {
             Some("free") => Self::Free,
             Some("host_pinned") => Self::HostPinned,
             Some("debug") => Self::Debug,

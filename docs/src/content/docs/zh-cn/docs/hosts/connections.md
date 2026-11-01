@@ -1,5 +1,5 @@
 ---
-sourceHash: 31bbd0638724
+sourceHash: fc8e4351f40d
 title: 连接与 become
 description: Volant 如何连接到主机、它读取的主机变量和 ansible.cfg 设置，以及 become 如何通过 sudo 和 su 工作。
 ---
@@ -338,6 +338,8 @@ sudo -H <form> -u <user> -- volant-agent
 `<form>` 是 `-n` 或 `-k -S -p ''`，取决于下文所述的一次探测。只有在没有设置 `become_flags` 时，Volant 才会添加 `-H`：一旦给出标志列表，它就会取而代之。不提权的 task 继续使用无特权的 agent。agent 本身对提权一无所知。原因见[决策记录 0004](/zh-cn/docs/decisions/0004-become-runs-a-second-agent-under-sudo/)。
 
 提权 agent 会保持到 play 结束，所以由提权 task 组成的 play，每台主机只需为 `sudo` 付出一次代价。
+
+通过 `local` 连接时，agent 在一个 shell 后面启动，这个 shell 先打印一行成功标记，就像 ansible-core 的命令打印它的 `BECOME-SUCCESS-<random>`。因此 `become_exe` 包装脚本在 `sudo` 运行之前打印的内容不会被当成 agent 的输出，而是写到控制节点的标准错误。设置 `ansible_local_become_strip_preamble: false` 时会保留这些内容：包装脚本打印的内容和成功标记会放在每个通过该 agent 提权的 `raw` task 的 `stdout` 和 `stderr` 前面。这样的 task 使用单独的 agent。
 
 ### 哪个设置优先
 

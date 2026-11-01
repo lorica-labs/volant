@@ -1,5 +1,5 @@
 ---
-sourceHash: 31bbd0638724
+sourceHash: fc8e4351f40d
 title: Connexions et become
 description: Comment Volant atteint un hôte, les variables d'hôte et les paramètres d'ansible.cfg qu'il lit, et comment become fonctionne avec sudo et su.
 ---
@@ -338,6 +338,8 @@ sudo -H <form> -u <user> -- volant-agent
 `<form>` est `-n` ou `-k -S -p ''`, selon une sonde décrite plus bas. Volant ajoute `-H` seulement quand aucun `become_flags` n'est défini : une liste d'options le remplace. Les tâches qui n'élèvent pas leurs privilèges continuent d'utiliser l'agent non privilégié. L'agent lui-même ne sait rien de l'élévation. La [fiche de décision 0004](/fr/docs/decisions/0004-become-runs-a-second-agent-under-sudo/) explique pourquoi.
 
 L'agent élevé est gardé jusqu'à la fin du play : un play de tâches élevées paie donc `sudo` une fois par hôte.
+
+Sur une connexion `local`, l'agent démarre derrière un shell qui affiche d'abord une ligne de succès, comme la commande d'ansible-core affiche son `BECOME-SUCCESS-<random>`. Ce qu'un wrapper `become_exe` affiche avant que `sudo` tourne n'est donc jamais lu comme la sortie de l'agent, et part sur la sortie d'erreur du contrôleur. Avec `ansible_local_become_strip_preamble: false`, il est gardé : ce que le wrapper a affiché et la ligne de succès passent devant le `stdout` et le `stderr` de chaque tâche `raw` qui s'élève par cet agent. Ces tâches ont un agent à elles.
 
 ### Quel réglage l'emporte
 

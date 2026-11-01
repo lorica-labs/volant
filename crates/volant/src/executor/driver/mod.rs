@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{Map, Value};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
+use tokio::sync::{Semaphore, mpsc, watch};
 use volant_protocol::modules::short_name;
 use volant_protocol::{BatchOutcome, TaskResult};
 
@@ -60,7 +60,6 @@ pub(in crate::executor) use boundaries::{Definitions, mark_boundaries};
 use boundaries::{calls_lookup, meets, strict, writes_facts};
 pub(crate) use boundaries::{expressions, strings, task_strings};
 use host::Driver;
-use pinned::Turn;
 pub(in crate::executor) use pinned::Turns;
 use plugin::{PluginBatch, PluginItems, plugin_step, run_plugin_items};
 use rendered::{NO_WHEN, Rendered, read_as, render_keywords, step_at};
@@ -111,27 +110,8 @@ pub(super) async fn drive_host(
     // Ansible's `forks`: one permit per host, held from the connection to the results of a
     // batch. It lives in this binding and releases itself when dropped, so no way out of this
     // function can leak it, whether that is a return, an error, a cancellation or a panic.
-    let mut permit: Option<OwnedSemaphorePermit> = None;
-    // `free` and `host_pinned`: the first fork is taken before the first step, in the play's host
-    // order, the way the reference starts a worker for each host in turn while forks are free.
-    // Taken as each driver gets there, a later host could start first and hold back an earlier
-    // one's lines. `host_pinned` keeps the fork to the last step, so the worker that starts a
-    // host is the one that finishes it; every release below is skipped for it.
-    let mut turn = Turn {
-        gate: &plan.turns,
-        mine: plan
-            .queue
-            .iter()
-            .position(|h| h == &name)
-            .unwrap_or_default(),
-        passed: !plan.strategy.free(),
-    };
-    if plan.strategy.free() {
-        if driver.wait_turn(turn.mine).await.is_some() {
-            permit = driver.acquire(Arc::clone(&forks)).await;
-        }
-        turn.pass();
-    }
+    // Under `free` and `host_pinned` the first is taken here, before the first step.
+    let (_turn, mut permit) = driver.first_fork(&plan, &forks).await;
     // Set when the host leaves the run without finishing: the message the recap shows, and
     // whether the task it happened under censors its output.
     let mut unreachable: Option<String> = None;

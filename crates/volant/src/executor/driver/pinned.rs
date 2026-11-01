@@ -99,6 +99,36 @@ impl Drop for Turn<'_> {
 }
 
 impl Driver<'_> {
+    /// The host's turn, which hands its place on when dropped, and under `free` and `host_pinned`
+    /// its first fork. Those strategies take it before the first step, in the play's host order,
+    /// the way the reference starts a worker for each host in turn while forks are free. Taken as
+    /// each driver gets there, a later host could start first and hold back an earlier one's
+    /// lines. `host_pinned` keeps the fork to the last step, so the worker that starts a host is
+    /// the one that finishes it; every release in the driver is skipped for it.
+    pub(super) async fn first_fork<'p>(
+        &mut self,
+        plan: &'p PlayPlan,
+        forks: &Arc<Semaphore>,
+    ) -> (Turn<'p>, Option<OwnedSemaphorePermit>) {
+        let mut turn = Turn {
+            gate: &plan.turns,
+            mine: plan
+                .queue
+                .iter()
+                .position(|h| h == self.name)
+                .unwrap_or_default(),
+            passed: !plan.strategy.free(),
+        };
+        let mut permit = None;
+        if plan.strategy.free() {
+            if self.wait_turn(turn.mine).await.is_some() {
+                permit = self.acquire(Arc::clone(forks)).await;
+            }
+            turn.pass();
+        }
+        (turn, permit)
+    }
+
     /// Says, when the host has a place in the queue, that it is done with the step at `index`.
     pub(super) fn passed(&self, index: usize) {
         if let Some(mine) = self.place {

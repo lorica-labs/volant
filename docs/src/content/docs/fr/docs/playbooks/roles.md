@@ -1,5 +1,5 @@
 ---
-sourceHash: bca51b95b831
+sourceHash: dd5a8cdb6098
 title: Rôles, includes et imports
 description: Où Volant cherche les rôles, comment fonctionnent les dépendances, les spécifications d'arguments et les variables de rôle, et comment les imports et les includes amènent d'autres fichiers dans un play.
 ---
@@ -47,7 +47,7 @@ roles:
 
 La tâche porte la `short_description` du rôle après un tiret : `--list-tasks` affiche donc `Validating arguments against arg spec 'main' - The spec role`. Elle est taguée `always`, si bien qu'aucune sélection `--tags` ne l'écarte.
 
-Les vérifications s'exécutent dans l'ordre où Ansible les exécute : un argument obligatoire manquant, puis un type, puis une valeur hors de `choices`, puis un argument que la spécification ne nomme pas. Les sous-options, `aliases`, `default` et `mutually_exclusive` ne sont pas encore vérifiés.
+Les vérifications suivent l'ordre d'Ansible et reprennent ses messages : un argument obligatoire manquant, un type (`bytes`, `bits`, `json` et les autres), une valeur hors de `choices`, puis les sous-options à toute profondeur, chacune avec ses propres règles `required`, `aliases`, `mutually_exclusive` et `required_*`. Les arguments que la spécification ne nomme pas viennent en dernier, dans un seul message. Une chaîne donnée pour une option `dict` est lue comme du JSON ou du `key=value` ; Volant ne l'évalue pas comme un littéral Python, contrairement à Ansible.
 
 ## Variables de rôle
 

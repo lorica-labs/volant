@@ -22,7 +22,7 @@ interpreter_discovery_python   #1375
 inventory_cache                #1334
 inventory_script               #1282
 lookup_env                     #1282
-module_defaults                #1345
+module_defaults                #1367
 order                          #1340
 protomatter                    #1282
 remote_tmp                     #1336

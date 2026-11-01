@@ -38,10 +38,7 @@ A diff prints only for a task that changed something. `copy` and `template` prin
 
 ## Known gaps
 
-- `--step` does not ask before a `meta` or `flush_handlers` step. This has not been compared with ansible-core.
-- `-vv` does not print the handler notification lines.
 - `-vvvv` lists the options ansible-core lists, in its order, and the plugin set-up lines. Its ssh lines show the commands this engine runs over `ssh` (the probe, the upload and the link to the agent), not the `sftp` upload of ansible-core, and a local connection or a module file prints no line.
-- A task with a missing key on a skipped result gives a different message from ansible-core.
 
 The [parity page](/docs/reference/parity/) lists every option and keyword with its status.
 

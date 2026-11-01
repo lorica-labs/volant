@@ -51,7 +51,7 @@ pub fn given(
         force,
         skeleton: skeleton.or(configured.as_deref()),
         ignore: &settings.collection_skeleton_ignore(),
-        extra_vars: extra_vars.into_values(),
+        extra_vars,
     })
 }
 

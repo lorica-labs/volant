@@ -46,10 +46,20 @@ pub(crate) const DEPRECATION_TEXT: &str = "_volant_deprecation_text";
 /// `_ansible_` key but `_ansible_parsed`, as the reference's `remove_internal_keys` drops them
 /// from a module's return. Measured on ansible-core 2.19.12: a module returning
 /// `_ansible_verbose_always` gets a warning and its result printed on one line.
+///
+/// A discovered interpreter is an action's to report, so a module's `discovered_interpreter_*`
+/// and `ansible_discovered_interpreter_*` facts go too, without a word: the controller stamps the
+/// one it found after this.
 pub(crate) fn drop_internal_keys(result: &mut TaskResult) {
     result.0.retain(|key, _| {
         !key.starts_with("_volant_") && (!key.starts_with("_ansible_") || key == "_ansible_parsed")
     });
+    if let Some(Value::Object(facts)) = result.0.get_mut("ansible_facts") {
+        facts.retain(|key, _| {
+            !key.starts_with("discovered_interpreter_")
+                && !key.starts_with("ansible_discovered_interpreter_")
+        });
+    }
 }
 
 /// Whether a result carries the `_ansible_no_log` an action sets when it read what must not be
@@ -340,5 +350,31 @@ pub(in crate::executor) fn classify_as(
         Outcome::Changed
     } else {
         Outcome::Ok
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn a_module_cannot_report_a_discovered_interpreter() {
+        let facts = json!({
+            "discovered_interpreter_python": "/bin/mine",
+            "ansible_discovered_interpreter_bogus": "x",
+            "ansible_bogus_interpreter": "kept for clean_facts to warn about",
+            "test_fact": 1,
+        });
+        let mut result = TaskResult(serde_json::Map::from_iter([(
+            "ansible_facts".to_string(),
+            facts,
+        )]));
+        drop_internal_keys(&mut result);
+        assert_eq!(
+            result.0["ansible_facts"],
+            json!({"ansible_bogus_interpreter": "kept for clean_facts to warn about", "test_fact": 1})
+        );
     }
 }

@@ -3,7 +3,6 @@
 # target that differs, and an entry goes away with the fix of its issue.
 ansiballz_debug                #1336
 ansiballz_debugging            #1330
-ansible-galaxy-collection-scm  #1372
 assert                         #1282
 cache-plugins                  #1334
 conditionals                   #1282

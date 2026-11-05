@@ -2,7 +2,7 @@
 
 use rstest::rstest;
 
-use super::git::{parse, redact};
+use super::git::{collections_in, parse, redact};
 
 /// `parse_scm` of ansible-core 2.19.12.
 #[rstest]
@@ -87,5 +87,31 @@ fn a_missing_git_says_so() {
     assert_eq!(
         failure.summary(),
         "Could not find git executable to extract the collection from the Git repository `https://user:********@host/demo.git`: Failed to find required executable \"git\" in paths: /nonexistent:/sbin:/usr/sbin:/usr/local/sbin"
+    );
+}
+
+/// A directory that is a collection is the only one; otherwise each subdirectory that is one.
+#[test]
+fn a_checkout_holds_itself_or_its_subdirectories() {
+    let top = tempfile::tempdir().expect("a directory");
+    let write = |path: &str| {
+        let file = top.path().join(path);
+        std::fs::create_dir_all(file.parent().expect("a parent")).expect("made");
+        std::fs::write(file, "").expect("written");
+    };
+    assert_eq!(
+        collections_in(top.path()).unwrap_err().message,
+        "Failed to automatically detect the collection requirement type."
+    );
+    write("b/MANIFEST.json");
+    write("a/galaxy.yml");
+    write("c/README.md");
+    assert_eq!(
+        collections_in(top.path()).expect("two"),
+        [top.path().join("a"), top.path().join("b")]
+    );
+    assert_eq!(
+        collections_in(&top.path().join("a")).expect("itself"),
+        [top.path().join("a")]
     );
 }

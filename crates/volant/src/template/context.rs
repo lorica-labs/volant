@@ -187,8 +187,8 @@ pub(super) struct Context {
     /// The tags of `vars` by name. `registry` holds those of the values the render read.
     pub(super) tags: Option<Arc<crate::tags::TagMap>>,
     pub(super) registry: super::tagged::TagRegistry,
-    /// The tags of the last expression's value, set as it is converted.
-    pub(super) result: Mutex<Option<crate::tags::TagTree>>,
+    /// The value of the last expression, whose tags `registry` answers if something asks.
+    pub(super) result: Mutex<Option<minijinja::Value>>,
     pub(super) base: Option<Arc<crate::tags::Tagged>>,
     pub(super) hostvars: Option<Arc<crate::vars::HostvarsMap>>,
     pub(super) shared: Option<Arc<Map<String, Value>>>,

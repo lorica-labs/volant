@@ -293,16 +293,16 @@ impl Context {
                 }
                 self.deferred.note(key);
             }
-            let tree = self.tags.as_ref().and_then(|tags| tags.get(key));
-            return Some((to_template_tagged(value, tree, &self.registry), true));
+            let out = to_template_tagged(value, key, self.tags.as_ref(), &self.registry);
+            return Some((out, true));
         }
         // The variables the items of a loop share hold no template that a render could change:
         // `HostVars::shared_by_items` keeps in `map` every value that has one, except the text of
         // a managed host, which is data. So a read of this layer has nothing to resolve.
         let base = self.base.as_ref()?;
         let value = base.get(key)?;
-        let tree = base.tree(key);
-        Some((to_template_tagged(value, tree, &self.registry), true))
+        let out = to_template_tagged(value, key, Some(base.tags()), &self.registry);
+        Some((out, true))
     }
 }
 

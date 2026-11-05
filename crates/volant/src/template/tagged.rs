@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use minijinja::Value;
 use minijinja::value::ValueKind;
 
-use crate::tags::{Children, OriginId, TagSet, TagSetId, TagTree};
+use crate::tags::{Children, OriginId, TagMap, TagSet, TagSetId, TagTree};
 
 /// What `Value::from_pairs` builds with the `preserve_order` feature.
 type Mapping = indexmap::IndexMap<Value, Value>;
@@ -56,10 +56,57 @@ pub(crate) struct TagRegistry {
     /// meet in one render has none: `x: 1` and `y: 1` written on two lines leave `1` untagged.
     /// The ceiling of keying by value; the way past it is a tagged number type of its own.
     numbers: Mutex<Keyed<NumberKey, Option<TagSetId>>>,
+    /// The variables read and not yet held above, each with the map and the index of its tree. A
+    /// render rarely asks for a tag, and holding every part of a large variable on every read
+    /// would cost more memory than the variable: only a question walks them.
+    pending: Mutex<Vec<(Value, Arc<TagMap>, usize)>>,
 }
 
 impl TagRegistry {
     pub(crate) fn tag(&self, value: &Value, id: TagSetId) {
+        self.settle();
+        self.hold(value, id);
+    }
+
+    /// Holds what the reads so far left pending, in the order they were read.
+    fn settle(&self) {
+        let pending =
+            std::mem::take(&mut *self.pending.lock().unwrap_or_else(PoisonError::into_inner));
+        for (value, tags, index) in pending {
+            if let Some((_, tree)) = tags.get_index(index) {
+                self.hold_tree(&value, tree);
+            }
+        }
+    }
+
+    fn hold_tree(&self, value: &Value, tree: &TagTree) {
+        self.hold(value, tree.own());
+        match tree {
+            TagTree::Leaf(_) => {}
+            TagTree::Node(_, Children::Seq(kids)) => {
+                let Some(items) = value.downcast_object_ref::<Vec<Value>>() else {
+                    return;
+                };
+                for (i, kid) in kids {
+                    if let Some(item) = items.get(*i) {
+                        self.hold_tree(item, kid);
+                    }
+                }
+            }
+            TagTree::Node(_, Children::Map(kids)) => {
+                let Some(map) = value.downcast_object_ref::<Mapping>() else {
+                    return;
+                };
+                for (name, kid) in kids {
+                    if let Some(item) = map.get(&Value::from(name.as_str())) {
+                        self.hold_tree(item, kid);
+                    }
+                }
+            }
+        }
+    }
+
+    fn hold(&self, value: &Value, id: TagSetId) {
         if id.is_none() {
             return;
         }
@@ -78,6 +125,11 @@ impl TagRegistry {
     }
 
     pub(crate) fn tags_of(&self, value: &Value) -> TagSetId {
+        self.settle();
+        self.held_tags(value)
+    }
+
+    fn held_tags(&self, value: &Value) -> TagSetId {
         let found = if let Some(key) = number_key(value) {
             self.numbers
                 .lock()
@@ -111,6 +163,7 @@ impl TagRegistry {
 
     /// The tags of `value` and of what it holds, as far as this render knows them.
     pub(crate) fn tree_of(&self, value: &Value) -> Option<TagTree> {
+        self.settle();
         if self.is_empty() {
             return None;
         }
@@ -118,7 +171,7 @@ impl TagRegistry {
     }
 
     fn walk(&self, value: &Value) -> Option<TagTree> {
-        let own = self.tags_of(value);
+        let own = self.held_tags(value);
         let children = if let Some(items) = value.downcast_object_ref::<Vec<Value>>() {
             let kids: Vec<_> = items
                 .iter()
@@ -179,22 +232,23 @@ pub(super) fn tag(state: &minijinja::State, value: &Value, id: TagSetId) {
     }
 }
 
-/// Records the tags of `value`, the value the last expression over `ctx` gave, or that the last
-/// render gave text.
+/// Records `value`, the value the last expression over `ctx` gave, or that the last render gave
+/// text.
 pub(super) fn set_result(ctx: &Value, value: Option<&Value>) {
     if let Some(root) = ctx.downcast_object_ref::<super::context::Context>() {
-        let tree = value.and_then(|v| root.registry.tree_of(v));
-        *root.result.lock().unwrap_or_else(PoisonError::into_inner) = tree;
+        *root.result.lock().unwrap_or_else(PoisonError::into_inner) = value.cloned();
     }
 }
 
-/// What [`set_result`] recorded last over `ctx`, taken.
+/// The tags of what [`set_result`] recorded last over `ctx`, taken.
 pub(super) fn take_result(ctx: &Value) -> Option<TagTree> {
     let root = ctx.downcast_object_ref::<super::context::Context>()?;
-    root.result
+    let value = root
+        .result
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
-        .take()
+        .take()?;
+    root.registry.tree_of(&value)
 }
 
 fn number_key(value: &Value) -> Option<NumberKey> {
@@ -225,45 +279,64 @@ fn address(value: &Value) -> Option<usize> {
     }
 }
 
-/// `to_template`, with each tagged part of `value` built as an allocation of its own and
-/// registered with its tags.
+/// The template value of the variable `name` of `tags`, its tags left for the registry to find
+/// when something asks.
 pub(crate) fn to_template_tagged(
     value: &serde_json::Value,
-    tree: Option<&TagTree>,
+    name: &str,
+    tags: Option<&Arc<TagMap>>,
     registry: &TagRegistry,
 ) -> Value {
+    let Some((tags, (index, _, tree))) = tags.and_then(|t| Some((t, t.get_full(name)?))) else {
+        return super::bigint::to_template(value);
+    };
+    let out = built(value, Some(tree));
+    registry
+        .pending
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .push((out.clone(), Arc::clone(tags), index));
+    out
+}
+
+/// `to_template`, with each tagged string an allocation of its own, which is how a render finds
+/// it again.
+fn built(value: &serde_json::Value, tree: Option<&TagTree>) -> Value {
     use serde_json::Value as Json;
     let Some(tree) = tree else {
         return super::bigint::to_template(value);
     };
-    let out = match (value, tree) {
+    match (value, tree) {
         (Json::String(s), _) if crate::yaml::binary_text(s).is_none() => {
             Value::from(Arc::<str>::from(s.as_str()))
         }
         (Json::Array(items), TagTree::Node(_, Children::Seq(kids))) => {
-            let kids: HashMap<usize, &TagTree> = kids.iter().map(|(i, t)| (*i, t)).collect();
+            let mut kids = kids.iter().peekable();
             items
                 .iter()
                 .enumerate()
-                .map(|(i, item)| to_template_tagged(item, kids.get(&i).copied(), registry))
+                .map(|(i, item)| {
+                    let tree = kids.next_if(|(at, _)| *at == i).map(|(_, tree)| tree);
+                    built(item, tree)
+                })
                 .collect()
         }
         (Json::Object(map), TagTree::Node(_, Children::Map(kids)))
             if super::typed_keys::keys(map).is_none() =>
         {
-            let kids: HashMap<&str, &TagTree> = kids.iter().map(|(k, t)| (k.as_str(), t)).collect();
+            // Most mappings are small, and a scan of a few names beats a table for each of them.
+            let table: Option<HashMap<&str, &TagTree>> =
+                (kids.len() > 8).then(|| kids.iter().map(|(name, t)| (name.as_str(), t)).collect());
             Value::from_pairs(map.iter().map(|(key, item)| {
-                let tree = kids.get(key.as_str()).copied();
-                (
-                    Value::from(key.as_str()),
-                    to_template_tagged(item, tree, registry),
-                )
+                let tree = match &table {
+                    Some(table) => table.get(key.as_str()).copied(),
+                    None => kids.iter().find(|(name, _)| name == key).map(|(_, t)| t),
+                };
+                (Value::from(key.as_str()), built(item, tree))
             }))
         }
         _ => super::bigint::to_template(value),
-    };
-    registry.tag(&out, tree.own());
-    out
+    }
 }
 
 #[cfg(test)]

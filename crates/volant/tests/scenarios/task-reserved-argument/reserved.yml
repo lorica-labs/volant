@@ -1,0 +1,2 @@
+- ansible.builtin.debug:
+    _ansible_foo: bar

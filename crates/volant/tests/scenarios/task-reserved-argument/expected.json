@@ -1,0 +1,22 @@
+[
+  {
+    "code": 1,
+    "stderr": "[ERROR]: Invalid parameter specified beginning with keyword '_ansible_' for action 'set_fact': '_ansible_foo'. The prefix '_ansible_' is reserved for internal use only.\n",
+    "stdout": ""
+  },
+  {
+    "code": 1,
+    "stderr": "[ERROR]: Invalid parameter specified beginning with keyword '_ansible_' for action 'debug': '_ansible_foo'. The prefix '_ansible_' is reserved for internal use only.\n",
+    "stdout": ""
+  },
+  {
+    "code": 2,
+    "stderr": "[ERROR]: Invalid parameter specified beginning with keyword '_ansible_' for action 'ansible.builtin.debug': '_ansible_foo'. The prefix '_ansible_' is reserved for internal use only.\n",
+    "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"runs\"\n}\n\nTASK [include_tasks] ***********************************************************\nfatal: [h1]: FAILED! => {\"changed\": false, \"include\": \"reserved.yml\", \"reason\": \"Invalid parameter specified beginning with keyword '_ansible_' for action 'ansible.builtin.debug': '_ansible_foo'. The prefix '_ansible_' is reserved for internal use only.\"}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stderr": "[WARNING]: Host 'h1' is using the discovered Python interpreter at '/usr/bin/python3.10', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.19/reference_appendices/interpreter_discovery.html for more information.\n",
+    "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [set_fact] ****************************************************************\nok: [h1]\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"kept\": true\n}\n\nTASK [command] *****************************************************************\n[ERROR]: Task failed: Module failed: Unsupported parameters for (ansible.legacy.command) module: _ansible_foo. Supported parameters include: _raw_params, _uses_shell, argv, chdir, cmd, creates, executable, expand_argument_vars, removes, stdin, stdin_add_newline, strip_empty_ends.\nOrigin: <golden-tmp>/unchecked.yml:10:7\n\n 8     - debug:\n 9         var: kept\n10     - command:\n         ^ column 7\n\nfatal: [h1]: FAILED! => {\"ansible_facts\": {\"discovered_interpreter_python\": \"/usr/bin/python3.10\"}, \"changed\": false, \"msg\": \"Unsupported parameters for (ansible.legacy.command) module: _ansible_foo. Supported parameters include: _raw_params, _uses_shell, argv, chdir, cmd, creates, executable, expand_argument_vars, removes, stdin, stdin_add_newline, strip_empty_ends.\"}\n...ignoring\n\nPLAY RECAP *********************************************************************\nh1                         : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1   \n\n"
+  }
+]

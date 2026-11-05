@@ -1,0 +1,9 @@
+# A task argument with the prefix the engine keeps for itself is refused when the task is read:
+# before anything runs in a playbook, on the include's own line in a file a dynamic include reads.
+# The `args` keyword and a free-form action are not checked.
+stderr: true
+runs:
+  - args: [-i, inv.ini, refused.yml]
+  - args: [-i, inv.ini, action-line.yml]
+  - args: [-i, inv.ini, included.yml]
+  - args: [-i, inv.ini, unchecked.yml]

@@ -287,7 +287,8 @@ fn imported_playbook(entry: &Yaml, rendering: &Rendering<'_>) -> anyhow::Result<
 /// which path it asked for.
 pub(crate) fn parse_tasks_file(path: &Path) -> anyhow::Result<Vec<TaskOrBlock>> {
     parse_tasks_text(path).map_err(|err| {
-        if err.downcast_ref::<NotATaskList>().is_some() {
+        let plain = |r: &crate::stats::Refusal| r.code == 1;
+        if err.downcast_ref::<NotATaskList>().is_some() || err.downcast_ref().is_some_and(plain) {
             err
         } else if let Some(located) = err.downcast_ref::<super::Located>() {
             anyhow::Error::new(TaskFileRefused(located.text(), true))

@@ -9,6 +9,7 @@ copy of `test/integration` per engine, with ansible-test's environment. Volant r
 A target that changes the machine (`destructive`, `needs/root`) and every script target run in a
 throwaway container, one per target and engine, as root. The targets this machine cannot run
 (`needs/ssh`, `needs/httptester`, `needs/privileged`, `cloud/`, `windows`, `network`) are skipped.
+So are the targets of a deliberate difference.
 
 One line per target. The run fails on a target that passes under the reference and fails under
 Volant, unless the known file lists it with the issue that tracks it, and on a listed target that
@@ -30,6 +31,8 @@ IMAGE = "volant-integration:24.04"
 TIMEOUT = 20 * 60
 SKIPPED = ("needs/ssh", "needs/httptester", "needs/privileged", "cloud/", "windows", "network/")
 UNRUN = ("disabled", "unsupported", "hidden", "unstable")
+# Targets of a deliberate difference, listed in the compatibility page's known gaps.
+DIFFERENT = ("ansiballz_debugging",)
 
 
 def aliases(target_dir):
@@ -43,6 +46,8 @@ def aliases(target_dir):
 
 def kind_of(target_dir, names):
     """`role`, `script` or None for a target this run does not run."""
+    if os.path.basename(target_dir) in DIFFERENT:
+        return None
     if any(name in UNRUN or name.startswith(SKIPPED) for name in names):
         return None
     if os.path.exists(os.path.join(target_dir, "runme.sh")):

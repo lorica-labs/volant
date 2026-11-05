@@ -10,11 +10,12 @@ use super::Failure;
 use super::api::VersionInfo;
 use super::api::download::galaxy_yml;
 use super::api::servers::Servers;
-use super::artifact::{Meta, Tarball};
+use super::artifact::Tarball;
 use super::build::Source;
-use super::requirements::{Collection, Kind};
 use super::resolve::{self, Index, Request};
 use super::version::meets;
+use super::wanted::check_versions;
+pub use super::wanted::{Wanted, prepare};
 
 /// The install options that change what is installed.
 #[derive(Debug, Default, Clone, Copy)]
@@ -25,60 +26,6 @@ pub struct Options {
     pub upgrade: bool,
     pub no_deps: bool,
     pub pre: bool,
-}
-
-/// A collection asked for: a tarball read already, or a name and a range for the servers.
-pub enum Wanted {
-    Tarball(Tarball, Meta),
-    Dir(Source),
-    Galaxy { fqcn: String, range: String },
-}
-
-impl Wanted {
-    pub(super) fn request(&self) -> Request {
-        match self {
-            Self::Tarball(_, meta) => Request::direct(&meta.fqcn(), &meta.version),
-            Self::Dir(source) => Request::direct(&source.fqcn(), &source.version()),
-            Self::Galaxy { fqcn, range } => Request::direct(fqcn, range),
-        }
-    }
-}
-
-/// The requirements the command line or a file gave, read: a tarball is opened and a git source
-/// cloned now, so their errors come before any output, as the reference reads them while
-/// parsing. The clones are removed when the returned directories are dropped.
-pub fn prepare(
-    collections: &[Collection],
-    ignore_certs: bool,
-) -> Result<(Vec<Wanted>, Vec<tempfile::TempDir>), Failure> {
-    let mut wanted = Vec::new();
-    let mut clones = Vec::new();
-    for c in collections {
-        let source = c.source.as_deref().unwrap_or_default();
-        wanted.push(match c.kind {
-            Kind::File => {
-                let (tarball, meta) = Tarball::open(source)?;
-                Wanted::Tarball(tarball, meta)
-            }
-            Kind::Dir => Wanted::Dir(Source::read(&super::resolve(source))?),
-            Kind::Git => {
-                let checkout = super::git::checkout(source, &c.version, ignore_certs)?;
-                let read = Source::read(&checkout.collection)?;
-                clones.push(checkout.clone);
-                Wanted::Dir(read)
-            }
-            Kind::Galaxy => Wanted::Galaxy {
-                fqcn: c.name.clone().unwrap_or_default(),
-                range: c.version.clone(),
-            },
-            Kind::Url | Kind::Subdirs => {
-                return Err(Failure::error(
-                    "volant galaxy collection install from a URL or a namespace directory is not supported yet",
-                ));
-            }
-        });
-    }
-    Ok((wanted, clones))
 }
 
 /// The version and dependencies of each local collection, by `namespace.name`.
@@ -104,9 +51,16 @@ pub(super) fn locals(wanted: Vec<Wanted>) -> (HashMap<String, Local>, Versions) 
                 );
                 given.insert(meta.fqcn(), Local::Tarball(tarball));
             }
-            Wanted::Dir(source) => {
+            Wanted::Dir(source) | Wanted::Git(source) => {
                 index.insert(source.fqcn(), (source.version(), source.dependencies()));
                 given.insert(source.fqcn(), Local::Dir(source));
+            }
+            Wanted::GitDependency(source) => {
+                let versions = (source.version(), source.dependencies());
+                index.entry(source.fqcn()).or_insert(versions);
+                given
+                    .entry(source.fqcn())
+                    .or_insert_with(|| Local::Dir(source));
             }
             Wanted::Galaxy { .. } => {}
         }
@@ -213,10 +167,19 @@ pub fn collections(
     println!("Starting galaxy collection install process");
     std::fs::create_dir_all(output).map_err(|e| Failure::error(e.to_string()))?;
     let existing = installed(output, verbose);
-    let requests: Vec<Request> = wanted.iter().map(Wanted::request).collect();
+    let requests: Vec<Request> = wanted.iter().filter_map(Wanted::request).collect();
+    // A git repository has no version of its own, so what it holds is always installed again.
+    let from_git: Vec<String> = wanted
+        .iter()
+        .filter_map(|item| match item {
+            Wanted::Git(source) | Wanted::GitDependency(source) => Some(source.fqcn()),
+            _ => None,
+        })
+        .collect();
     let forced = options.force || options.force_with_deps;
     let unsatisfied = requests.iter().any(|r| {
         forced
+            || from_git.contains(&r.fqcn)
             || !existing
                 .iter()
                 .any(|(fqcn, version)| *fqcn == r.fqcn && meets(version, &r.range))
@@ -238,7 +201,12 @@ pub fn collections(
     } else {
         existing.clone()
     };
+    let preferred: Vec<_> = preferred
+        .into_iter()
+        .filter(|(fqcn, _)| !from_git.contains(fqcn))
+        .collect();
     println!("Process install dependency map");
+    check_versions(&wanted)?;
     let (mut files, tarballs) = locals(wanted);
     let mut index = Mixed::new(tarballs, servers);
     let resolution = resolve::resolve(

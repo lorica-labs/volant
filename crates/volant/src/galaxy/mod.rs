@@ -35,6 +35,7 @@ mod settings_tests;
 #[cfg(test)]
 mod tests;
 pub mod version;
+pub mod wanted;
 
 /// A failure, printed as `[ERROR]: <message>` and ending the run with `code`.
 #[derive(Debug, PartialEq, Eq)]

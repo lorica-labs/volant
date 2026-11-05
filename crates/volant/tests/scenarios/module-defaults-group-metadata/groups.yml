@@ -1,0 +1,12 @@
+- hosts: h1
+  gather_facts: false
+  module_defaults:
+    group/my.col.fine: {}
+    group/my.col.not_a_dict: {}
+    group/my.col.twice: {}
+    group/my.col.two_keys: {}
+    group/my.col.unknown_key: {}
+    group/my.col.wrong_type: {}
+  tasks:
+    - debug:
+        msg: done

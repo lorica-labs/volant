@@ -778,7 +778,9 @@ def action_groups(groups):
     resolves them: the group is declared in its collection's `action_groups`, its members are
     resolved to the module or action plugin that answers them, and `extend_group` brings in the
     members of other groups, which may be absent. A group nobody declares is answered as missing.
+    Malformed metadata warns on stderr, from ansible-core's own check.
     """
+    from ansible.playbook.base import _validate_action_group_metadata
     from ansible.utils.collection_loader import AnsibleCollectionRef
     from ansible.utils.collection_loader._collection_finder import _get_collection_metadata
 
@@ -803,12 +805,15 @@ def action_groups(groups):
             return None
         actions = []
         extended = []
+        found_metadata = False
         for entry in entries:
             if not isinstance(entry, str):
                 # Only the `metadata` entry is anything but a name, and only `extend_group` is
                 # read from it.
+                _validate_action_group_metadata(entry, found_metadata, group)
                 metadata = entry.get("metadata") if isinstance(entry, dict) else None
                 if isinstance(metadata, dict):
+                    found_metadata = True
                     extend = metadata.get("extend_group", [])
                     extended = [extend] if isinstance(extend, str) else extend
                     if not isinstance(extended, list):

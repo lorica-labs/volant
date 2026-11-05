@@ -96,6 +96,7 @@ impl Templar {
                 self,
                 Vars {
                     map: &current,
+                    tags: None,
                     hostvars: vars.hostvars,
                     shared: vars.shared,
                     facts: vars.facts,

@@ -912,6 +912,7 @@ fn every_layer_keeps_its_trust_through_the_layered_view() {
                 facts: &Arc<Map<String, Value>>| {
         let (resolved, soiled) = templar.resolve_vars_tainted(Vars {
             map,
+            tags: None,
             hostvars: Some(&hostvars),
             shared: Some(shared),
             facts: Some(facts),
@@ -931,6 +932,7 @@ fn every_layer_keeps_its_trust_through_the_layered_view() {
                         &text,
                         Vars {
                             map: &resolved,
+                            tags: None,
                             hostvars: Some(&hostvars),
                             shared: Some(shared),
                             facts: Some(facts),
@@ -1009,6 +1011,7 @@ fn a_gathered_fact_reaches_a_template_lookup() {
                 "{{ lookup('template', 't.j2') }}",
                 Vars {
                     map,
+                    tags: None,
                     hostvars: None,
                     shared: Some(&inventory_wide),
                     facts: Some(facts),

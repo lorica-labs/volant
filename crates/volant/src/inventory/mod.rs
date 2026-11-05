@@ -16,6 +16,7 @@ mod listed;
 mod names;
 mod patterns;
 mod pyliteral;
+pub(crate) use pyliteral::literal_eval;
 pub mod ranges;
 mod script;
 mod sources;

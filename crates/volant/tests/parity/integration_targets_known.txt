@@ -6,10 +6,7 @@ cache-plugins                  #1282
 conditionals                   #1282
 deprecations                   #1282
 filter_encryption              #1282
-include_vars                   #1282
 inventory_script               #1282
-lookup_env                     #1282
 protomatter                    #1282
-set_fact                       #1282
 template                       #1355
 templating                     #1282

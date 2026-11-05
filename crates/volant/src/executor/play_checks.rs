@@ -292,6 +292,7 @@ pub(super) fn load_play_vars_files(
         };
         let (resolved, untrusted) = state.templar.resolve_vars_tainted(Vars {
             map: &layers.map,
+            tags: None,
             hostvars: None,
             shared: Some(&layers.shared),
             facts: Some(&layers.facts),
@@ -301,6 +302,7 @@ pub(super) fn load_play_vars_files(
         });
         let vars = Vars {
             map: &resolved,
+            tags: None,
             hostvars: None,
             shared: Some(&layers.shared),
             facts: Some(&layers.facts),

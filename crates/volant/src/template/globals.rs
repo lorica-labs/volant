@@ -370,9 +370,7 @@ pub(super) fn undef(args: Rest<ValueOrKwargs>) -> Value {
         })
         .filter(|v| !v.is_none())
         .and_then(|v| v.as_str().map(str::to_string));
-    super::missing::undefined_saying(
-        hint.unwrap_or_else(|| "Mandatory variable has not been overridden".to_string()),
-    )
+    super::missing::undefined_saying(hint.unwrap_or_else(|| super::missing::MANDATORY.to_string()))
 }
 
 /// What a call is bound to. Python words the failure of a function written in Python and of one

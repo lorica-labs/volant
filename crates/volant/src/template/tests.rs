@@ -233,6 +233,7 @@ fn hostvars_answers_alike_from_a_map_a_view_or_a_bare_map() {
         for (text, want) in hostvars_cases() {
             let vars = Vars {
                 map: &empty,
+                tags: None,
                 hostvars: Some(&shared),
                 shared: None,
                 facts: None,
@@ -277,6 +278,7 @@ fn hostvars_hides_the_unlisted_controller_from_iteration(
     let own = Map::new();
     let vars = Vars {
         map: &own,
+        tags: None,
         hostvars: Some(&hosts),
         shared: Some(&shared),
         facts: None,
@@ -328,6 +330,7 @@ fn hostvars_gives_the_controller_python_to_every_host(
     let own = Map::new();
     let vars = Vars {
         map: &own,
+        tags: None,
         hostvars: Some(&hosts),
         shared: None,
         facts: None,
@@ -362,6 +365,7 @@ fn the_context_hands_out_the_shared_view_and_ranks_inventory_wide_names() {
             &templar(),
             Vars {
                 map: &empty,
+                tags: None,
                 hostvars: Some(&shared),
                 shared: None,
                 facts: None,
@@ -397,6 +401,7 @@ fn the_context_hands_out_the_shared_view_and_ranks_inventory_wide_names() {
         let fact = vars(json!({"groups": "a set_fact wrote this", "own": 1}));
         let vars = Vars {
             map: &fact,
+            tags: None,
             hostvars: None,
             shared: Some(&shared),
             facts: None,
@@ -436,6 +441,7 @@ fn the_context_hands_out_the_shared_view_and_ranks_inventory_wide_names() {
             &templar(),
             Vars {
                 map: &own,
+                tags: None,
                 hostvars: None,
                 shared: Some(&shared),
                 facts: Some(&facts),
@@ -485,6 +491,7 @@ fn extract_reads_hostvars_by_host_name_and_taints_like_a_bare_read() {
             let map = vars(json!({"server_group": server_group, "agent_group": "agent"}));
             let v = Vars {
                 map: &map,
+                tags: None,
                 hostvars: Some(&view),
                 shared: Some(&shared),
                 facts: None,
@@ -509,6 +516,7 @@ fn extract_reads_hostvars_by_host_name_and_taints_like_a_bare_read() {
         for (untrusted_hosts, want) in [(Some(&hosts), json!("{{ 1 + 1 }}")), (None, json!(2))] {
             let v = Vars {
                 map: &empty,
+                tags: None,
                 hostvars: Some(&view),
                 shared: None,
                 facts: None,
@@ -559,6 +567,7 @@ fn a_host_name_from_data_taints_the_hostvars_listing_only() {
         let untrusted = BTreeSet::from([HOSTVARS_KEYS.to_string()]);
         let v = Vars {
             map: &empty,
+            tags: None,
             hostvars: Some(&view),
             shared: None,
             facts: None,
@@ -617,6 +626,7 @@ fn conditions_need_a_boolean_and_never_evaluate_a_host_string() {
         )]);
         let from_host = Vars {
             map: &map,
+            tags: None,
             hostvars: Some(&view),
             shared: None,
             facts: None,
@@ -1475,6 +1485,7 @@ fn a_raw_block_in_text_from_a_host_is_never_rendered() {
     }
     let (resolved, data) = t.resolve_vars_tainted(Vars {
         map: &vars(json!({"r": payload, "a": "{{ r }}", "b": "{% raw %}{{ r }}{% endraw %}"})),
+        tags: None,
         untrusted: Some(&host),
         ..Vars::from(&map)
     });
@@ -1716,6 +1727,7 @@ fn text_from_a_host_is_data_through_a_nested_variable() {
     }));
     let vars = || Vars {
         map: &map,
+        tags: None,
         hostvars: None,
         shared: None,
         facts: None,
@@ -1761,6 +1773,7 @@ fn unsafe_text_and_facts_are_data_through_a_nested_variable() {
     let untrusted: BTreeSet<String> = ["f".to_string()].into();
     let vars = Vars {
         map: &map,
+        tags: None,
         hostvars: None,
         shared: None,
         facts: Some(&facts),
@@ -1837,13 +1850,9 @@ fn a_nested_read_renders_only_variables_that_read_author_text() {
         untrusted: Option<&'a BTreeSet<String>>,
     ) -> Vars<'a> {
         Vars {
-            map,
-            hostvars: None,
             shared: Some(shared),
-            facts: None,
             untrusted,
-            untrusted_hosts: None,
-            base: None,
+            ..Vars::from(map)
         }
     }
     assert_eq!(

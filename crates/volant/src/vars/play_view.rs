@@ -37,6 +37,7 @@ impl PlayView {
     ) -> Vars<'a> {
         Vars {
             map,
+            tags: None,
             hostvars: self.hostvars.as_ref(),
             shared: Some(&self.shared),
             facts: None,

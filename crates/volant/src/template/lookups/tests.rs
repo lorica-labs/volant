@@ -105,6 +105,7 @@ fn what_a_template_lookup_rendered_is_never_rendered_again() {
     // `debug: msg: "{{ via_lookup }}"` renders an argument against it.
     let vars = Vars {
         map: &resolved,
+        tags: None,
         hostvars: None,
         shared: None,
         facts: None,
@@ -523,6 +524,7 @@ fn a_template_lookup_reads_a_chained_variable_resolved() {
     let from_host = BTreeSet::from(["a".to_string()]);
     let vars = Vars {
         map: &map,
+        tags: None,
         hostvars: None,
         shared: None,
         facts: None,

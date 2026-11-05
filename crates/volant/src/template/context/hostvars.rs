@@ -95,6 +95,7 @@ impl Hostvars {
             &self.templar,
             Vars {
                 map: entry.as_object().unwrap_or(&empty),
+                tags: None,
                 hostvars: None,
                 shared: self.listed.as_ref(),
                 facts: None,

@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 use super::PENDING_PYTHON;
 use super::facts::no_facts;
 use super::load::{extend, extend_except};
-use super::{Added, HostFacts, Scope, VarStore};
+use super::{Added, HostFacts, HostSources, Scope, VarStore};
 use crate::inventory::{LOCALHOST_NAMES, is_localhost};
 use crate::tags::Tagged;
 use crate::template::HOSTVARS_KEYS;
@@ -42,8 +42,8 @@ impl VarStore {
             Some(&scope.play_vars),
             Some(&scope.role_vars),
             Some(&scope.task_vars),
-            self.included.get(host),
-            self.facts.get(host),
+            self.included.get(host).map(|layer| &**layer),
+            self.facts.get(host).map(|layer| &**layer),
             Some(&scope.role_params),
             Some(&self.extra),
         ];
@@ -215,6 +215,12 @@ impl VarStore {
     /// Trust does not move with them. `untrusted_of` still names every gathered name that
     /// answers, and a template reads that set before it looks a name up anywhere.
     pub fn layered_for_host(&mut self, host: &str, scope: &Scope) -> Layers {
+        self.host_sources(host, scope).layer(scope)
+    }
+
+    /// What [`VarStore::layered_for_host`] reads from the store, for a caller that lays it over
+    /// `scope` with [`HostSources::layer`] once the store's lock is released.
+    pub fn host_sources(&mut self, host: &str, scope: &Scope) -> HostSources {
         let shared = self.shared_values(scope);
         let magic = self.magic(host);
         // A host that gathered nothing still answers `ansible_facts`, empty: see `no_facts`.
@@ -224,8 +230,8 @@ impl VarStore {
                 Some(scope.play_vars.as_map()),
                 Some(scope.role_vars.as_map()),
                 Some(scope.task_vars.as_map()),
-                self.included.get(host).map(Tagged::as_map),
-                self.facts.get(host).map(Tagged::as_map),
+                self.included.get(host).map(|layer| layer.as_map()),
+                self.facts.get(host).map(|layer| layer.as_map()),
                 Some(scope.role_params.as_map()),
                 Some(self.extra.as_map()),
                 Some(&magic),
@@ -235,41 +241,15 @@ impl VarStore {
                     || scope.vars_files.contains_key(name)
             })
         };
-        let mut map = Tagged::default();
-        map.extend_except(&scope.role_defaults, &answering);
-        map.extend_except(&self.host_base(host), &answering);
-        map.extend(&scope.play_vars);
-        // The plain half of the `vars_files` is read after this map, so a name it holds leaves
-        // the layers below it here, and every layer above it lands in the map.
-        let files = Arc::clone(&scope.vars_files.plain);
-        if !files.is_empty() {
-            map.retain(|name, _| !files.contains_key(name));
-        }
-        map.extend(&scope.vars_files.templated);
-        map.extend(&scope.role_vars);
-        map.extend(&scope.task_vars);
-        if let Some(included) = self.included.get(host) {
-            map.extend(included);
-        }
-        if let Some(facts) = self.facts.get(host) {
-            map.extend(facts);
-        }
-        map.extend(&scope.role_params);
-        map.extend(&self.extra);
-        for (name, value) in magic {
-            map.insert(name, value, None);
-        }
-        let facts = self.facts_for(host, shadowed);
-        crate::profile::count(crate::profile::Counter::LayersBuilt, 1);
-        crate::profile::count(
-            crate::profile::Counter::LayersEntries,
-            u64::try_from(map.len()).unwrap_or(u64::MAX),
-        );
-        Layers {
-            map,
+        HostSources {
+            base: self.host_base(host),
+            included: self.included.get(host).cloned(),
+            facts: self.facts.get(host).cloned(),
+            extra: self.extra.clone(),
+            magic,
+            answering,
             shared,
-            facts,
-            files,
+            gathered: self.facts_for(host, shadowed),
         }
     }
 

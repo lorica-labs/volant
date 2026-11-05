@@ -30,6 +30,8 @@ pub struct Scan {
 /// vaulted.
 pub struct Loaded {
     pub facts: Map<String, Value>,
+    /// The tags of `facts`, by name.
+    pub tags: crate::tags::TagMap,
     pub files: Vec<String>,
     pub encrypted: bool,
 }
@@ -187,11 +189,12 @@ fn walk(top: &str, depth: f64) -> Vec<(String, Vec<String>)> {
 pub fn include_dir(top: &str, scan: &Scan) -> Result<Loaded, Failure> {
     let mut loaded = Loaded {
         facts: Map::new(),
+        tags: crate::tags::TagMap::new(),
         files: Vec::new(),
         encrypted: false,
     };
     for (root, names) in walk(top, scan.depth) {
-        let mut here = Map::new();
+        let mut here = crate::tags::Tagged::default();
         for name in names {
             let path = join_path(&root, &name);
             if scan.matcher.as_ref().is_some_and(|m| !m.is_match(&name)) {
@@ -223,7 +226,12 @@ pub fn include_dir(top: &str, scan: &Scan) -> Result<Loaded, Failure> {
             loaded.encrypted |= document.encrypted;
             match document.value {
                 Value::Null => {}
-                Value::Object(map) => here.extend(map),
+                Value::Object(map) => {
+                    here.overlay(&crate::tags::Tagged::new(
+                        map,
+                        crate::tags::top_level(document.tags),
+                    ));
+                }
                 _ => {
                     return Err(Failure::Returned {
                         message: format!("{path} must be stored as a dictionary/hash"),
@@ -235,7 +243,12 @@ pub fn include_dir(top: &str, scan: &Scan) -> Result<Loaded, Failure> {
             }
             loaded.files.push(path);
         }
-        loaded.facts.extend(here);
+        let (values, tags) = here.into_parts();
+        for name in values.keys() {
+            loaded.tags.shift_remove(name);
+        }
+        loaded.tags.extend(tags);
+        loaded.facts.extend(values);
     }
     Ok(loaded)
 }

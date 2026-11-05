@@ -258,15 +258,26 @@ fn lookup(
                 match (std::env::var(&term_text), &env_default) {
                     (Ok(set), _) => {
                         super::missing::forget_handed();
-                        Value::from(set)
+                        let value = Value::from(Arc::<str>::from(set));
+                        let origin = crate::tags::origin_described(&format!(
+                            "<environment variable '{term_text}'>"
+                        ));
+                        let set = super::protomatter::origin_only(origin);
+                        super::tagged::tag(state, &value, set);
+                        value
                     }
                     (Err(_), None) => Value::from(""),
                     // Undefined, and saying why when something reads it: measured, `lookup('env',
-                    // 'X', default=undef()) is defined` is false for an `X` that is not set.
+                    // 'X', default=undef()) is defined` is false for an `X` that is not set. An
+                    // `undef('hint')` or an undefined variable as the default says its own why.
                     (Err(_), Some(default)) if default.is_undefined() => {
-                        super::missing::undefined_saying(format!(
-                            "The environment variable '{term_text}' is not set."
-                        ))
+                        if super::missing::handed_mandatory() {
+                            super::missing::undefined_saying(format!(
+                                "The environment variable '{term_text}' is not set."
+                            ))
+                        } else {
+                            Value::UNDEFINED
+                        }
                     }
                     (Err(_), Some(default)) => default.clone(),
                 }

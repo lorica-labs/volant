@@ -1,5 +1,5 @@
 ---
-sourceHash: 0228e4fa70e5
+sourceHash: 23af26d0458a
 title: Referenz der Template-Sprache
 description: Die Python-Methoden, String-Regeln, regulären Ausdrücke und Grenzen des Jinja2 von Volant, mit jedem Unterschied zu ansible-core.
 ---
@@ -209,6 +209,10 @@ Ein Pfad, den ein verwalteter Host nennt, ist ein eigener Fall, weil der Control
 Volant verfolgt das Vertrauen pro Variable, nicht pro String. Ansible versieht jedes String-Objekt mit einer Markierung, sodass ein vertrauenswürdiger String sein Vertrauen durch ein Template behält und es nur verliert, wenn ein Ausdruck einen neuen String daraus baut. In Volant ist ein Wert nicht vertrauenswürdig, wenn das Rendern, das ihn erzeugt hat, etwas gelesen hat, das ein Host beigesteuert hat. Die Antwort ist überall dieselbe, wo ein Host beteiligt war. Volant ist großzügiger bei einem Wert, den das Playbook aus seinem eigenen Text berechnet hat.
 
 Ein verwalteter Host kann außerdem seine eigenen Verbindungseinstellungen nicht über die Facts ändern, die ein Modul zurückgibt. Volant entfernt die Namen, die ansible-core entfernt, etwa `ansible_host`, `ansible_user` oder `ansible_ssh_common_args`, dazu `ansible_remote_tmp`, und gibt dieselbe Warnung aus.
+
+## Die Plugins von `ansible._protomatter`
+
+ansible-core hat unter `ansible._protomatter` einige Filter und Tests für seine eigenen Integrationstests: `origin`, `tag_names`, `tagged`, `tagged_with`, `apply_trust`, `dump_object`, `finalize`, `python_literal_eval`, `true_type` und `unmask`. Volant hat sie auch, damit diese Tests gegen Volant laufen. Sie zeigen, was Volant über einen Wert weiß, etwa die Datei und die Zeile, in der er steht. Sie sind keine öffentliche Schnittstelle, weder in ansible-core noch in Volant, und können sich in jeder Version ändern.
 
 ## Grenzen für YAML
 Volant lehnt einen YAML-Text ab, den es nicht ohne Risiko laden kann. Der Fehler nennt die Grenze. Ein Playbook, eine Variablendatei, ein Inventory und der Text, den ein `from_yaml`-Filter liest, folgen alle denselben Grenzen.

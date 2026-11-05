@@ -940,6 +940,7 @@ fn every_bridge_case_matches_the_reference() {
             .unwrap_or_default();
         let vars = Vars {
             map: &vars,
+            tags: None,
             hostvars: None,
             shared: None,
             facts: None,

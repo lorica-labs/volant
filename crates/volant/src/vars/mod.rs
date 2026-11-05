@@ -13,6 +13,7 @@ mod play_view;
 mod refresh;
 pub(crate) mod reserved;
 mod shared;
+mod sources;
 mod store;
 
 pub use crate::tags::Tagged;
@@ -51,6 +52,7 @@ pub use load::{
 pub(crate) use load::{extend, hash_merge, load_vars_dir, merge_hash};
 pub use magic::ansible_version;
 pub(crate) use play_view::PlayView;
+pub use sources::HostSources;
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::PathBuf;
@@ -169,8 +171,9 @@ pub struct VarStore {
     groups: BTreeMap<String, Vec<String>>,
     /// What `include_vars` read, per host: the reference's vars cache, a layer of its own above a
     /// task's `vars:` and under `facts`, so a `set_fact` of the same name wins whichever ran last.
-    included: BTreeMap<String, Tagged>,
-    facts: BTreeMap<String, Tagged>,
+    /// Both are shared with the layers of the tasks that read them, and copied on a write.
+    included: BTreeMap<String, Arc<Tagged>>,
+    facts: BTreeMap<String, Arc<Tagged>>,
     /// What modules returned under `ansible_facts`, flat and namespaced: the reference's host
     /// facts, a layer of their own that ranks over the inventory and under the play. Every name
     /// in it is untrusted.

@@ -240,10 +240,11 @@ impl VarStore {
                 names.remove(key);
             }
         }
-        self.included
-            .entry(host.to_string())
-            .or_default()
-            .insert(key.to_string(), value, tree);
+        Arc::make_mut(self.included.entry(host.to_string()).or_default()).insert(
+            key.to_string(),
+            value,
+            tree,
+        );
         self.forget_host(host);
     }
 
@@ -258,21 +259,27 @@ impl VarStore {
         if let Some(names) = self.untrusted.get_mut(host) {
             names.remove(key);
         }
-        self.facts
-            .entry(host.to_string())
-            .or_default()
-            .insert(key.to_string(), value, tree);
+        Arc::make_mut(self.facts.entry(host.to_string()).or_default()).insert(
+            key.to_string(),
+            value,
+            tree,
+        );
         self.forget_host(host);
     }
 
     /// Writes a fact that came from a managed host: a module result, a `register`, a `set_fact`.
     /// The name is data from here on, and a template that reads it is not rendered again.
     pub fn set_untrusted_fact(&mut self, host: &str, key: &str, value: Value) {
+        self.set_registered(host, key, value, None);
+    }
+
+    /// [`VarStore::set_untrusted_fact`] for a registered result, with the tags of its parts.
+    pub fn set_registered(&mut self, host: &str, key: &str, value: Value, tree: Option<TagTree>) {
         // After, not before: `write_fact` clears the name, because a write from an author-side
         // source gives the trust back. The cache `write_fact` dropped covers this write too,
         // because nothing can read it between the two lines. Not `set_fact`: a template a host
         // returned is data and is never rendered, so it reads nothing.
-        self.write_fact(host, key, value, None);
+        self.write_fact(host, key, value, tree);
         self.untrusted
             .entry(host.to_string())
             .or_default()

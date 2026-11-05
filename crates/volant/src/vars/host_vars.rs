@@ -173,13 +173,13 @@ impl HostVars {
     /// tags of each name whose value held no template: what a render produced is a template
     /// result, which is not the value the tags were written for.
     pub fn set_resolved(&mut self, resolved: Map<String, Value>, untrusted: BTreeSet<String>) {
-        let (before, mut tags) = std::mem::take(&mut self.map).into_parts();
-        tags.retain(|name, _| {
-            before
-                .get(name)
-                .is_some_and(|v| !crate::template::holds_template(v))
-        });
-        self.map = crate::tags::Tagged::new(resolved, tags);
+        let rendered: Vec<String> = self
+            .map
+            .iter()
+            .filter(|(_, value)| crate::template::holds_template(value))
+            .map(|(name, _)| name.clone())
+            .collect();
+        self.map.replace_values(resolved, &rendered);
         self.untrusted = untrusted;
     }
 
@@ -188,7 +188,7 @@ impl HostVars {
         let mut kept = crate::tags::Tagged::default();
         let (map, mut tags) = std::mem::take(&mut self.map).into_parts();
         for (name, value) in map {
-            let tree = tags.shift_remove(&name);
+            let tree = tags.swap_remove(&name);
             if self.untrusted.contains(&name) || !crate::template::holds_template(&value) {
                 base.insert(name, value, tree);
             } else {
@@ -205,6 +205,7 @@ impl<'a> From<&'a HostVars> for Vars<'a> {
     fn from(vars: &'a HostVars) -> Self {
         Vars {
             map: &vars.map,
+            tags: Some(vars.map.tags()),
             hostvars: Some(&vars.hostvars),
             shared: Some(&vars.shared),
             facts: Some(&vars.facts),

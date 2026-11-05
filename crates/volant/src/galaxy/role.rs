@@ -398,7 +398,7 @@ fn text_of(value: &Value) -> String {
 }
 
 /// Python's `str` of a value.
-fn python_str(value: &Value) -> String {
+pub(super) fn python_str(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
         other => python_repr(other),

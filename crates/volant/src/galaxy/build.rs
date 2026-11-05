@@ -14,6 +14,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest as _, Sha256};
 
 use super::Failure;
+use super::version::Version;
 
 mod files;
 
@@ -63,11 +64,31 @@ pub(super) struct Entry {
     pub(super) sha256: Option<String>,
 }
 
+/// Gives the keys `info` leaves out their empty values, a lone list item its list.
+fn complete(info: &mut Map<String, Value>) {
+    for key in STRINGS {
+        info.entry(key).or_insert(Value::Null);
+    }
+    for key in LISTS {
+        let value = info.entry(key).or_insert(Value::Null);
+        *value = match value.take() {
+            Value::Null => json!([]),
+            Value::Array(list) => Value::Array(list),
+            other => json!([other]),
+        };
+    }
+    info.entry("dependencies").or_insert_with(|| json!({}));
+}
+
 impl Source {
-    /// Reads `<dir>/galaxy.yml`, refusing it as the reference does.
+    /// Reads `<dir>/galaxy.yml`, refusing it as the reference does, or the `MANIFEST.json` of an
+    /// installed collection when there is only that.
     pub fn read(dir: &Path) -> Result<Self, Failure> {
         let file = dir.join("galaxy.yml");
         let shown = file.display();
+        if !file.is_file() && dir.join("MANIFEST.json").is_file() {
+            return Self::installed(dir);
+        }
         if !file.is_file() {
             return Err(Failure::error(format!(
                 "The collection galaxy.yml path '{shown}' does not exist."
@@ -113,18 +134,7 @@ impl Source {
                 unknown.join(", ")
             );
         }
-        for key in STRINGS {
-            info.entry(key).or_insert(Value::Null);
-        }
-        for key in LISTS {
-            let value = info.entry(key).or_insert(Value::Null);
-            *value = match value.take() {
-                Value::Null => json!([]),
-                Value::Array(list) => Value::Array(list),
-                other => json!([other]),
-            };
-        }
-        info.entry("dependencies").or_insert_with(|| json!({}));
+        complete(&mut info);
         if info["version"].is_null() || info["version"] == json!("") {
             info["version"] = json!("*");
         }
@@ -142,6 +152,52 @@ impl Source {
             path: dir.to_path_buf(),
             info,
         })
+    }
+
+    /// `_get_meta_from_installed_dir`: the `collection_info` of `<dir>/MANIFEST.json`.
+    fn installed(dir: &Path) -> Result<Self, Failure> {
+        let file = dir.join("MANIFEST.json");
+        let text = std::fs::read_to_string(&file).map_err(|e| Failure::error(e.to_string()))?;
+        let parsed: Option<Value> = serde_json::from_str(&text).ok();
+        let Some(Value::Object(mut info)) = parsed.and_then(|m| m.get("collection_info").cloned())
+        else {
+            return Err(Failure::error(format!(
+                "Collection at '{}' has an invalid MANIFEST.json.",
+                dir.display()
+            )));
+        };
+        complete(&mut info);
+        Ok(Self {
+            path: dir.to_path_buf(),
+            info,
+        })
+    }
+
+    /// The check `_find_matches` makes of the version a concrete artifact holds.
+    pub(super) fn check_version(&self) -> Result<(), Failure> {
+        const NEEDED: &str = "A SemVer-compliant version or '*' is required. See https://semver.org to learn how to compose it correctly. This is an issue with the collection.";
+        let version = &self.info["version"];
+        let shown = super::role::python_str(version);
+        let wanted = format!("{}:{shown}", self.fqcn());
+        match version {
+            Value::Array(_) | Value::Object(_) => Err(Failure::error(format!(
+                "Invalid version found for the collection '{wanted}'. {NEEDED}"
+            ))),
+            Value::String(text) if text == "*" || Version::parse(text).is_some() => Ok(()),
+            other => Err(Failure::error(format!(
+                "Invalid version found for the collection '{wanted}': {shown} (<class '{}'>). {NEEDED}",
+                super::requirements::python_type(other)
+            ))),
+        }
+    }
+
+    /// Replaces the dependencies, once the git ones are known by name.
+    pub(super) fn set_dependencies(&mut self, dependencies: Vec<(String, String)>) {
+        let map: Map<String, Value> = dependencies
+            .into_iter()
+            .map(|(name, range)| (name, Value::String(range)))
+            .collect();
+        self.info["dependencies"] = Value::Object(map);
     }
 
     fn text(&self, key: &str) -> String {

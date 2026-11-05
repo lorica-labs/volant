@@ -289,6 +289,8 @@ To clear both, remove the two directories. Nothing else is left behind:
 ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-* ~/.ansible/tmp/volant-blobs-*'
 ```
 
+With `ANSIBLE_KEEP_REMOTE_FILES=1`, or `keep_remote_files` in `ansible.cfg`, a module with no plugin of its own runs the way ansible-core runs it. ansible-core builds its AnsiballZ wrapper, Volant copies it to `<remote_tmp>/ansible-tmp-*/AnsiballZ_<module>.py` and leaves it there, and its `explode` and `execute` commands work. The host needs Python for this and every such task is slower than through the agent. `-vvv` prints each `PUT` and `EXEC`. `copy`, `template` and the other plugins Volant has its own version of leave no wrapper.
+
 [The agent on your hosts](/docs/internals/agent/#the-agent-cache) covers the upload, the repair of a broken cache and the permission checks.
 
 ## Persistent connections

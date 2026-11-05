@@ -318,7 +318,7 @@ fn collection_download(
             .collect::<Result<_, _>>()?,
     };
     let mut servers = servers(common, cache, config, (verbose, false), &wanted)?;
-    let (wanted, _clones) = install::prepare(&wanted, common.ignore_certs)?;
+    let (wanted, _clones) = install::prepare(&wanted, common.ignore_certs, options.no_deps)?;
     let output = galaxy::resolve(download_path.unwrap_or("./collections"));
     std::fs::create_dir_all(&output).map_err(|e| Failure::error(e.to_string()))?;
     download::collections(wanted, &output, &mut servers, options, verbose)
@@ -362,7 +362,8 @@ fn collection_install(
         (verbose, install.offline),
         &wanted,
     )?;
-    let (wanted, _clones) = install::prepare(&wanted, install.common.ignore_certs)?;
+    let (wanted, _clones) =
+        install::prepare(&wanted, install.common.ignore_certs, install.no_deps)?;
     // The runtime's own directory, which Volant appends to the search path, is not one the
     // reference would name.
     let runtime = crate::runtime::collections::active_dir();

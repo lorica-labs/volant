@@ -1,19 +1,12 @@
 # The targets of `just integration-targets` that pass under ansible-core and fail under Volant,
 # each with the issue that tracks it. A line is `<target>  #<issue>`; the recipe fails on any other
 # target that differs, and an entry goes away with the fix of its issue.
-ansiballz_debug                #1336
 ansiballz_debugging            #1330
-ansible                        #1333
-ansible-galaxy-collection-scm  #1372
-ansible-playbook-callbacks     #1333
 assert                         #1282
 cache-plugins                  #1334
-callback-dispatch              #1333
-callback_results               #1333
 conditionals                   #1282
 deprecations                   #1282
 filter_encryption              #1282
-fork_safe_stdio                #1333
 gather_facts-errors            #1330
 include_vars                   #1282
 inventory_cache                #1334

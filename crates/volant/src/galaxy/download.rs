@@ -11,6 +11,7 @@ use super::Failure;
 use super::api::servers::Servers;
 use super::install::{Local, Mixed, Options, Wanted, download_dir, locals};
 use super::resolve::{self, Request};
+use super::wanted::check_versions;
 
 /// Downloads `wanted` into `output` and returns the exit code.
 pub fn collections(
@@ -20,10 +21,11 @@ pub fn collections(
     options: Options,
     verbose: u8,
 ) -> Result<i32, Failure> {
-    let requests: Vec<Request> = wanted.iter().map(Wanted::request).collect();
+    let requests: Vec<Request> = wanted.iter().filter_map(Wanted::request).collect();
+    println!("Process download dependency map");
+    check_versions(&wanted)?;
     let (given, tarballs) = locals(wanted);
     let mut index = Mixed::new(tarballs, servers);
-    println!("Process download dependency map");
     let resolution = resolve::resolve(
         &requests,
         &mut index,

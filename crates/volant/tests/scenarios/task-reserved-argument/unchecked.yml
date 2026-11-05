@@ -1,0 +1,13 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - set_fact:
+        kept: yes
+      args:
+        _ansible_foo: bar
+    - debug:
+        var: kept
+    - command:
+        cmd: "true"
+        _ansible_foo: bar
+      ignore_errors: true

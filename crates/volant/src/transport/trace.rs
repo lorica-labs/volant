@@ -68,6 +68,11 @@ fn line_from(level: u8, text: &str) {
     }
 }
 
+/// `<host> <text>` for a command or an upload an action sends over a link, from `-vvv`.
+pub(crate) fn action_line(host: &str, text: &str) {
+    line_from(LOCAL_LEVEL, &format!("<{host}> {text}"));
+}
+
 /// `<host> ESTABLISH LOCAL CONNECTION FOR USER: <user>` and `<host> EXEC <the command line>` for
 /// the command a local link starts. The password is never in it: it travels on stdin.
 pub(super) fn local_link(host: &str, command: &tokio::process::Command) {

@@ -260,8 +260,14 @@ pub(super) fn resolve_include(
                     load_failed = true;
                     let mut body = Map::new();
                     body.insert("changed".into(), json!(false));
-                    body.insert("include".into(), json!(request.what));
-                    body.insert("reason".into(), json!(load_reason(&format!("{err:#}"))));
+                    // As the statement wrote it, not the path the file was found at.
+                    let written = entry.0.get("include").cloned();
+                    body.insert("include".into(), written.unwrap_or(json!(request.what)));
+                    let reason = match err.downcast_ref::<crate::stats::Refusal>() {
+                        Some(refused) => refused.message.clone(),
+                        None => load_reason(&format!("{err:#}")),
+                    };
+                    body.insert("reason".into(), json!(reason));
                     TaskResult(body)
                 }
             },

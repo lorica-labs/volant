@@ -631,7 +631,7 @@ pub(super) async fn drive_host(
                             .await;
                     }
                 }
-                if verbosity >= 2 && !skipped_flush && !masked_out {
+                if !skipped_flush && !masked_out {
                     announce_notified(&tx, &name, pos, &c, &notified).await;
                 }
                 driver.task_done(pos).await;

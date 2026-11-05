@@ -28,6 +28,21 @@ pub(super) fn helper_args() -> [&'static str; 3] {
     [resolve::NO_CWD_IMPORTS, "-c", HELPER]
 }
 
+/// What every helper's ansible-core reads from its environment: the run's collections and its
+/// configuration file.
+pub(super) fn helper_env() -> Vec<(&'static str, String)> {
+    let collections = crate::runtime::collections::helper_env();
+    let config = crate::config::helper_config();
+    let config = config.as_deref().and_then(std::path::Path::to_str);
+    [
+        ("ANSIBLE_COLLECTIONS_PATH", collections.as_deref()),
+        ("ANSIBLE_CONFIG", config),
+    ]
+    .into_iter()
+    .filter_map(|(name, value)| Some((name, value?.to_string())))
+    .collect()
+}
+
 /// A helper process and the two pipes a request travels over.
 pub struct PythonBuilder {
     pub(super) child: Child,
@@ -64,20 +79,12 @@ impl PythonBuilder {
     /// points ansible-core at a collection it wrote without touching this process's environment.
     pub(super) fn under_with(python: &str, env: &[(&str, &str)]) -> anyhow::Result<PythonBuilder> {
         resolve::note_helper_python(python);
-        let from_runtime = crate::runtime::collections::helper_env();
+        let run = helper_env();
         let mut env = env.to_vec();
-        if let Some(paths) = from_runtime.as_deref()
-            && !env
-                .iter()
-                .any(|(name, _)| *name == "ANSIBLE_COLLECTIONS_PATH")
-        {
-            env.push(("ANSIBLE_COLLECTIONS_PATH", paths));
-        }
-        let config = crate::config::helper_config();
-        if let Some(config) = config.as_deref().and_then(std::path::Path::to_str)
-            && !env.iter().any(|(name, _)| *name == "ANSIBLE_CONFIG")
-        {
-            env.push(("ANSIBLE_CONFIG", config));
+        for (name, value) in &run {
+            if !env.iter().any(|(given, _)| given == name) {
+                env.push((name, value));
+            }
         }
         PythonBuilder::spawn(python, &helper_args(), &env)
     }

@@ -13,8 +13,10 @@ mod error;
 mod json_doc;
 pub(crate) use json_doc::uuid_prefix;
 mod junit;
+mod lines;
 pub mod log;
 mod oneline;
+mod python;
 mod recap;
 mod recap_json;
 mod result;
@@ -31,6 +33,7 @@ pub use error::{
 };
 pub(crate) use error::{source_context, warn_once};
 pub use junit::Junit;
+pub use python::{PythonCallbacks, PythonTask};
 pub(crate) use recap_json::{ansible_json, ansible_json_indented};
 pub use shorten::shorten;
 pub use shown::Shown;
@@ -89,6 +92,10 @@ pub struct Renderer {
     on_stderr: bool,
     /// The callbacks `callbacks_enabled` adds beside the stdout one.
     aggregates: Vec<Aggregate>,
+    /// The Python callback plugins, when the run loaded any.
+    python: Option<PythonCallbacks>,
+    /// One of them prints stdout, so the renderer prints only the `-v` lines.
+    python_stdout: bool,
 }
 
 /// Set by the executor on a result whose task asked for diffs; the renderer reads it and the
@@ -152,6 +159,8 @@ impl Renderer {
             oneline: false,
             tree: None,
             on_stderr: false,
+            python: None,
+            python_stdout: false,
         }
     }
 
@@ -192,6 +201,8 @@ impl Renderer {
             oneline: false,
             tree: None,
             on_stderr: false,
+            python: None,
+            python_stdout: false,
         }
     }
 
@@ -279,68 +290,18 @@ impl Renderer {
         } else {
             self.play(&play.name);
         }
+        self.hear_play(play);
     }
 
     pub fn task(&mut self, name: &str) {
         self.banner(&format!("TASK [{name}]"));
     }
 
-    /// The `task path:` line under a banner at `-vv`: the file made absolute, and the line the
-    /// task starts on.
-    pub fn task_path(&mut self, origin: &crate::playbook::Origin) {
-        if self.verbosity >= 2 && self.minimal.is_none() {
-            self.path_line(origin);
-        }
-    }
-
-    /// The `task path:` line in front of a failed task's `fatal:` line, below `-vv` and when
-    /// `show_task_path_on_failure` is on. Measured on ansible-core 2.19.12: it follows the
-    /// `[ERROR]` block, and a loop item's `failed:` line, an unreachable host and a task that no
-    /// file holds get none.
-    pub fn failure_path(&mut self, origin: Option<&crate::playbook::Origin>) {
-        if self.path_on_failure
-            && self.minimal.is_none()
-            && self.verbosity < 2
-            && let Some(origin) = origin
-        {
-            self.path_line(origin);
-        }
-    }
-
-    fn path_line(&mut self, origin: &crate::playbook::Origin) {
-        let path = std::path::absolute(&*origin.path)
-            .unwrap_or_else(|_| std::path::PathBuf::from(&*origin.path));
-        let line = format!("task path: {}:{}", path.display(), origin.line);
-        let _ = writeln!(self.out, "{}", self.paint(DEBUG, &line));
-    }
-
-    /// Whether `-v` was given `level` times or more.
-    pub fn verbose_at(&self, level: u8) -> bool {
-        self.verbosity >= level
-    }
-
-    /// A line that shows from `level` `-v`s up, in the colour the reference gives them.
-    pub fn verbose(&mut self, level: u8, line: &str) {
-        if self.verbosity >= level {
-            let _ = writeln!(self.out, "{}", self.paint(VERBOSE, line));
-        } else if log::logs_level(level) {
-            log::record(line);
-        }
-    }
-
-    /// A line shown as it is: the version block, whose colour the reference leaves alone.
-    pub fn plain(&mut self, level: u8, line: &str) {
-        if self.verbosity >= level {
-            let _ = writeln!(self.out, "{line}");
-        } else if log::logs_level(level) {
-            log::record(line);
-        }
-    }
-
     /// What the reference prints when a playbook starts at `-vv`: its banner, at `-vvvv` the
     /// options it was run with, and how many plays it holds.
     pub fn playbook(&mut self, file: &std::path::Path, plays: usize, options: &[String]) {
         self.junit(|junit| junit.playbook(file));
+        self.hear_playbook(file);
         if self.verbosity < 2 {
             return;
         }
@@ -372,6 +333,7 @@ impl Renderer {
     /// role, by its bare name; and `=> (item=1)` behind either when a loop asked for it. It is
     /// painted like an `ok:` line, which is what the reference's own callback does with it.
     pub fn included(&mut self, what: &str, hosts: &[String], label: Option<&str>) {
+        self.hear_included(what, hosts, label);
         if self.minimal.is_some() {
             for host in hosts {
                 self.show_include(host);
@@ -401,9 +363,11 @@ impl Renderer {
     /// more hosts than `max_fail_percentage` allows.
     pub fn no_more_hosts(&mut self) {
         self.banner("NO MORE HOSTS LEFT");
+        self.hear_no_hosts_remaining();
     }
 
     pub fn no_hosts(&mut self) {
+        self.hear_no_hosts_matched();
         if self.minimal.is_some() {
             return;
         }

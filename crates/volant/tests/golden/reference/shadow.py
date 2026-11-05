@@ -26,6 +26,8 @@ ROOT = "/tmp/volant-golden-shadow"
 # Roles, handlers, loops, `until`, `delegate_to`, `serial`, `run_once`, includes and imports,
 # `no_log` and a failure a `rescue` takes. The async scenarios wait for #920.
 SCENARIOS_RECORDED = [
+    "async-poll",
+    "async-status",
     "blocks-failures",
     "blocks-nested",
     "delegate-run-once",
@@ -53,12 +55,13 @@ VOLATILE = {
     "delta": "<delta>",
     "started": "<started>",
     "discovered_interpreter_python": "<python>",
+    "stop": "<stop>",
 }
 
 
 # The id ansible-core gives an async job: `j`, random digits, a dot and its process id. A
 # playbook's own made-up ids (`nosuch.1`) do not have that shape.
-JOB_ID = re.compile(r"j\d{6,}\.\d+")
+JOB_ID = re.compile(r"\bj\d{6,}\.\d+\b")
 
 
 def _normalised(value):
@@ -100,6 +103,8 @@ def record_one(name):
     # wherever it is written.
     for n, job in enumerate(dict.fromkeys(JOB_ID.findall(text)), start=1):
         text = text.replace(job, f"<job-{n}>")
+    # How long a `pause` really waited is the same kind of value as its `delta`.
+    text = re.sub(r"Paused for [\d.]+ ", "Paused for <delta> ", text)
     # The interpreter the hosts were found to have lives under the recording account's home,
     # which no recording names.
     text = text.replace(os.path.expanduser("~"), "<home>")

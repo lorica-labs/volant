@@ -19,6 +19,7 @@ mod passwords;
 mod plays;
 mod program;
 mod pull;
+mod python_callbacks;
 mod run;
 mod runtime;
 mod setup;

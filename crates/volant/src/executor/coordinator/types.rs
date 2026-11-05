@@ -157,6 +157,13 @@ pub(in crate::executor) enum Event {
         /// no banner of their own.
         banner: bool,
     },
+    /// A job's status for the Python callback plugins, as `method`: nothing shows it.
+    AsyncStatus {
+        host: String,
+        index: usize,
+        method: &'static str,
+        result: TaskResult,
+    },
     /// What `host` asked for at the include step `index`, already read and compiled. Empty when
     /// every item was skipped or failed to resolve, which still has to be said: the coordinator
     /// splices at every include point whether or not anybody asked for anything, and a driver
@@ -390,6 +397,7 @@ pub(super) fn show_lost(
         );
     }
     out.unreachable(host, msg, items, censored, delegate);
+    out.hear_unreachable(host, msg, items, censored);
 }
 
 /// How a round of a batch ended, for the play that runs it.

@@ -27,6 +27,8 @@ mod service;
 mod template;
 pub(crate) use template::{decode_escaping, encode_text, escaped_bytes};
 mod unarchive;
+mod wrapper;
+pub(crate) use wrapper::{keep_remote_files, kind_of};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};

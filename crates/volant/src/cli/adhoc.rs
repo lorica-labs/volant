@@ -198,6 +198,11 @@ impl Adhoc {
         }
     }
 
+    /// `--playbook-dir`.
+    pub(super) fn dir(&self) -> Option<&std::path::Path> {
+        self.dir.as_deref()
+    }
+
     /// The path the play is read from, so that its directory is `--playbook-dir`; nothing at all
     /// when it was not given, and the directory is the working one.
     pub(super) fn file(&self) -> PathBuf {

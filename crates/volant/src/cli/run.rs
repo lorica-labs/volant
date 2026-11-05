@@ -99,7 +99,7 @@ async fn run_all(
         Err(code) => return Ok(code),
     };
     let show_custom_stats = config.show_custom_stats;
-    if let Err(code) = load_callbacks(&config, plays, out, &bridge) {
+    if let Err(code) = load_callbacks(&config, args, plays, out) {
         return Ok(code);
     }
     let dump = if out.verbose_at(4) {
@@ -544,6 +544,7 @@ async fn run_all(
             forced
         }
     };
+    crate::action_plugins::keep_remote_files(config.keep_remote_files);
     let python = python.map(|union| union.armed(config.native_modules, facts));
     let (run_tags, skip_tags) = selection.lists();
     store.set_tags(run_tags, skip_tags);

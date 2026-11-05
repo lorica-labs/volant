@@ -231,6 +231,27 @@ pub(super) fn boolean(name: &str, origin: &str, value: &str) -> anyhow::Result<b
     })
 }
 
+/// The switches the environment sets, each refused the way [`boolean`] refuses a word.
+pub(super) fn read_switches(config: &mut super::Config) -> anyhow::Result<()> {
+    for (name, setting, env) in [
+        (
+            "VOLANT_NATIVE_MODULES",
+            &mut config.native_modules,
+            "VOLANT_NATIVE_MODULES",
+        ),
+        (
+            "DEFAULT_KEEP_REMOTE_FILES",
+            &mut config.keep_remote_files,
+            "ANSIBLE_KEEP_REMOTE_FILES",
+        ),
+    ] {
+        if let Ok(value) = std::env::var(env) {
+            *setting = boolean(name, &format!("env: {env}"), &value)?;
+        }
+    }
+    Ok(())
+}
+
 /// A negative connection timeout is refused where it is read, rather than clamped.
 ///
 /// Measured on ansible-core 2.19.12: `timeout = -1` is passed straight to `ssh`, which answers

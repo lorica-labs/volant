@@ -1,5 +1,5 @@
 ---
-sourceHash: fc6065391248
+sourceHash: 798067bf652a
 title: Conexiones y become
 description: Cómo llega Volant a un host, las variables de host y los ajustes de ansible.cfg que lee, y cómo funciona become mediante sudo y su.
 ---
@@ -45,6 +45,8 @@ Un nombre que se resuelve en un plugin que Volant no maneja por sí mismo, como 
 Un nombre que no se resuelve en nada hace fallar la tarea con `the connection plugin '<name>' was not found`, como hace Ansible. Eso incluye un nombre corto dirigido a una colección que no está instalada, como `docker` sin community.docker, tras el aviso que ansible-core muestra para él, y `ansible.builtin.paramiko`, que ansible-core 2.19.12 no tiene con ese nombre. Esto vale tanto si el valor es la conexión del propio host, la de un destino de `delegate_to` o la del host que ejecuta una tarea `run_once`.
 
 Una contraseña viene de `-k`, de `--connection-password-file` o de la variable `ansible_password`. Volant se la entrega a `ssh` mediante `SSH_ASKPASS` y un archivo temporal privado que se elimina al final de la ejecución, lo que exige OpenSSH 8.4 o posterior. Entonces `ssh` se ejecuta con `BatchMode=no` y `NumberOfPasswordPrompts=1`, de modo que una respuesta incorrecta termina el intento. La contraseña nunca aparece en una línea de comandos, en el entorno de un programa ni en la salida, ni siquiera con `-vvvv`. Un `ansible_password` cifrado con vault funciona como cualquier variable cifrada. Sin contraseña, `ssh` se ejecuta con `BatchMode=yes` y nunca pregunta, así que un host que pediría una contraseña o una frase de paso se marca como inalcanzable en lugar de bloquear la ejecución.
+
+Con `-vvv`, el enlace de un host `local` imprime `ESTABLISH LOCAL CONNECTION FOR USER: <user>` y `EXEC <the command line>`. Esas líneas nombran el comando con el que Volant arranca el agente, una vez por enlace, y `log_verbosity` las envía al registro aunque no se muestren.
 
 ## Contenedores Docker
 
@@ -287,6 +289,8 @@ Para borrar ambos, elimina los dos directorios. No queda nada más:
 ```sh
 ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-* ~/.ansible/tmp/volant-blobs-*'
 ```
+
+Con `ANSIBLE_KEEP_REMOTE_FILES=1`, o `keep_remote_files` en `ansible.cfg`, un módulo sin plugin propio se ejecuta como lo ejecuta ansible-core. ansible-core construye su wrapper AnsiballZ, Volant lo copia a `<remote_tmp>/ansible-tmp-*/AnsiballZ_<module>.py` y lo deja allí, y sus comandos `explode` y `execute` funcionan. Para esto el host necesita Python, y cada una de estas tareas es más lenta que a través del agente. `-vvv` muestra cada `PUT` y `EXEC`. `copy`, `template` y los demás plugins de los que Volant tiene versión propia no dejan wrapper.
 
 [El agente en tus hosts](/es/docs/internals/agent/#la-caché-del-agente) describe la subida, la reparación de una caché dañada y las comprobaciones de permisos.
 

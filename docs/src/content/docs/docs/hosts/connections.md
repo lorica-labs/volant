@@ -45,6 +45,8 @@ A name that resolves to nothing fails the task with `the connection plugin '<nam
 
 A password comes from `-k`, from `--connection-password-file` or from the `ansible_password` variable. Volant hands it to `ssh` through `SSH_ASKPASS` and a private temporary file that is removed at the end of the run, which needs OpenSSH 8.4 or later. `ssh` then runs with `BatchMode=no` and `NumberOfPasswordPrompts=1`, so one wrong answer ends the attempt. The password is never on a command line, in the environment of a program or in the output, `-vvvv` included. A vaulted `ansible_password` works like any vaulted variable. Without a password, `ssh` runs with `BatchMode=yes` and never prompts, so a host that would ask for a password or a passphrase is reported unreachable instead of hanging the run.
 
+With `-vvv`, a `local` host's link prints `ESTABLISH LOCAL CONNECTION FOR USER: <user>` and `EXEC <the command line>`. They name the command Volant runs to start the agent, once per link, and `log_verbosity` sends them to the log even when they are not shown.
+
 ## Docker containers
 
 `ansible_connection: docker`, or `community.docker.docker`, runs a play inside a running container, with no sshd in it and no network path to it. Both names need community.docker installed on the controller, as they do for `ansible-playbook`. Volant runs the `docker` program from your `PATH`, so `DOCKER_HOST`, `DOCKER_CONTEXT` and `DOCKER_CONFIG` reach it through the environment.
@@ -286,6 +288,8 @@ To clear both, remove the two directories. Nothing else is left behind:
 ```sh
 ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-* ~/.ansible/tmp/volant-blobs-*'
 ```
+
+With `ANSIBLE_KEEP_REMOTE_FILES=1`, or `keep_remote_files` in `ansible.cfg`, a module with no plugin of its own runs the way ansible-core runs it. ansible-core builds its AnsiballZ wrapper, Volant copies it to `<remote_tmp>/ansible-tmp-*/AnsiballZ_<module>.py` and leaves it there, and its `explode` and `execute` commands work. The host needs Python for this and every such task is slower than through the agent. `-vvv` prints each `PUT` and `EXEC`. `copy`, `template` and the other plugins Volant has its own version of leave no wrapper.
 
 [The agent on your hosts](/docs/internals/agent/#the-agent-cache) covers the upload, the repair of a broken cache and the permission checks.
 

@@ -135,3 +135,45 @@ fn an_executable_keeps_its_bit_and_a_link_inside_stays_a_link() {
         Path::new("modules/x.py")
     );
 }
+
+/// The reference's messages for a version that is not SemVer, by what it loads as.
+#[rstest::rstest]
+#[case::float("1.0", "'n.c:1.0': 1.0 (<class 'float'>). A SemVer")]
+#[case::text("'1.0'", "'n.c:1.0': 1.0 (<class 'str'>). A SemVer")]
+#[case::list("['1.0.0']", "'n.c:['1.0.0']'. A SemVer")]
+#[case::map("{broken: version}", "'n.c:{'broken': 'version'}'. A SemVer")]
+fn a_version_that_is_not_semver_is_refused(#[case] version: &str, #[case] said: &str) {
+    let dir = tempfile::tempdir().expect("a directory");
+    std::fs::write(
+        dir.path().join("galaxy.yml"),
+        format!("namespace: n\nname: c\nversion: {version}\nreadme: R\nauthors: [a]\n"),
+    )
+    .expect("written");
+    let error = Source::read(dir.path())
+        .expect("read")
+        .check_version()
+        .unwrap_err();
+    assert!(
+        error
+            .message
+            .starts_with(&format!("Invalid version found for the collection {said}")),
+        "{}",
+        error.message
+    );
+}
+
+/// A collection in its installed form has no `galaxy.yml`: its `MANIFEST.json` says what it is.
+#[test]
+fn an_installed_collection_reads_from_its_manifest() {
+    let dir = tempfile::tempdir().expect("a directory");
+    std::fs::write(
+        dir.path().join("MANIFEST.json"),
+        r#"{"collection_info": {"namespace": "n", "name": "c", "version": "1.2.3"}}"#,
+    )
+    .expect("written");
+    let source = Source::read(dir.path()).expect("read");
+    assert_eq!(source.fqcn(), "n.c");
+    assert_eq!(source.version(), "1.2.3");
+    assert!(source.check_version().is_ok());
+    assert!(source.dependencies().is_empty());
+}

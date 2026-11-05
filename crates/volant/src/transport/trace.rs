@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The `-vvvv` lines of the `ssh` commands the controller runs to reach a host, in the shape of
-//! the reference's `ESTABLISH SSH CONNECTION`, `SSH: EXEC` and result lines. They name the
-//! commands this controller runs (the probe, the upload, the link to the agent), never the
-//! reference's own.
+//! the reference's `ESTABLISH SSH CONNECTION`, `SSH: EXEC` and result lines, and the `-vvv` lines
+//! of a local link. They name the commands this controller runs (the probe, the upload, the link
+//! to the agent), never the reference's own. A log with the verbosity for a line gets it too.
 
 use std::fmt::Write as _;
 use std::io::Write;
@@ -11,12 +11,17 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 use anstream::{AutoStream, ColorChoice};
 
+use crate::render::log;
+
 use super::bootstrap::Captured;
 use super::defaults::SshTarget;
 
 /// The level the connection lines show from: the reference prints them one step lower, but
 /// they describe other commands, so they stay with the rest of the `-vvvv` detail.
 const LEVEL_FROM: u8 = 4;
+
+/// The level a local link's lines show from, the reference's for its local connection.
+const LOCAL_LEVEL: u8 = 3;
 
 static VERBOSITY: AtomicU8 = AtomicU8::new(0);
 static COLOR: Mutex<ColorChoice> = Mutex::new(ColorChoice::Auto);
@@ -35,7 +40,7 @@ pub fn verbosity() -> u8 {
 }
 
 fn enabled() -> bool {
-    VERBOSITY.load(Ordering::Relaxed) >= LEVEL_FROM
+    VERBOSITY.load(Ordering::Relaxed) >= LEVEL_FROM || log::logs_level(LEVEL_FROM)
 }
 
 /// Whether the connection lines are shown, for a line that costs a command to write.
@@ -44,12 +49,54 @@ pub(super) fn connection_lines() -> bool {
 }
 
 fn line(text: &str) {
-    let choice = *COLOR
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let mut out = AutoStream::new(std::io::stdout(), choice);
-    let style = crate::render::VERBOSE;
-    let _ = writeln!(out, "{style}{text}{style:#}");
+    line_from(LEVEL_FROM, text);
+}
+
+/// `text`, on the screen from `level` `-v`s up and in the log the way the screen's lines go there.
+fn line_from(level: u8, text: &str) {
+    let shown = VERBOSITY.load(Ordering::Relaxed) >= level;
+    if shown {
+        let choice = *COLOR
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut out = AutoStream::new(std::io::stdout(), choice);
+        let style = crate::render::VERBOSE;
+        let _ = writeln!(out, "{style}{text}{style:#}");
+    }
+    if shown || log::logs_level(level) {
+        log::record(text);
+    }
+}
+
+/// `<host> <text>` for a command or an upload an action sends over a link, from `-vvv`.
+pub(crate) fn action_line(host: &str, text: &str) {
+    line_from(LOCAL_LEVEL, &format!("<{host}> {text}"));
+}
+
+/// `<host> ESTABLISH LOCAL CONNECTION FOR USER: <user>` and `<host> EXEC <the command line>` for
+/// the command a local link starts. The password is never in it: it travels on stdin.
+pub(super) fn local_link(host: &str, command: &tokio::process::Command) {
+    let wanted = VERBOSITY.load(Ordering::Relaxed) >= LOCAL_LEVEL || log::logs_level(LOCAL_LEVEL);
+    if wanted {
+        let user = ["LOGNAME", "USER", "LNAME", "USERNAME"]
+            .iter()
+            .find_map(|key| std::env::var(key).ok())
+            .unwrap_or_else(|| "None".to_string());
+        line_from(
+            LOCAL_LEVEL,
+            &format!("<{host}> ESTABLISH LOCAL CONNECTION FOR USER: {user}"),
+        );
+        let command = command.as_std();
+        let words = std::iter::once(command.get_program())
+            .chain(command.get_args())
+            .map(|word| word.to_string_lossy().into_owned());
+        line_from(LOCAL_LEVEL, &local_exec_line(host, words));
+    }
+}
+
+fn local_exec_line(host: &str, words: impl Iterator<Item = String>) -> String {
+    let words: Vec<String> = words.map(|word| shell_quote(&word)).collect();
+    format!("<{host}> EXEC {}", words.join(" "))
 }
 
 /// `<address> ESTABLISH SSH CONNECTION FOR USER: <user>`, `None` when no user is set. A
@@ -223,7 +270,18 @@ pub(crate) fn bytes_repr(bytes: &[u8]) -> String {
 mod tests {
     use rstest::rstest;
 
-    use super::{bytes_repr, established_line, exec_list_line, run_list_line, shell_quote};
+    use super::{
+        bytes_repr, established_line, exec_list_line, local_exec_line, run_list_line, shell_quote,
+    };
+
+    #[test]
+    fn a_local_link_s_line_reads_as_a_shell_command() {
+        let argv = ["sudo", "-H", "-S", "-n", "/bin/sh", "-c", "exec '/a b'"].map(String::from);
+        assert_eq!(
+            local_exec_line("web1", argv.into_iter()),
+            r#"<web1> EXEC sudo -H -S -n /bin/sh -c 'exec '"'"'/a b'"'"''"#
+        );
+    }
 
     #[test]
     fn a_podman_line_writes_bytes() {

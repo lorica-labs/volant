@@ -6323,7 +6323,7 @@ fn an_own_cache_plugin_keeps_the_facts() {
 /// A stdout callback the controller's ansible-core finds beside the playbook is refused with
 /// its file named.
 #[test]
-fn an_own_stdout_callback_is_refused_with_its_file() {
+fn an_own_stdout_callback_prints_the_run() {
     let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
         return;
     };
@@ -6332,7 +6332,7 @@ fn an_own_stdout_callback_is_refused_with_its_file() {
     std::fs::create_dir_all(&plugins).expect("the plugin directory");
     std::fs::write(
         plugins.join("mine.py"),
-        "from ansible.plugins.callback import CallbackBase\n\nclass CallbackModule(CallbackBase):\n    CALLBACK_NAME = 'mine'\n    CALLBACK_TYPE = 'stdout'\n",
+        "from ansible.plugins.callback import CallbackBase\n\nclass CallbackModule(CallbackBase):\n    CALLBACK_NAME = 'mine'\n    CALLBACK_TYPE = 'stdout'\n\n    def v2_playbook_on_stats(self, stats):\n        print('mine heard the stats')\n",
     )
     .expect("the plugin");
     std::fs::write(
@@ -6358,12 +6358,35 @@ fn an_own_stdout_callback_is_refused_with_its_file() {
         ],
     );
     let err = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(1), "{err}");
-    assert!(
-        err.contains("[ERROR]: Could not load 'mine' callback plugin: '")
-            && err.contains("mine.py' is a callback plugin this release does not run."),
-        "{err}"
+    assert_eq!(out.status.code(), Some(0), "{err}");
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        "mine heard the stats\n"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A run with no Python callback starts no helper: no interpreter is needed for this.
+#[test]
+fn a_run_with_no_python_callback_looks_for_no_interpreter() {
+    let dir = probe_dir("no-callback");
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: localhost\n  gather_facts: false\n  tasks: []\n",
+    )
+    .expect("the play");
+    let out = volant_within_env(
+        &[
+            "playbook",
+            "-i",
+            "localhost,",
+            dir.join("play.yml").to_str().expect("a path"),
+        ],
+        std::time::Duration::from_secs(60),
+        &[("VOLANT_PYTHON", "/nonexistent/python")],
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!err.contains("callback"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

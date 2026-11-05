@@ -108,6 +108,28 @@ pub fn checkout(source: &str, version: &str, ignore_certs: bool) -> Result<Check
     Ok(Checkout { clone, collection })
 }
 
+/// The collections a checkout holds, as the reference reads the directory it left: the directory
+/// itself when it is one, else each subdirectory that is one (`_find_collections_in_subdirs`).
+pub fn collections_in(dir: &Path) -> Result<Vec<PathBuf>, Failure> {
+    let is_collection =
+        |d: &Path| d.join("galaxy.yml").is_file() || d.join("MANIFEST.json").is_file();
+    if is_collection(dir) {
+        return Ok(vec![dir.to_path_buf()]);
+    }
+    let mut found: Vec<PathBuf> = std::fs::read_dir(dir)
+        .map_err(|e| Failure::error(e.to_string()))?
+        .filter_map(|entry| Some(entry.ok()?.path()))
+        .filter(|path| is_collection(path))
+        .collect();
+    if found.is_empty() {
+        return Err(Failure::error(
+            "Failed to automatically detect the collection requirement type.",
+        ));
+    }
+    found.sort();
+    Ok(found)
+}
+
 /// Runs `argv` with the terminal's output, as the reference's `check_call` does, so `git`'s own
 /// error reaches the user; `Err` holds the exit code.
 fn run(argv: &[String], cwd: Option<&Path>) -> Result<(), i32> {

@@ -39,6 +39,7 @@ impl Renderer {
             }
         }
         self.aggregates_recap();
+        self.hear_stats(stats, custom);
     }
 
     fn recap_lines(&mut self, stats: &Stats) {

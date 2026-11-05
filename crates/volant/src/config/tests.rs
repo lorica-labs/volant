@@ -307,6 +307,12 @@ fn the_connection_keys_are_read_with_ansibles_boolean_spellings() {
     );
 }
 
+#[test]
+fn keep_remote_files_is_read_from_the_file() {
+    assert!(!cfg("", ".").keep_remote_files);
+    assert!(cfg("[defaults]\nkeep_remote_files = yes\n", ".").keep_remote_files);
+}
+
 /// `ANSIBLE_REMOTE_TMP=` used to be taken at face value, and an empty remote path makes
 /// the agent's cache directory impossible to create. The file arm already refused it.
 #[test]

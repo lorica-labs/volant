@@ -14,7 +14,7 @@ use crate::yaml::{field, to_json};
 use super::action::action_statement;
 use super::deferred::{Deferred, boolean_or_template, seconds_or_template};
 use super::fields::{
-    condition, conditions, debugger, mapping, module_args, names, tags, throttle, timeout,
+    condition, conditions, debugger, mapping, names, tags, task_args, throttle, timeout,
 };
 use super::keywords::{META, connect_keywords, delegation, escalation, flag};
 use super::load::task_list;
@@ -278,7 +278,7 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
         // The import and include statements are read here for the same reason `meta` is: the
         // compiler needs what they name, or the coordinator does once the play is running, and
         // nothing else ever will, because no step is left for a host.
-        module_args(&module, value).with_context(|| format!("task '{label}'"))?
+        task_args(&module, value).with_context(|| format!("task '{label}'"))?
     } else {
         Map::new()
     };

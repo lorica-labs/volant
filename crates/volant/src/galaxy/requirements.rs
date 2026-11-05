@@ -405,7 +405,7 @@ pub fn is_collection_name(name: &str) -> bool {
     name.matches('.').count() == 1 && name.split('.').all(identifier)
 }
 
-fn is_git(s: &str) -> bool {
+pub(super) fn is_git(s: &str) -> bool {
     s.starts_with("git+") || s.starts_with("git@")
 }
 
@@ -465,7 +465,7 @@ fn text(value: &Value) -> String {
 }
 
 /// The name of the Python type a YAML value loads as.
-fn python_type(value: &Value) -> &'static str {
+pub(super) fn python_type(value: &Value) -> &'static str {
     match value {
         Value::Null => "NoneType",
         Value::Bool(_) => "bool",

@@ -29,12 +29,12 @@ use super::prepare::{
 use super::report::report_task;
 use super::run::{
     Attempt, DISCOVERED_INTERPRETER, Fallback, Found, ItemRetry, Polled, Relinker, Replayed,
-    RetryLine, announce_retry, break_after, broke_before, discovers_interpreter, fact_targets,
-    failed_task_value, fallback, finish, item_by_item, item_link, judge_attempt, legacy_discovery,
-    link_for, local_timed_out, notified_handlers, pause_lines, poll_job, polls, python_for,
-    record_facts, record_inventory_results, record_local_facts, record_registered, refusal,
-    release_at_barrier, replayed, requested_interpreter, retry_plans, run_agent_batch, run_local,
-    running_host_vars, shown, silent_discovery, stamp_discovery, step_task, step_tasks,
+    RetryLine, announce_retry, break_after, broke_before, discovers_interpreter, discovery_due,
+    fact_targets, failed_task_value, fallback, finish, item_by_item, item_link, judge_attempt,
+    legacy_discovery, link_for, local_timed_out, notified_handlers, pause_lines, poll_job, polls,
+    python_for, record_facts, record_inventory_results, record_local_facts, record_registered,
+    refusal, release_at_barrier, replayed, requested_interpreter, retry_plans, run_agent_batch,
+    run_local, running_host_vars, shown, silent_discovery, stamp_discovery, step_task, step_tasks,
     take_warnings, task_fails,
 };
 use super::{LinkKey, RunOptions};
@@ -631,7 +631,7 @@ pub(super) async fn drive_host(
                             .await;
                     }
                 }
-                if verbosity >= 2 && !skipped_flush && !masked_out {
+                if !skipped_flush && !masked_out {
                     announce_notified(&tx, &name, pos, &c, &notified).await;
                 }
                 driver.task_done(pos).await;
@@ -1502,6 +1502,9 @@ pub(super) async fn drive_host(
                     if refusal(task).is_none() && discovers_interpreter(&task.module, target_vars) {
                         let own = fallback(target_vars);
                         discovering.insert(pos, (!silent_discovery(target_vars), own));
+                        if discovery_due(&store, &target) {
+                            driver.discovering(pos).await;
+                        }
                     }
                     Seen::mark(&mut seen, pos, task);
                     driver.hold(pos);
@@ -2221,18 +2224,7 @@ pub(super) async fn drive_host(
                 let ran_on = batch_delegate.as_deref().unwrap_or(&name);
                 let at = found.discovered(*index);
                 let due = match (discovering.get(index), &at) {
-                    (Some(&(warns, _)), Some(path))
-                        if {
-                            let vars = store.lock().expect("vars lock");
-                            // The reference gives the implicit `localhost` the controller's own
-                            // Python as its interpreter, so nothing is discovered there.
-                            !vars.is_implicit_localhost(ran_on)
-                                && !vars.all_gathered(
-                                    std::slice::from_ref(&ran_on.to_string()),
-                                    DISCOVERED_INTERPRETER,
-                                )
-                        } =>
-                    {
+                    (Some(&(warns, _)), Some(path)) if discovery_due(&store, ran_on) => {
                         Some((warns, path))
                     }
                     _ => None,

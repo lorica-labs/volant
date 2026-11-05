@@ -1,5 +1,5 @@
 ---
-sourceHash: fc6065391248
+sourceHash: 798067bf652a
 title: 连接与 become
 description: Volant 如何连接到主机、它读取的主机变量和 ansible.cfg 设置，以及 become 如何通过 sudo 和 su 工作。
 ---
@@ -45,6 +45,8 @@ Volant 连接到受管主机，在那里放置一个小型静态 agent（运行�
 什么都解析不到的名字会让 task 失败，并给出 `the connection plugin '<name>' was not found`，与 Ansible 一样。这包括被转到未安装 collection 的短名字，例如没有 community.docker 时的 `docker`（在 ansible-core 为它打印的警告之后），以及 `ansible.builtin.paramiko`，ansible-core 2.19.12 不以这个名字提供它。不论这个值是主机自己的连接、`delegate_to` 目标的连接，还是运行 `run_once` task 的那台主机的连接，都是如此。
 
 密码来自 `-k`、`--connection-password-file` 或 `ansible_password` 变量。Volant 通过 `SSH_ASKPASS` 和一个运行结束时会删除的私有临时文件把它交给 `ssh`，这需要 OpenSSH 8.4 或更高版本。随后 `ssh` 以 `BatchMode=no` 和 `NumberOfPasswordPrompts=1` 运行，所以一次错误的回答就会结束这次尝试。密码绝不会出现在命令行、程序的环境或输出中，`-vvvv` 也不例外。用 vault 加密的 `ansible_password` 与任何 vault 加密的变量一样工作。没有密码时，`ssh` 以 `BatchMode=yes` 运行，从不提示，所以需要密码或口令的主机会被报告为不可达，而不是让运行卡住。
+
+使用 `-vvv` 时，`local` 主机的链路会打印 `ESTABLISH LOCAL CONNECTION FOR USER: <user>` 和 `EXEC <the command line>`。这两行给出 Volant 启动 agent 的命令，每条链路一次；即使不显示，`log_verbosity` 也会把它们写入日志。
 
 ## Docker 容器
 
@@ -287,6 +289,8 @@ agent 如何到达取决于目标。通过 `ssh`，以及在有 shell 的容器�
 ```sh
 ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-* ~/.ansible/tmp/volant-blobs-*'
 ```
+
+设置 `ANSIBLE_KEEP_REMOTE_FILES=1`，或在 `ansible.cfg` 中设置 `keep_remote_files` 后，没有自己插件的模块会按 ansible-core 的方式运行。ansible-core 构建 AnsiballZ wrapper，Volant 把它复制到 `<remote_tmp>/ansible-tmp-*/AnsiballZ_<module>.py` 并保留在那里，它的 `explode` 和 `execute` 命令都可以使用。这要求主机上有 Python，每个这样的任务都比通过 agent 运行更慢。`-vvv` 会打印每个 `PUT` 和 `EXEC`。`copy`、`template` 以及 Volant 有自己版本的其他插件不会留下 wrapper。
 
 上传、损坏缓存的修复和权限检查见[主机上的 agent](/zh-cn/docs/internals/agent/#agent-缓存)。
 

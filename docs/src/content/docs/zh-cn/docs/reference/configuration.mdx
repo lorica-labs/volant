@@ -127,7 +127,7 @@ Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第
 </Option>
 
 <Option name="stdout_callback" id="defaults-stdout-callback" default="default" env="ANSIBLE_STDOUT_CALLBACK">
-  打印运行过程的 callback。`default` 打印横幅、每个结果一行以及汇总。`minimal` 像 ad hoc 命令一样打印每个结果：命令是 `host | CHANGED | rc=0 >>` 加输出，其他是 `host | SUCCESS => ` 加 JSON 结果，没有横幅、没有汇总，也没有每个循环项的行。`oneline` 把同样的结果各打印在一行上；ansible-core 2.19.12 把它标为弃用，Volant 会在标准错误上打印一次它的警告。`tree` 在标准输出上什么都不打印。带 `ansible.builtin.` 的名字也可以用。`yaml` 会以退出码 1 和 community.general 自 12.0.0 起打印的错误停止运行，那个版本移除了这个插件：请改用 `callback_result_format = yaml`。`json` 和 `ansible.posix.json` 在运行期间什么都不打印，结束时把整次运行打印成一个 JSON 文档：每个 play 和 task 带上时间、id 和路径，每台主机的结果按 task 返回的样子并带上 `action`，按主机的汇总，以及 `show_custom_stats` 打开时 `set_stats` 的数据。ASCII 以外的字符写成 `\uXXXX`。其他任何名字，例如 `community.general.unixy`，都会在第一个 play 之前以 `[ERROR]: Could not load '<name>' callback plugin.` 和退出码 1 停止运行。
+  打印运行过程的 callback。`default` 打印横幅、每个结果一行以及汇总。`minimal` 像 ad hoc 命令一样打印每个结果：命令是 `host | CHANGED | rc=0 >>` 加输出，其他是 `host | SUCCESS => ` 加 JSON 结果，没有横幅、没有汇总，也没有每个循环项的行。`oneline` 把同样的结果各打印在一行上；ansible-core 2.19.12 把它标为弃用，Volant 会在标准错误上打印一次它的警告。`tree` 在标准输出上什么都不打印。带 `ansible.builtin.` 的名字也可以用。`yaml` 会以退出码 1 和 community.general 自 12.0.0 起打印的错误停止运行，那个版本移除了这个插件：请改用 `callback_result_format = yaml`。`json` 和 `ansible.posix.json` 在运行期间什么都不打印，结束时把整次运行打印成一个 JSON 文档：每个 play 和 task 带上时间、id 和路径，每台主机的结果按 task 返回的样子并带上 `action`，按主机的汇总，以及 `show_custom_stats` 打开时 `set_stats` 的数据。ASCII 以外的字符写成 `\uXXXX`。其他任何名字，例如 `community.general.unixy`，都通过控制端的 ansible-core 加载；找不到时在第一个 play 之前以 `[ERROR]: Could not load '<name>' callback plugin.` 和退出码 1 停止运行。
 </Option>
 
 <Option name="callback_result_format" id="defaults-callback-result-format" default="json" env="ANSIBLE_CALLBACK_RESULT_FORMAT">
@@ -143,11 +143,11 @@ Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第
 </Option>
 
 <Option name="callbacks_enabled" id="defaults-callbacks-enabled" env="ANSIBLE_CALLBACKS_ENABLED">
-  在 stdout callback 之外再运行的 callback，以逗号分隔。Volant 运行 `junit`，它为每个 playbook 在 `JUNIT_OUTPUT_DIR`（默认 `~/.ansible.log`）中写一个 JUnit XML 报告，并读取其他 `JUNIT_*` 变量；运行 `tree`，它把每台主机的最后一个结果写入 `[callback_tree] directory`（`ANSIBLE_CALLBACK_TREE_DIR`，默认 `~/.ansible/tree`）中的文件；当控制端安装了 ansible.posix 时，还运行 `ansible.posix.timer` 和 `ansible.posix.profile_tasks` 及其选项（`[callback_profile_tasks]`、`PROFILE_TASKS_*`）。其他名字都会打印 `[WARNING]: Skipping callback plugin '<name>', unable to load`，运行继续。`volant.compat.record`（用于[记录 ansible-playbook 的运行](/zh-cn/docs/reference/recording/)）会被跳过，不打印警告。
+  在 stdout callback 之外再运行的 callback，以逗号分隔。Volant 运行 `junit`，它为每个 playbook 在 `JUNIT_OUTPUT_DIR`（默认 `~/.ansible.log`）中写一个 JUnit XML 报告，并读取其他 `JUNIT_*` 变量；运行 `tree`，它把每台主机的最后一个结果写入 `[callback_tree] directory`（`ANSIBLE_CALLBACK_TREE_DIR`，默认 `~/.ansible/tree`）中的文件；当控制端安装了 ansible.posix 时，还运行 `ansible.posix.timer` 和 `ansible.posix.profile_tasks` 及其选项（`[callback_profile_tasks]`、`PROFILE_TASKS_*`）。其他名字都通过控制端的 ansible-core 加载；找不到时打印 `[WARNING]: Skipping callback plugin '<name>', unable to load`，运行继续。`volant.compat.record`（用于[记录 ansible-playbook 的运行](/zh-cn/docs/reference/recording/)）会被跳过，不打印警告。
 </Option>
 
 <Option name="callback_plugins" id="defaults-callback-plugins" env="ANSIBLE_CALLBACK_PLUGINS">
-  查找 callback 插件的其他目录，用 `:` 分隔。Volant 只加载自己的 callback；对在那里找到但不运行的 callback，会给出它的文件。
+  查找 callback 插件的其他目录，用 `:` 分隔。在那里或 playbook 旁边的 `callback_plugins/` 中找到的插件，通过控制端的 ansible-core 在单独的 Python 进程中运行。没有这类插件的运行不会为此启动 Python。
 </Option>
 
 <Option name="bin_ansible_callbacks" id="defaults-bin-ansible-callbacks" default="false" env="ANSIBLE_LOAD_CALLBACK_PLUGINS">

@@ -376,7 +376,7 @@ pub(super) fn prepare(
     // link goes to the delegate and escalates to the user the task's own host asked for.
     let escalation =
         escalation_for(task, plan, (&base, &mut items), defaults, templar)?.map(Box::new);
-    if let Some(kind) = crate::action_plugins::kind(&task.module) {
+    if let Some(kind) = crate::action_plugins::kind_of(task) {
         return Ok(Prepared::Remote(
             items,
             escalation,

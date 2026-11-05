@@ -1,89 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The probe that proves an escalation works before a link is opened over it.
+//! What a probe of an escalation says, before a remote link is opened over it.
 
-use std::process::Stdio;
-
-use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
-
-use super::super::bootstrap::{Captured, first_words};
-use super::super::defaults::{
-    ConnectError, Escalation, INCORRECT_SUDO_PASSWORD, MISSING_SUDO_PASSWORD,
-};
-use super::su::settle_form;
-use super::sudo::{SudoForm, local_argv, preamble};
-
-/// Asks `sudo` to print the agent's version as the escalated user, before the link itself is
-/// opened. A refusal is diagnosed here, from `sudo`'s own words, rather than turning up later
-/// as an agent that never answered; and because the agent has not started yet, nothing has to
-/// read a pipe the running agent also writes to.
-pub(in crate::transport) async fn check_local_escalation(
-    agent: &str,
-    escalation: &Escalation,
-) -> Result<SudoForm, ConnectError> {
-    settle_form(escalation, agent_version_ran, move |form| {
-        local_escalation_probe(agent, escalation, form)
-    })
-    .await
-    .map(|(form, _)| form)
-}
-
-/// Whether `sudo` really did start the local agent as the asked-for user: the agent's own
-/// version line, not `sudo`'s exit status alone. A `sudo` that exited zero having run something
-/// else - a wrapper, an alias, a stale cached binary - is not an escalation that worked. The line
-/// is the last one: a `become_exe` wrapper may say something of its own before `sudo` runs.
-pub(in crate::transport) fn agent_version_ran(probe: &Captured) -> bool {
-    probe.code == Some(0)
-        && probe.stdout.trim_end().lines().last().map(str::trim)
-            == Some(&*format!("volant-agent {}", env!("CARGO_PKG_VERSION")))
-}
-
-/// One `sudo ... volant-agent --version` in the given form, and what it printed.
-async fn local_escalation_probe(
-    agent: &str,
-    escalation: &Escalation,
-    form: SudoForm,
-) -> Result<Captured, ConnectError> {
-    let mut argv = local_argv(agent, Some((escalation, form)));
-    argv.push("--version".to_string());
-    let stdin = preamble(Some((escalation, form)));
-    let mut command = Command::new(&argv[0]);
-    command
-        .args(&argv[1..])
-        // The messages matched below are `sudo`'s English ones.
-        .env("LC_ALL", "C")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .stdin(if stdin.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        });
-    let mut child = command
-        .spawn()
-        .map_err(|e| ConnectError::Become(format!("starting sudo: {e}")))?;
-    if let (Some(bytes), Some(mut pipe)) = (stdin, child.stdin.take()) {
-        // A `sudo` that refuses before reading closes the pipe; its own words below say what
-        // happened, so a broken pipe here is not the error worth reporting.
-        let _ = pipe.write_all(&bytes).await;
-        drop(pipe);
-    }
-    let output = child
-        .wait_with_output()
-        .await
-        .map_err(|e| ConnectError::Become(format!("waiting for sudo: {e}")))?;
-    Ok(Captured {
-        code: output.status.code(),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
-    })
-}
+use super::super::bootstrap::first_words;
+use super::super::defaults::{ConnectError, INCORRECT_SUDO_PASSWORD, MISSING_SUDO_PASSWORD};
 
 /// Why `sudo` did not escalate, given that it demonstrably did not run the command it was
-/// handed. `ran` is that proof, and each transport owes its own: the local one asks the agent
-/// for its version, and the remote one reads one of the bootstrap's private exit codes, which
-/// nothing but the bootstrap itself can produce. Either way a `sudo` that exited zero having
-/// run something else is not an escalation that worked.
+/// handed. `ran` is that proof: one of the bootstrap's private exit codes, which nothing but the
+/// bootstrap itself can produce, so a `sudo` that exited zero having run something else is not an
+/// escalation that worked.
 ///
 /// The strings are the two `sudo` implementations' own, measured on the development machine
 /// (`sudo-rs` 0.2.13) and on the target machine (`sudo` 1.9.15p5); a host may run either, so

@@ -254,6 +254,13 @@ pub(super) fn become_for(
         && host_setting(vars, "ansible_local_become_strip_preamble")
             .and_then(super::keyword::strict_boolean)
             == Some(false);
+    let success_timeout = host_setting(vars, "ansible_local_become_success_timeout")
+        .and_then(|value| match value {
+            Value::Number(_) => value.as_u64(),
+            Value::String(text) => text.trim().parse().ok(),
+            _ => None,
+        })
+        .map(std::time::Duration::from_secs);
     Ok(Some(Escalation {
         method,
         user,
@@ -263,6 +270,7 @@ pub(super) fn become_for(
         prompt_l10n,
         chdir,
         keep_preamble,
+        success_timeout,
     }))
 }
 

@@ -1,0 +1,4 @@
+# ansible-core warns once for each group whose metadata is malformed, and still applies the group.
+args: [-i, inv.ini, groups.yml]
+needs: [ansible-core]
+stderr: true

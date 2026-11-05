@@ -1,0 +1,5 @@
+# The step after `meta: clear_facts` reads no fact it cleared, on a host alone in its batch where
+# no barrier holds it back. A gather right behind the meta keeps what it found.
+needs: [ansible-core]
+runs:
+  - args: [-i, inv.ini, clear.yml]

@@ -67,7 +67,15 @@ pub(in crate::executor) async fn reuse_or_connect<'a>(
         tokio::spawn(old.shutdown());
     }
     if !links.contains_key(key) {
-        let link = match connect(&key.transport, agents, &options.defaults, escalation).await {
+        let link = match connect(
+            &key.host,
+            &key.transport,
+            agents,
+            &options.defaults,
+            escalation,
+        )
+        .await
+        {
             Ok(link) => link,
             Err(ConnectError::Unreachable(msg)) => {
                 return Err(ConnectError::Unreachable(match stale {
@@ -337,12 +345,13 @@ pub(super) async fn check_kept<L: KeptLink>(
 /// run cannot reach and comes back as `ConnectError::Unreachable`, except a `sudo` that refused,
 /// which comes back as `ConnectError::Become` because the host itself answered.
 pub(super) async fn connect(
+    host: &str,
     transport: &Transport,
     agents: &AgentSource,
     defaults: &ConnectionDefaults,
     escalation: Option<&Escalation>,
 ) -> Result<AgentLink, ConnectError> {
-    let mut link = transport.connect(agents, escalation).await?;
+    let mut link = transport.connect_for(host, agents, escalation).await?;
     if link.ready() {
         return Ok(link);
     }

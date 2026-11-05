@@ -16,7 +16,7 @@ pub struct Callbacks {
     /// `ANSIBLE_CALLBACKS_ENABLED`, else `[defaults] callbacks_enabled`, split on commas.
     pub enabled: Vec<String>,
     /// `ANSIBLE_CALLBACK_PLUGINS`, else `[defaults] callback_plugins`: more directories to look
-    /// in. Read and kept; this engine runs only the callbacks it implements.
+    /// in. Read to tell whether the run has a Python callback at all; ansible-core reads them itself.
     pub plugin_dirs: Vec<PathBuf>,
     /// `ANSIBLE_LOAD_CALLBACK_PLUGINS`, else `[defaults] bin_ansible_callbacks`: whether the ad hoc
     /// command loads the configured callbacks.

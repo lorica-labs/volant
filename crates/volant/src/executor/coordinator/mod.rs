@@ -29,7 +29,7 @@ mod publish;
 mod types;
 
 use arrivals::{Arrivals, arrivals};
-use display::{arrived, header, header_for, report_result, switch_header};
+use display::{arrived, header, header_for, hear_section, report_result, switch_header};
 use events::{
     Held, answer, book, debug_ask, debugging, show_now, shows_a_line, step_of, streams,
     unreachable_ask, unreachable_left, verdict,
@@ -303,6 +303,7 @@ pub(super) async fn run_batch(
     // each time round. The step is cloned rather than borrowed for the same reason - the splice
     // below replaces the value the borrow would point into.
     while let Some(step) = plan.steps().steps.get(index).cloned() {
+        hear_section(play, &step, index, &plan, out);
         let mut header_shown = false;
         #[rustfmt::skip]
         macro_rules! step_header {
@@ -431,6 +432,7 @@ pub(super) async fn run_batch(
                         | Event::Retrying { .. }
                         | Event::Warning { .. }
                         | Event::Display { .. }
+                        | Event::AsyncStatus { .. }
                         | Event::UnreachableIgnored { .. }),
                     ) => {
                         let at = step_of(&event).expect("a line of a step");
@@ -786,6 +788,7 @@ pub(super) async fn run_batch(
             | Event::Retrying { .. }
             | Event::Warning { .. }
             | Event::Display { .. }
+            | Event::AsyncStatus { .. }
             | Event::UnreachableIgnored { .. }) => {
                 report_result(arrived(event, stats), stats, out);
             }

@@ -290,7 +290,9 @@ agent 如何到达取决于目标。通过 `ssh`，以及在有 shell 的容器�
 ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-* ~/.ansible/tmp/volant-blobs-*'
 ```
 
-设置 `ANSIBLE_KEEP_REMOTE_FILES=1`，或在 `ansible.cfg` 中设置 `keep_remote_files` 后，没有自己插件的模块会按 ansible-core 的方式运行。ansible-core 构建 AnsiballZ wrapper，Volant 把它复制到 `<remote_tmp>/ansible-tmp-*/AnsiballZ_<module>.py` 并保留在那里，它的 `explode` 和 `execute` 命令都可以使用。这要求主机上有 Python，每个这样的任务都比通过 agent 运行更慢。`-vvv` 会打印每个 `PUT` 和 `EXEC`。`copy`、`template` 以及 Volant 有自己版本的其他插件不会留下 wrapper。
+设置 `ANSIBLE_KEEP_REMOTE_FILES=1`，或在 `ansible.cfg` 中设置 `keep_remote_files` 后，没有自己插件的模块会按 ansible-core 的方式运行。ansible-core 构建 AnsiballZ wrapper，Volant 把它复制到 `<remote_tmp>/ansible-tmp-*/AnsiballZ_<module>.py` 并保留在那里，它的 `explode` 和 `execute` 命令都可以使用。这要求主机上有 Python，每个这样的任务都比通过 agent 运行更慢。`-vvv` 会打印每个 `PUT` 和 `EXEC`。`copy`、`template` 以及 Volant 有自己版本的其他插件不会留下 wrapper，提权到 `root` 以外用户的任务仍由 agent 运行。
+
+在主机上设置 `ansible_pipelining: false` 对该主机有同样的效果，只是 ansible-core 会在每个任务结束后删除 wrapper 及其目录。不设置这个变量时仍使用 agent，尽管 ansible-core 自身的默认值是不使用 pipelining。只来自 `ansible.cfg` 或 `ANSIBLE_PIPELINING` 的值同样继续使用 agent。
 
 上传、损坏缓存的修复和权限检查见[主机上的 agent](/zh-cn/docs/internals/agent/#agent-缓存)。
 

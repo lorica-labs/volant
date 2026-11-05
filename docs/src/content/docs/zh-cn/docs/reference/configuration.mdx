@@ -191,7 +191,7 @@ Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第
 </Option>
 
 <Option name="fact_caching" id="defaults-fact-caching" default="memory" env="ANSIBLE_CACHE_PLUGIN">
-  `memory` 在本次运行期间保留 facts，`jsonfile` 在多次运行之间保留。见 [facts 缓存](/zh-cn/docs/hosts/inventories/#facts-缓存)。
+  `memory` 在本次运行期间保留 facts，`jsonfile` 在多次运行之间保留，其他任何名字都是 Python 插件。见 [facts 缓存](/zh-cn/docs/hosts/inventories/#facts-缓存)。
 </Option>
 
 <Option name="fact_caching_connection" id="defaults-fact-caching-connection" env="ANSIBLE_CACHE_PLUGIN_CONNECTION">

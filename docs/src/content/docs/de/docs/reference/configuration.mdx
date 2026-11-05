@@ -191,7 +191,7 @@ Eine Datei, die existiert, sich aber nicht lesen lässt, wird übersprungen, und
 </Option>
 
 <Option name="fact_caching" id="defaults-fact-caching" default="memory" env="ANSIBLE_CACHE_PLUGIN">
-  `memory` hält Facts für den Lauf, `jsonfile` hält sie zwischen Läufen. Siehe [Der Fact-Cache](/de/docs/hosts/inventories/#der-fact-cache).
+  `memory` hält Facts für den Lauf, `jsonfile` hält sie zwischen Läufen, und jeder andere Name ist ein Python-Plugin. Siehe [Der Fact-Cache](/de/docs/hosts/inventories/#der-fact-cache).
 </Option>
 
 <Option name="fact_caching_connection" id="defaults-fact-caching-connection" env="ANSIBLE_CACHE_PLUGIN_CONNECTION">

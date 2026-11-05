@@ -156,14 +156,19 @@ impl Driver<'_> {
 
     /// Tells the coordinator what the `meta` action at `index` asks of the batch.
     pub(super) async fn meta(&self, index: usize, effect: MetaEffect) {
+        let (done, carried_out) = tokio::sync::oneshot::channel();
         let _ = self
             .tx
             .send(Event::Meta {
                 host: self.name.to_string(),
                 index,
                 effect,
+                done,
             })
             .await;
+        // A host alone in its batch has no barrier to hold it: its next step would read the facts
+        // a `clear_facts` is still on its way to clear, and a gather behind it could be cleared.
+        let _ = carried_out.await;
     }
 
     /// The line of a `meta` whose condition did not hold, with the words the reference gives it

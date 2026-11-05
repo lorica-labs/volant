@@ -204,6 +204,8 @@ pub(in crate::executor) enum Event {
         host: String,
         index: usize,
         effect: MetaEffect,
+        /// Dropped once the effect is carried out, which is what the driver waits for.
+        done: tokio::sync::oneshot::Sender<()>,
     },
     /// This host reached step `index` and has no result to show for it. It is the one event
     /// that prints a header of its own every time: measured on ansible-core 2.19.12, a `meta`

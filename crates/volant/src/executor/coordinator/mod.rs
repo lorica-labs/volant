@@ -524,6 +524,7 @@ pub(super) async fn run_batch(
                         host,
                         index: at,
                         effect,
+                        done: _done,
                     }) => {
                         let warned = apply_meta(
                             effect,
@@ -730,6 +731,7 @@ pub(super) async fn run_batch(
                 host,
                 index: at,
                 effect,
+                done: _done,
             } => {
                 let warned = apply_meta(
                     effect,

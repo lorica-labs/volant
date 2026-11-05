@@ -190,7 +190,7 @@ A file that exists but cannot be read is skipped, and the run continues with the
 </Option>
 
 <Option name="fact_caching" id="defaults-fact-caching" default="memory" env="ANSIBLE_CACHE_PLUGIN">
-  `memory` keeps facts for the run, `jsonfile` keeps them between runs. See [The fact cache](/docs/hosts/inventories/#the-fact-cache).
+  `memory` keeps facts for the run, `jsonfile` keeps them between runs, and any other name is a Python plugin. See [The fact cache](/docs/hosts/inventories/#the-fact-cache).
 </Option>
 
 <Option name="fact_caching_connection" id="defaults-fact-caching-connection" env="ANSIBLE_CACHE_PLUGIN_CONNECTION">

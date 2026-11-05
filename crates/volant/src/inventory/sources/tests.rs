@@ -6,7 +6,7 @@ fn quiet_cx(config: &PluginConfig) -> ParseCx<'_> {
     ParseCx::new(config, &|| unreachable!("no helper is started"))
 }
 
-/// Only a collection plugin starts the helper; the other YAML files are read without it.
+/// Only a plugin Volant does not have starts the helper; the other YAML files are read without it.
 #[rstest]
 #[case::builtin(
     "plugin: ansible.builtin.constructed
@@ -21,14 +21,14 @@ fn quiet_cx(config: &PluginConfig) -> ParseCx<'_> {
 #[case::unknown_short_name(
     "plugin: nothing
 ",
-    0
+    1
 )]
 #[case::collection(
     "plugin: community.general.nmap
 ",
     1
 )]
-fn the_helper_starts_only_for_a_collection_plugin(#[case] body: &str, #[case] starts: usize) {
+fn the_helper_starts_only_for_a_plugin_volant_lacks(#[case] body: &str, #[case] starts: usize) {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("inv.yml"), body).unwrap();
     let count = std::sync::atomic::AtomicUsize::new(0);

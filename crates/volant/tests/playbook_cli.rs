@@ -6267,35 +6267,56 @@ fn library_module(dir: &Path, name: &str, field: &str) {
     .expect("the module");
 }
 
-/// A cache plugin of the playbook's own, in `cache_plugins/`, is refused before the run with
-/// its file named.
+/// A cache plugin of the playbook's own, in `cache_plugins/`, keeps facts from one run to the next.
 #[test]
-fn an_own_cache_plugin_is_refused_with_its_file() {
+fn an_own_cache_plugin_keeps_the_facts() {
+    let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
+        return;
+    };
     let dir = probe_dir("own-cache-plugin");
     std::fs::create_dir_all(dir.join("cache_plugins")).expect("the plugin directory");
-    std::fs::write(dir.join("cache_plugins").join("mine.py"), "").expect("the plugin");
     std::fs::write(
-        dir.join("play.yml"),
-        "- hosts: localhost\n  gather_facts: false\n  tasks: []\n",
+        dir.join("cache_plugins").join("mine.py"),
+        "import json\nimport os\n\nfrom ansible.plugins.cache import BaseCacheModule\n\n\nclass CacheModule(BaseCacheModule):\n    def get(self, key):\n        try:\n            with open(key + '.json') as stored:\n                return json.load(stored)\n        except FileNotFoundError:\n            raise KeyError(key)\n\n    def set(self, key, value):\n        with open(key + '.json', 'w') as stored:\n            json.dump(value, stored)\n\n    def keys(self):\n        return []\n\n    def contains(self, key):\n        return os.path.exists(key + '.json')\n\n    def delete(self, key):\n        if self.contains(key):\n            os.remove(key + '.json')\n\n    def flush(self):\n        pass\n\n    def copy(self):\n        return {}\n",
+    )
+    .expect("the plugin");
+    std::fs::write(
+        dir.join("write.yml"),
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - set_fact: {foo: bar, cacheable: true}\n",
     )
     .expect("the play");
-    let out = volant_within_full(
-        &["playbook", "-i", "localhost,", "play.yml"],
-        std::time::Duration::from_secs(60),
-        None,
-        None,
-        Some(&dir),
-        None,
-        &[("ANSIBLE_CACHE_PLUGIN", "mine")],
-    );
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(4), "{err}");
-    // The directory as the run sees it: macOS names its temporary directory under `/private`.
-    assert!(
-        err.contains("fact cache plugin 'mine' (from 'env: ANSIBLE_CACHE_PLUGIN') at '/")
-            && err.contains("/cache_plugins/mine.py' is not supported yet"),
-        "{err}"
-    );
+    std::fs::write(
+        dir.join("read.yml"),
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - debug: {msg: 'kept {{ ansible_facts.foo }}'}\n",
+    )
+    .expect("the play");
+    for (play, flag, wanted) in [
+        ("write.yml", None, None),
+        ("read.yml", None, Some("kept bar")),
+        (
+            "read.yml",
+            Some("--flush-cache"),
+            Some("has no attribute 'foo'"),
+        ),
+    ] {
+        let mut args = vec!["playbook", "-i", "localhost,", play];
+        args.extend(flag);
+        let out = volant_within_full(
+            &args,
+            std::time::Duration::from_secs(60),
+            None,
+            None,
+            Some(&dir),
+            None,
+            &[("ANSIBLE_CACHE_PLUGIN", "mine"), ("VOLANT_PYTHON", &python)],
+        );
+        let shown = String::from_utf8_lossy(&out.stdout);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            wanted.is_none_or(|text| shown.contains(text) || err.contains(text)),
+            "{shown}{err}"
+        );
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 

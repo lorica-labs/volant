@@ -65,6 +65,10 @@ Exactement une des options `--list`, `--host` et `--graph` est requise.
   Avec `--list`, ne garde que les hôtes qui correspondent au motif. Les groupes restent, avec leurs enfants. Un motif qui ne correspond à rien avertit et affiche un inventaire sans hôte.
 </Option>
 
+<Option name="--playbook-dir" arg="BASEDIR">
+  L'endroit où un playbook se serait trouvé : les plugins d'inventaire et de cache des répertoires de plugins à côté de lui se chargent. `ANSIBLE_PLAYBOOK_DIR` le définit aussi.
+</Option>
+
 <Option name="-e, --extra-vars" arg="VARS">
   Variables supplémentaires, ajoutées à chaque hôte et prioritaires sur toutes les autres couches.
 </Option>

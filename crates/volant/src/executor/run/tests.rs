@@ -5290,7 +5290,7 @@ async fn reconnecting_drops_the_host_s_links_and_no_other() {
     let mut links = HashMap::new();
     let mut checked = HashMap::new();
     for k in [key("h1", Some("root")), key("h2", None)] {
-        let link = connect(&Transport::Local, &source, &defaults, None)
+        let link = connect("localhost", &Transport::Local, &source, &defaults, None)
             .await
             .expect("a real agent");
         checked.insert(k.clone(), 0);
@@ -5298,7 +5298,7 @@ async fn reconnecting_drops_the_host_s_links_and_no_other() {
     }
     let mine = key("h1", None);
     checked.insert(mine.clone(), 0);
-    let mut held = connect(&Transport::Local, &source, &defaults, None)
+    let mut held = connect("localhost", &Transport::Local, &source, &defaults, None)
         .await
         .expect("a real agent");
     let mut relink = Relinker {
@@ -5367,7 +5367,7 @@ async fn a_link_another_driver_keeps_is_checked_again_after_a_reboot() {
         .await;
     let mut h1_links = HashMap::new();
     let mut h1_checked = HashMap::new();
-    let mut held = connect(&Transport::Local, &source, &defaults, None)
+    let mut held = connect("localhost", &Transport::Local, &source, &defaults, None)
         .await
         .expect("a real agent");
     Relinker {
@@ -5428,7 +5428,7 @@ async fn the_local_pool_hands_a_parked_agent_to_the_next_host() {
     let mut h1_links = HashMap::new();
     let mut h1_checked = HashMap::from([(plain.clone(), 0), (escalated.clone(), 0)]);
     for key in [&plain, &escalated] {
-        let link = connect(&Transport::Local, &source, &defaults, None).await;
+        let link = connect("localhost", &Transport::Local, &source, &defaults, None).await;
         h1_links.insert(key.clone(), link.expect("a real agent"));
     }
     assert!(LocalPool::shares(&plain) && !LocalPool::shares(&escalated));
@@ -5437,7 +5437,7 @@ async fn the_local_pool_hands_a_parked_agent_to_the_next_host() {
     assert_eq!(h1_checked.keys().collect::<Vec<_>>(), [&escalated]);
     assert_eq!(options.local.idle(), 1);
     // A second agent finds the pool full and is closed rather than kept.
-    let extra = connect(&Transport::Local, &source, &defaults, None).await;
+    let extra = connect("localhost", &Transport::Local, &source, &defaults, None).await;
     options.local.give(extra.expect("a real agent"));
     assert_eq!(options.local.idle(), 1);
     let to_h2 = local_key("h2", None);

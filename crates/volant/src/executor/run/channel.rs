@@ -123,9 +123,16 @@ impl Relink<AgentLink> for Relinker<'_> {
         // Stopped and reopened through the one transport, so both name the same socket.
         let transport = with_connect_timeout(&self.key.transport, connect_timeout);
         transport.stop_shared().await;
-        let fresh = connect(&transport, self.agents, self.defaults, self.escalation)
-            .await
-            .map_err(|e| e.to_string())?;
+        let host = &self.key.host;
+        let fresh = connect(
+            host,
+            &transport,
+            self.agents,
+            self.defaults,
+            self.escalation,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
         let old = std::mem::replace(link, fresh);
         tokio::spawn(old.shutdown());
         Ok(())
@@ -141,7 +148,7 @@ impl Relink<AgentLink> for Relinker<'_> {
         if let Some(kept) = self.links.remove(&key) {
             return Ok(Some(kept));
         }
-        let fresh = connect(&key.transport, self.agents, self.defaults, None)
+        let fresh = connect(&key.host, &key.transport, self.agents, self.defaults, None)
             .await
             .map_err(|e| e.to_string())?;
         self.checked.insert(key.clone(), self.reboots.of(&key.host));

@@ -10,6 +10,7 @@ use super::super::defaults::{ConnectError, Escalation};
 /// the link. The agent's stderr goes to a file in a directory the link removes with it.
 #[cfg(unix)]
 pub(in crate::transport) async fn local_su(
+    host: &str,
     agent: &str,
     escalation: &Escalation,
 ) -> Result<AgentLink, ConnectError> {
@@ -61,6 +62,7 @@ pub(in crate::transport) async fn local_su(
         ))
         .stderr(Stdio::from(slave))
         .kill_on_drop(true);
+    super::super::trace::local_link(host, &su);
     let mut child = su
         .spawn()
         .map_err(|e| ConnectError::Unreachable(format!("starting su: {e}")))?;
@@ -89,6 +91,7 @@ pub(in crate::transport) async fn local_su(
 
 #[cfg(not(unix))]
 pub(in crate::transport) async fn local_su(
+    _host: &str,
     _agent: &str,
     _escalation: &Escalation,
 ) -> Result<AgentLink, ConnectError> {

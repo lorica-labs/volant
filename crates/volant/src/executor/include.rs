@@ -264,7 +264,7 @@ pub(super) fn resolve_include(
                     let written = entry.0.get("include").cloned();
                     body.insert("include".into(), written.unwrap_or(json!(request.what)));
                     let reason = match err.downcast_ref::<crate::stats::Refusal>() {
-                        Some(refused) => refused.message.clone(),
+                        Some(refused) => load_reason(&refused.message),
                         None => load_reason(&format!("{err:#}")),
                     };
                     body.insert("reason".into(), json!(reason));

@@ -1,5 +1,5 @@
 ---
-sourceHash: 7668cce931df
+sourceHash: fc6065391248
 title: Connexions et become
 description: Comment Volant atteint un hôte, les variables d'hôte et les paramètres d'ansible.cfg qu'il lit, et comment become fonctionne avec sudo et su.
 ---
@@ -339,7 +339,7 @@ sudo -H <form> -u <user> -- volant-agent
 
 L'agent élevé est gardé jusqu'à la fin du play : un play de tâches élevées paie donc `sudo` une fois par hôte.
 
-Sur une connexion `local`, l'agent démarre derrière un shell qui affiche d'abord une ligne de succès, comme la commande d'ansible-core affiche son `BECOME-SUCCESS-<random>`. Ce qu'un wrapper `become_exe` affiche avant que `sudo` tourne n'est donc jamais lu comme la sortie de l'agent, et part sur la sortie d'erreur du contrôleur. Avec `ansible_local_become_strip_preamble: false`, il est gardé : ce que le wrapper a affiché et la ligne de succès passent devant le `stdout` et le `stderr` de chaque tâche `raw` qui s'élève par cet agent. Ces tâches ont un agent à elles.
+Sur une connexion `local`, `sudo` tourne comme le lance la connexion `local` d'ansible-core. Il n'y a pas de sonde : l'agent démarre derrière un shell qui affiche d'abord une ligne de succès, comme la commande d'ansible-core affiche son `BECOME-SUCCESS-<random>`, donc rien de ce qu'un wrapper `become_exe` affiche d'abord n'est lu comme la sortie de l'agent. Avec un mot de passe, `sudo` reçoit `-S -p "[sudo via ansible, key=<random>] password:"`, et le mot de passe part quand cette invite s'affiche sur stdout ou stderr. Sans mot de passe, il reçoit `-S -n`. `ansible_local_become_success_timeout` limite l'attente de la ligne de succès, 10 secondes par défaut. Une tâche `raw` qui s'élève par cet agent montre dans son `stderr` ce que `sudo` y a affiché après l'invite. Avec `ansible_local_become_strip_preamble: false`, elle montre tout ce que les deux flux ont dit avant le démarrage de l'agent, invite et ligne de succès comprises, et ces tâches ont un agent à elles.
 
 ### Quel réglage l'emporte
 
@@ -367,9 +367,9 @@ Il est écrit une seule fois sur l'entrée standard de `sudo`. Il n'apparaît ja
 
 ### La sonde sudo
 
-Volant demande à `sudo` quelle forme employer au lieu d'en supposer une. Il essaie d'abord `sudo -n`, et ne se rabat sur `sudo -k -S -p ''` que lorsque `sudo` lui-même rejette la demande faute d'authentification. La [fiche de décision 0004](/fr/docs/decisions/0004-become-runs-a-second-agent-under-sudo/) explique pourquoi une supposition bloquerait le lien. Sur un hôte qui a déjà servi, Volant démarre d'abord l'agent en cache sous `sudo -n` dans la même session `ssh` que ses vérifications, et ne lance la sonde que si cela échoue, comme le décrit [L'agent sur vos hôtes](/fr/docs/internals/agent/).
+Sauf sur une connexion `local`, Volant demande à `sudo` quelle forme employer au lieu d'en supposer une. Il essaie d'abord `sudo -n`, et ne se rabat sur `sudo -k -S -p ''` que lorsque `sudo` lui-même rejette la demande faute d'authentification. La [fiche de décision 0004](/fr/docs/decisions/0004-become-runs-a-second-agent-under-sudo/) explique pourquoi une supposition bloquerait le lien. Sur un hôte qui a déjà servi, Volant démarre d'abord l'agent en cache sous `sudo -n` dans la même session `ssh` que ses vérifications, et ne lance la sonde que si cela échoue, comme le décrit [L'agent sur vos hôtes](/fr/docs/internals/agent/).
 
-Quand l'élévation échoue, faute de mot de passe, avec un mauvais mot de passe ou à cause d'une règle `sudoers` qui interdit la commande, la tâche échoue et l'hôte reste joignable. Les messages sont ceux d'Ansible : `Missing sudo password` ou `Incorrect sudo password`. Une tâche qui reçoit un autre mot de passe a son propre agent, donc un mauvais mot de passe échoue même après que le bon a fonctionné, et `ignore_errors` couvre cet échec comme n'importe quel autre.
+Quand l'élévation échoue, faute de mot de passe, avec un mauvais mot de passe ou à cause d'une règle `sudoers` qui interdit la commande, la tâche échoue et l'hôte reste joignable. Les messages sont ceux d'Ansible : `Missing sudo password` ou `Incorrect sudo password`. Une tâche qui reçoit un autre mot de passe a son propre agent, donc un mauvais mot de passe échoue même après que le bon a fonctionné, et `ignore_errors` couvre cet échec comme n'importe quel autre. Sur une connexion `local`, les messages sont ceux de la connexion `local` d'ansible-core : `Premature end of stream waiting for become success`, suivi de ce que chaque flux a dit, et `Duplicate become password prompt encountered` pour un mauvais mot de passe. `Timed out waiting for become success` rend l'hôte injoignable.
 
 ### su
 

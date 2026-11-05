@@ -194,14 +194,14 @@ impl SshTarget {
             .map_err(|e| ConnectError::Unreachable(format!("{e:#}")))
     }
 
-    /// The remote twin of `check_local_escalation`: one short `ssh` that runs the bootstrap
-    /// probe as the escalated user, so the link itself only ever opens once the host has proved
-    /// it will escalate, in a form the host has proved it accepts.
+    /// One short `ssh` that runs the bootstrap probe as the escalated user, so the link itself
+    /// only ever opens once the host has proved it will escalate, in a form the host has proved
+    /// it accepts.
     ///
-    /// The probe cannot ask for the agent's version the way the local one does, because on a
-    /// host connected to for the first time the agent is not there yet - and it is that very
-    /// upload this settles the form for. It reads the probe's exit code instead, which is
-    /// proof of the same thing: only the bootstrap's own script produces one of those codes.
+    /// The probe cannot ask for the agent's version, because on a host connected to for the
+    /// first time the agent is not there yet - and it is that very upload this settles the form
+    /// for. It reads the probe's exit code instead, which is the proof: only the bootstrap's own
+    /// script produces one of those codes.
     async fn check_escalation(
         &self,
         escalation: &Escalation,

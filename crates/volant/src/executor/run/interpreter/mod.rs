@@ -236,6 +236,38 @@ pub(in crate::executor) fn discovery_warning(host: &str, interpreter: &str) -> S
     )
 }
 
+/// What `ansible_python_interpreter` holds for a step: the interpreter it names, or the failure
+/// of a template that did not render.
+pub(in crate::executor) type Asked = Result<String, TaskResult>;
+
+/// [`requested_interpreter`], with a template still in the value read as what it is: the setting
+/// has no value, and the template's failure is the task's, placed where the template was written.
+/// Run as written it would be the name of a file, not an interpreter.
+pub(in crate::executor) fn asked_interpreter(
+    vars: &HostVars,
+    templar: &crate::template::Templar,
+) -> Option<Asked> {
+    let named = requested_interpreter(vars)?;
+    if !crate::template::Templar::is_stored_template(&named) {
+        return Some(Ok(named));
+    }
+    let detail = templar.render(&named, vars).err().map_or_else(
+        || crate::template::UNDEFINED.to_string(),
+        |failure| failure.0,
+    );
+    let message = crate::executor::prepare::undefined_name(&named, detail);
+    let at = crate::template::inner_origin(&message)
+        .flatten()
+        .or_else(|| crate::template::written_at("ansible_python_interpreter", &named));
+    let mut failed = TaskResult::failed_with(format!("Task failed: {message}"));
+    failed.0.insert("changed".into(), json!(false));
+    failed.0.insert(
+        crate::render::CHAIN_KEY.into(),
+        json!([crate::render::cause(&message, at.as_ref(), None)]),
+    );
+    Some(Err(failed))
+}
+
 /// The Python interpreter a host runs a module under, or the failure its tasks report instead.
 ///
 /// `ansible_python_interpreter` is the playbook's own choice and is used exactly as written,
@@ -249,22 +281,11 @@ pub(in crate::executor) fn discovery_warning(host: &str, interpreter: &str) -> S
 /// failure at rc 127 carrying `The module interpreter '/nonexistent' was not found.` - a failure
 /// of the task, notably not an `UNREACHABLE`, and one that needs the host to produce it.
 pub(in crate::executor) fn chosen_interpreter(
-    named: Option<&str>,
+    asked: Option<&Asked>,
     reported: &[String],
 ) -> Result<String, TaskResult> {
-    match named {
-        // Only a template that failed to render is still one here: its variable has no value.
-        // Run as written it would be the name of a file, not an interpreter.
-        Some(named) if crate::template::Templar::is_stored_template(named) => {
-            let message = crate::executor::prepare::undefined_name(
-                named,
-                crate::template::UNDEFINED.to_string(),
-            );
-            let mut failed = TaskResult::failed_with(format!("Task failed: {message}"));
-            failed.0.insert("changed".into(), json!(false));
-            Err(failed)
-        }
-        Some(named) => Ok(named.to_string()),
+    match asked {
+        Some(asked) => asked.clone(),
         // Worded as what it is. The controller uploads the agent it shipped with, so an agent
         // that predates the interpreter list reports none exactly as a host with no Python does,
         // and a sentence claiming the host has no Python would send the operator looking in the
@@ -335,7 +356,7 @@ pub(super) fn sub_task(
     sub: &crate::action_plugins::Sub,
     union: Option<&Union>,
     interpreters: &[String],
-    asked: Option<&str>,
+    asked: Option<&Asked>,
 ) -> Result<Task, TaskResult> {
     if volant_protocol::modules::native(sub.module).is_some() {
         return Ok(Task {

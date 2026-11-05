@@ -1,0 +1,6 @@
+# An interpreter setting whose template reads a name with no value fails the Python task, and the
+# error block says where the template was written.
+needs: [ansible-core]
+stderr: true
+runs:
+  - args: [-i, inv.ini, undefined.yml]

@@ -1,5 +1,5 @@
 ---
-sourceHash: 798067bf652a
+sourceHash: 159c4aca9e0e
 title: Conexiones y become
 description: Cómo llega Volant a un host, las variables de host y los ajustes de ansible.cfg que lee, y cómo funciona become mediante sudo y su.
 ---
@@ -290,7 +290,9 @@ Para borrar ambos, elimina los dos directorios. No queda nada más:
 ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-* ~/.ansible/tmp/volant-blobs-*'
 ```
 
-Con `ANSIBLE_KEEP_REMOTE_FILES=1`, o `keep_remote_files` en `ansible.cfg`, un módulo sin plugin propio se ejecuta como lo ejecuta ansible-core. ansible-core construye su wrapper AnsiballZ, Volant lo copia a `<remote_tmp>/ansible-tmp-*/AnsiballZ_<module>.py` y lo deja allí, y sus comandos `explode` y `execute` funcionan. Para esto el host necesita Python, y cada una de estas tareas es más lenta que a través del agente. `-vvv` muestra cada `PUT` y `EXEC`. `copy`, `template` y los demás plugins de los que Volant tiene versión propia no dejan wrapper.
+Con `ANSIBLE_KEEP_REMOTE_FILES=1`, o `keep_remote_files` en `ansible.cfg`, un módulo sin plugin propio se ejecuta como lo ejecuta ansible-core. ansible-core construye su wrapper AnsiballZ, Volant lo copia a `<remote_tmp>/ansible-tmp-*/AnsiballZ_<module>.py` y lo deja allí, y sus comandos `explode` y `execute` funcionan. Para esto el host necesita Python, y cada una de estas tareas es más lenta que a través del agente. `-vvv` muestra cada `PUT` y `EXEC`. `copy`, `template` y los demás plugins de los que Volant tiene versión propia no dejan wrapper, y una tarea que escala a un usuario distinto de `root` sigue con el agente.
+
+`ansible_pipelining: false` en un host hace lo mismo para ese host, salvo que ansible-core elimina el wrapper y su directorio después de cada tarea. Si la variable no está definida se sigue usando el agente, aunque el valor predeterminado de ansible-core sea sin pipelining. Un valor que solo viene de `ansible.cfg` o `ANSIBLE_PIPELINING` también sigue con el agente.
 
 [El agente en tus hosts](/es/docs/internals/agent/#la-caché-del-agente) describe la subida, la reparación de una caché dañada y las comprobaciones de permisos.
 

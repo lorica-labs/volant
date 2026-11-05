@@ -1,5 +1,5 @@
 ---
-sourceHash: 798067bf652a
+sourceHash: 159c4aca9e0e
 title: Connexions et become
 description: Comment Volant atteint un hôte, les variables d'hôte et les paramètres d'ansible.cfg qu'il lit, et comment become fonctionne avec sudo et su.
 ---
@@ -290,7 +290,9 @@ Pour effacer les deux, supprimez les deux répertoires. Rien d'autre ne reste :
 ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-* ~/.ansible/tmp/volant-blobs-*'
 ```
 
-Avec `ANSIBLE_KEEP_REMOTE_FILES=1`, ou `keep_remote_files` dans `ansible.cfg`, un module sans plugin propre s'exécute comme ansible-core l'exécute. ansible-core construit son wrapper AnsiballZ, Volant le copie dans `<remote_tmp>/ansible-tmp-*/AnsiballZ_<module>.py` et l'y laisse, et ses commandes `explode` et `execute` fonctionnent. L'hôte a besoin de Python pour cela, et chacune de ces tâches est plus lente qu'à travers l'agent. `-vvv` affiche chaque `PUT` et `EXEC`. `copy`, `template` et les autres plugins dont Volant a sa propre version ne laissent pas de wrapper.
+Avec `ANSIBLE_KEEP_REMOTE_FILES=1`, ou `keep_remote_files` dans `ansible.cfg`, un module sans plugin propre s'exécute comme ansible-core l'exécute. ansible-core construit son wrapper AnsiballZ, Volant le copie dans `<remote_tmp>/ansible-tmp-*/AnsiballZ_<module>.py` et l'y laisse, et ses commandes `explode` et `execute` fonctionnent. L'hôte a besoin de Python pour cela, et chacune de ces tâches est plus lente qu'à travers l'agent. `-vvv` affiche chaque `PUT` et `EXEC`. `copy`, `template` et les autres plugins dont Volant a sa propre version ne laissent pas de wrapper, et une tâche qui escalade vers un autre utilisateur que `root` reste à l'agent.
+
+`ansible_pipelining: false` sur un hôte fait la même chose pour cet hôte, sauf qu'ansible-core supprime le wrapper et son répertoire après chaque tâche. Sans cette variable, l'agent reste en place, bien que le défaut d'ansible-core soit sans pipelining. Une valeur qui vient seulement d'`ansible.cfg` ou d'`ANSIBLE_PIPELINING` laisse aussi l'agent en place.
 
 [L'agent sur vos hôtes](/fr/docs/internals/agent/#le-cache-de-lagent) couvre le téléversement, la réparation d'un cache cassé et les contrôles de permissions.
 

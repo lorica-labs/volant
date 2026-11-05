@@ -1,5 +1,5 @@
 ---
-sourceHash: b7c715440ad5
+sourceHash: 798067bf652a
 title: Connexions et become
 description: Comment Volant atteint un hôte, les variables d'hôte et les paramètres d'ansible.cfg qu'il lit, et comment become fonctionne avec sudo et su.
 ---

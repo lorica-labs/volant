@@ -126,16 +126,26 @@ pub(super) fn add_output_lines(result: &mut TaskResult) {
 /// normalises every task's final result the same way (`maybe_raise_on_result`).
 pub(super) fn summarise_exception(result: &mut TaskResult) {
     let sent = result.0.remove("exception");
+    let traceback = sent
+        .clone()
+        .filter(|sent| !python_falsy(sent) && sent.is_string())
+        .filter(|_| crate::config::error_tracebacks());
     let failed = result.0.get("failed").is_some_and(|v| !python_falsy(v));
     // The summary itself, for the error block `settle_failure` words: its message and its causes.
     if failed && let Some(summary) = sent.as_ref().filter(|s| brief_message(s).is_some()) {
         result.0.insert(CAUSE_KEY.into(), summary.clone());
     }
     if failed || sent.is_some_and(|e| !python_falsy(&e)) {
-        result
-            .0
-            .insert("exception".into(), Value::from("(traceback unavailable)"));
+        let shown = traceback.unwrap_or_else(|| Value::from("(traceback unavailable)"));
+        result.0.insert("exception".into(), shown);
     }
+}
+
+/// The traceback a failed result holds, once `display_traceback` names errors.
+pub(super) fn shown_traceback(result: &TaskResult) -> Option<&str> {
+    let exception = result.0.get("exception")?.as_str()?;
+    (exception != "(traceback unavailable)" && crate::config::error_tracebacks())
+        .then_some(exception)
 }
 
 /// Where `summarise_exception` leaves a failed module's error summary for `settle_failure`.
@@ -256,14 +266,16 @@ pub(super) fn grouped_segment(summary: &Value) -> Option<String> {
         let text = sub.get("msg").and_then(Value::as_str).unwrap_or_default();
         let _ = write!(
             out,
-            "\n\n+--[ Sub-Event {} of {count} ]---\n| \n",
+            "{}+--[ Sub-Event {} of {count} ]---\n| \n",
+            if index == 0 { "\n\n" } else { "\n" },
             index + 1
         );
         for line in text.lines() {
             let _ = writeln!(out, "| {line}");
         }
-        out.push_str("| \n+--[ End Sub-Event ]---");
+        out.push_str("| ");
     }
+    out.push_str("\n+--[ End Sub-Event ]---");
     Some(out)
 }
 

@@ -78,6 +78,10 @@ Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第
   输出从不着色。`force_color` 优先于它。
 </Option>
 
+<Option name="display_traceback" id="defaults-display-traceback" default="never" env="ANSIBLE_DISPLAY_TRACEBACK">
+  哪些事件显示 traceback，用逗号分隔。设为 `error` 或 `always` 时，汇总错误的 Python action 插件失败（例如运行 fact 模块的 `gather_facts`）会显示它自己和其模块的 traceback，并注册为 `exception`。其他失败仍为 `(traceback unavailable)`。
+</Option>
+
 <Option name="deprecation_warnings" id="defaults-deprecation-warnings" default="true" env="ANSIBLE_DEPRECATION_WARNINGS">
   打印 `[DEPRECATION WARNING]` 通知，以及说明如何关闭它们的那一行。设为 `False` 则两者都不打印。
 </Option>

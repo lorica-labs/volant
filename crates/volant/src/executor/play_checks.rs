@@ -80,10 +80,16 @@ pub(crate) fn render_play_names<'a>(
     if let Some(strategy) = &rendered.strategy
         && crate::preflight::builtin_strategy(strategy).is_none()
     {
-        return Err(crate::stats::Refusal::at(
-            4,
-            crate::preflight::unsupported_strategy(strategy),
-        ));
+        let base = templar
+            .bridge()
+            .and_then(|bridge| crate::preflight::strategy_base(strategy, bridge));
+        let Some(base) = base else {
+            return Err(crate::stats::Refusal::at(
+                4,
+                crate::preflight::unsupported_strategy(strategy),
+            ));
+        };
+        rendered.strategy = Some(base.to_string());
     }
     Ok(std::borrow::Cow::Owned(rendered))
 }

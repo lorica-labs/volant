@@ -13,6 +13,5 @@ inventory_script               #1282
 lookup_env                     #1282
 protomatter                    #1282
 set_fact                       #1282
-strategy-external              #1335
 template                       #1355
 templating                     #1282

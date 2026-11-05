@@ -55,7 +55,7 @@ Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第
 </Option>
 
 <Option name="strategy" id="defaults-strategy" default="linear" env="ANSIBLE_STRATEGY">
-  未指定策略的 play 所用的策略：`linear`、`free`、`host_pinned` 或 `debug`，也可写在 `ansible.builtin.` 之下。其他名称会先打印 ansible-core 对 `ansible.builtin` 之外策略插件的弃用警告，然后被拒绝。
+  未指定策略的 play 所用的策略：`linear`、`free`、`host_pinned` 或 `debug`，也可写在 `ansible.builtin.` 之下。其他名称会先打印 ansible-core 对 `ansible.builtin` 之外策略插件的弃用警告。继承其中之一且不添加任何内容的插件按该策略运行，其他名称会被拒绝。
 </Option>
 
 <Option name="async_dir" id="defaults-async-dir" default="~/.ansible_async" env="ANSIBLE_ASYNC_DIR">

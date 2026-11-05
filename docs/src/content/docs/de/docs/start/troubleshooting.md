@@ -23,7 +23,7 @@ Das meiste, was dieses Release nicht ausführen kann, wird benannt, bevor Volant
 | `task 'NAME': keyword 'KEYWORD' is not supported yet on 'MODULE'` | Prüfen Sie das Keyword unter [Keywords](/de/docs/reference/keywords/). Entfernen Sie es, oder lassen Sie dieses Play vorerst unter `ansible-playbook`. |
 | `task 'NAME': argument 'ARGUMENT' is not supported yet on 'MODULE'` | Prüfen Sie das Modul unter [Module](/de/docs/reference/modules/). Für die meisten abgelehnten Argumente gibt es dort einen Workaround. |
 | `couldn't resolve module/action 'NAME'` | Prüfen Sie die Schreibweise. Stammt das Modul aus einer Collection, installieren Sie sie mit `volant runtime install --collections NAMESPACE.COLLECTION`. |
-| `strategy 'NAME' is not supported yet` | Verwenden Sie `linear`, `free`, `host_pinned` oder `debug`. |
+| `strategy 'NAME' is not supported yet` | Verwenden Sie `linear`, `free`, `host_pinned` oder `debug`. Ein Strategie-Plugin läuft nur, wenn es von einer davon ableitet und nichts hinzufügt. |
 | `become_method 'NAME' is not supported yet` | Verwenden Sie `sudo` oder `su`. Dieser Fall endet mit 2. |
 | `the role 'NAME' was not found in ...` | Die Meldung listet die durchsuchten Verzeichnisse auf. Fügen Sie das Verzeichnis der Rolle zu `roles_path` hinzu. Dieser Fall endet mit 1. |
 

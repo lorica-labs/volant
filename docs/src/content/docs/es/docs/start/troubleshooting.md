@@ -23,7 +23,7 @@ Casi todo lo que esta versión no puede ejecutar se nombra antes de que Volant s
 | `task 'NAME': keyword 'KEYWORD' is not supported yet on 'MODULE'` | Consulta la palabra clave en [Palabras clave](/es/docs/reference/keywords/). Quítala, o mantén este play bajo `ansible-playbook` por ahora. |
 | `task 'NAME': argument 'ARGUMENT' is not supported yet on 'MODULE'` | Consulta el módulo en [Módulos](/es/docs/reference/modules/). Casi todos los argumentos rechazados tienen una alternativa allí. |
 | `couldn't resolve module/action 'NAME'` | Revisa la ortografía. Si el módulo viene de una colección, instálala con `volant runtime install --collections NAMESPACE.COLLECTION`. |
-| `strategy 'NAME' is not supported yet` | Usa `linear`, `free`, `host_pinned` o `debug`. |
+| `strategy 'NAME' is not supported yet` | Usa `linear`, `free`, `host_pinned` o `debug`. Un plugin de estrategia solo se ejecuta si hereda de una de ellas y no añade nada. |
 | `become_method 'NAME' is not supported yet` | Usa `sudo` o `su`. Este termina con el código 2. |
 | `the role 'NAME' was not found in ...` | El mensaje enumera los directorios donde buscó. Añade el directorio del rol a `roles_path`. Este termina con el código 1. |
 

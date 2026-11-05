@@ -1,0 +1,37 @@
+- hosts: tasked
+  gather_facts: false
+  tasks:
+    - name: the whole value
+      ping:
+      vars:
+        ansible_python_interpreter: "{{ undefined_variable }}"
+      ignore_errors: true
+
+    - name: part of the value
+      ping:
+      vars:
+        ansible_python_interpreter: "{{ undefined_variable }}/python3"
+      ignore_errors: true
+
+    - name: through another variable
+      ping:
+      vars:
+        other: "{{ undefined_variable }}"
+        ansible_python_interpreter: "{{ other }}"
+      ignore_errors: true
+
+- hosts: played
+  gather_facts: false
+  vars:
+    ansible_python_interpreter: "{{ undefined_in_play }}"
+  tasks:
+    - name: from the play
+      ping:
+      ignore_errors: true
+
+- hosts: lined,grouped
+  gather_facts: false
+  tasks:
+    - name: from the inventory
+      ping:
+      ignore_errors: true

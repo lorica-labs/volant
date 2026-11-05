@@ -100,12 +100,12 @@ pub(super) async fn run_batch(
         lockstep: max_fail.is_some() || options.step.is_some(),
         strategy: Strategy::named(play.strategy.as_deref()),
         throttles: Mutex::default(),
-        queue: if Strategy::named(play.strategy.as_deref()).free() {
+        queue: if Strategy::named(play.strategy.as_deref()).free() || options.forks < hosts.len() {
             play_hosts.clone()
         } else {
             Vec::new()
         },
-        turn: watch::channel(0).0,
+        turns: crate::executor::driver::Turns::default(),
         play_vars: play.vars.clone(),
         vars_files: vars_files.clone(),
         all_play_hosts: all.into(),

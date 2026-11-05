@@ -2,11 +2,13 @@
 //! How a link escalates to another user.
 
 mod local_su;
+mod local_sudo;
 mod probe;
 mod su;
 mod sudo;
 
 pub(super) use local_su::local_su;
+pub(super) use local_sudo::local_sudo;
 #[cfg(test)]
 pub(super) use probe::{agent_version_ran, escalation_outcome};
 pub(super) use probe::{check_local_escalation, unreachable_message};

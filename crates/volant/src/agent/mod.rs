@@ -15,6 +15,7 @@ mod decode;
 pub(crate) mod embedded;
 mod frames;
 mod lines;
+mod preamble;
 mod source;
 
 #[cfg(test)]
@@ -77,6 +78,8 @@ pub struct AgentLink {
     trailing: Arc<Mutex<Vec<u8>>>,
     /// Whether [`AgentLink::ended`] found the process behind the link gone.
     died: bool,
+    /// What a local `sudo` said before the agent started, kept for the `raw` tasks.
+    preamble: Option<preamble::Preamble>,
 }
 
 impl AgentLink {
@@ -119,6 +122,7 @@ impl AgentLink {
             ready: false,
             trailing,
             died: false,
+            preamble: None,
         };
         (link, reader)
     }
@@ -309,6 +313,7 @@ impl AgentLink {
         if let ToAgent::RunBatch { id, tasks } = msg {
             self.batch = Some((*id, vec![false; tasks.len()]));
         }
+        self.note_raw(msg);
         self.send_bytes(&serde_json::to_vec(msg)?).await
     }
 
@@ -353,8 +358,9 @@ impl AgentLink {
                         *id == batch && answered.get(index) == Some(&false)
                     })
                 };
-                let answer = decode::decode(&payload, &waits)?;
+                let mut answer = decode::decode(&payload, &waits)?;
                 self.note(&answer);
+                self.with_preamble(&mut answer);
                 Ok(Some(answer))
             }
             Some(Err(e)) => Err(e),

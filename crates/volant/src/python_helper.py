@@ -549,10 +549,11 @@ def version_of(directory):
 
 def collection_of(name):
     """The `namespace.collection` a dotted module name lives in, or None for a shorter name and
-    for `ansible.legacy`, which is no collection to install: it names what the module paths and
-    the `library/` directories hold, then ansible-core's own."""
+    for `ansible.legacy` and `ansible.builtin`, which are no collections to install: the first
+    names what the module paths and the `library/` directories hold, then ansible-core's own, and
+    the second ansible-core's own and what its `ansible_builtin_runtime.yml` routes elsewhere."""
     parts = name.split(".")
-    if len(parts) < 3 or parts[:2] == ["ansible", "legacy"]:
+    if len(parts) < 3 or parts[0] == "ansible" and parts[1] in ("legacy", "builtin"):
         return None
     return ".".join(parts[:2])
 

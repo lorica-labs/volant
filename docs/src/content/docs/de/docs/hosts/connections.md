@@ -1,5 +1,5 @@
 ---
-sourceHash: 8baaf4b329f9
+sourceHash: 7668cce931df
 title: Verbindungen und become
 description: Wie Volant einen Host erreicht, welche Hostvariablen und ansible.cfg-Einstellungen es liest und wie become über sudo und su funktioniert.
 ---
@@ -338,6 +338,8 @@ sudo -H <form> -u <user> -- volant-agent
 `<form>` ist `-n` oder `-k -S -p ''`, je nach einer Probe, die weiter unten beschrieben wird. Volant fügt `-H` nur hinzu, wenn kein `become_flags` gesetzt ist: Eine Flag-Liste ersetzt es. Tasks ohne Rechteausweitung nutzen weiter den unprivilegierten Agent. Der Agent selbst weiß nichts von der Rechteausweitung. [Entscheidungsdokument 0004](/de/docs/decisions/0004-become-runs-a-second-agent-under-sudo/) erklärt, warum.
 
 Der Agent mit erweiterten Rechten bleibt bis zum Ende des Plays bestehen, sodass ein Play mit solchen Tasks `sudo` pro Host nur einmal bezahlt.
+
+Über eine `local`-Verbindung startet der Agent hinter einer Shell, die zuerst eine Erfolgszeile ausgibt, so wie der Befehl von ansible-core sein `BECOME-SUCCESS-<random>` ausgibt. Was ein `become_exe`-Wrapper ausgibt, bevor `sudo` läuft, wird deshalb nie als Ausgabe des Agents gelesen und landet auf der Standardfehlerausgabe des Controllers. Mit `ansible_local_become_strip_preamble: false` bleibt es stattdessen erhalten: was der Wrapper ausgab und die Erfolgszeile stehen vor `stdout` und `stderr` jedes `raw`-Tasks, der über diesen Agent seine Rechte erweitert. Solche Tasks bekommen einen eigenen Agent.
 
 ### Welche Einstellung gewinnt
 

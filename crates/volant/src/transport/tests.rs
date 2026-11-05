@@ -47,6 +47,7 @@ fn escalation(password: Option<&str>) -> Escalation {
         flags: None,
         prompt_l10n: Vec::new(),
         chdir: None,
+        keep_preamble: false,
     }
 }
 
@@ -159,6 +160,7 @@ fn become_exe_and_become_flags_shape_the_sudo_words(#[case] form: SudoForm, #[ca
         flags: Some(vec!["-H".into(), "-S".into(), "-n".into()]),
         prompt_l10n: Vec::new(),
         chdir: None,
+        keep_preamble: false,
         ..escalation(Some("pw"))
     };
     assert_eq!(sudo_prefix(Some((&e, form))), want);
@@ -193,6 +195,7 @@ fn the_su_command_is_the_references_with_a_raw_terminal() {
         flags: Some(vec!["-".into()]),
         prompt_l10n: Vec::new(),
         chdir: None,
+        keep_preamble: false,
         ..e
     };
     assert!(
@@ -672,6 +675,7 @@ fn an_escalated_bootstrap_command_is_expanded_by_a_shell_running_as_that_user() 
     // `sudo_chdir` is where the inner shell starts.
     let moved = Escalation {
         chdir: Some("/srv".into()),
+        keep_preamble: false,
         ..escalation(None)
     };
     assert_eq!(

@@ -69,7 +69,7 @@ blob 以原始字节传输，在压缩后更短时使用 deflate 压缩，agent 
 
 在第一次连接之前，Volant 会询问控制节点的 ansible-core，每个带点的名称是什么。ansible-core 在它所配置的 collection 路径中查找，例如 `ANSIBLE_COLLECTIONS_PATH`，然后是托管运行时的 `collections/` 目录，`volant runtime install --collections` 会把 collection 放在那里。Volant 在运行期间不安装任何东西，也不会为了回答而去获取任何东西。
 
-`ansible.builtin` 和 `ansible.legacy` 之外的名称会得到五种回答之一：
+不属于 ansible-core 自身模块的名称会得到五种回答之一。ansible-core 的 `ansible_builtin_runtime.yml` 转发到某个 collection 的 `ansible.builtin.` 名称也在其中：
 
 | ansible-core 找到什么 | Volant 怎么做 |
 |---|---|
@@ -92,7 +92,7 @@ task 'Forward': couldn't resolve module/action 'ns.coll.mod'. This often indicat
 task 'Forward': module 'ns.coll.mod' cannot run: <reason>
 ```
 
-只有 collection 本身缺失时才会出现安装提示。已安装的 collection 中缺少某个模块时，只会得到第一句。`ansible.builtin.nosuch` 也只会得到第一句，因为没有任何 collection 能提供 ansible-core 所拥有的命名空间里的名称。控制节点上没有 ansible-core 时，`ansible.builtin` 之外的名称会被拒绝，同样是第一句，外加无法查找的原因。
+只有 collection 本身缺失时才会出现安装提示。已安装的 collection 中缺少某个模块时，只会得到第一句。`ansible.builtin.nosuch` 也只会得到第一句：这类名称由 ansible-core 的路由决定，没有可安装的 collection。控制节点上没有 ansible-core 时，不属于 ansible-core 自身模块的名称会被拒绝，同样是第一句，外加无法查找的原因。
 
 只在 role 的另一个平台文件里指名的 collection 模块也会被解析。能构建的就加入 union。其他任何情况都会被省略而不让运行停止，运行到它的 include 会在文件的任何 task 运行之前，让该主机的这个 include 失败：
 

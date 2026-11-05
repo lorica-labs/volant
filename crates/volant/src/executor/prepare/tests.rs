@@ -665,7 +665,7 @@ fn plan() -> PlayPlan {
         strategy: Strategy::Linear,
         throttles: Mutex::default(),
         queue: Vec::new(),
-        turn: watch::channel(0).0,
+        turns: crate::executor::driver::Turns::default(),
         play_vars: Tagged::default(),
         vars_files: HashMap::new(),
         all_play_hosts: Vec::new().into(),
@@ -921,6 +921,7 @@ fn the_become_password_is_redacted_in_debug_output() {
         flags: None,
         prompt_l10n: Vec::new(),
         chdir: None,
+        keep_preamble: false,
     };
     assert!(!format!("{escalation:?}").contains("s3cret"));
     let mut d = defaults();

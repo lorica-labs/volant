@@ -111,6 +111,9 @@ pub struct Escalation {
     pub prompt_l10n: Vec<String>,
     /// `sudo`'s `sudo_chdir`: the directory the agent starts in.
     pub chdir: Option<String>,
+    /// `ansible_local_become_strip_preamble: false`: what a local `sudo` printed before the agent
+    /// started is kept, and put in front of each `raw` task's output.
+    pub keep_preamble: bool,
 }
 
 /// How a link escalates, less the user: two links to one user through different programs,
@@ -125,6 +128,7 @@ pub struct EscalationProgram {
     pub flags: Option<Vec<String>>,
     pub password: Option<u64>,
     pub chdir: Option<String>,
+    pub keep_preamble: bool,
 }
 
 impl Escalation {
@@ -141,6 +145,7 @@ impl Escalation {
                 hasher.finish()
             }),
             chdir: self.chdir.clone(),
+            keep_preamble: self.keep_preamble,
         }
     }
 }
@@ -157,6 +162,7 @@ impl std::fmt::Debug for Escalation {
             .field("flags", &self.flags)
             .field("prompt_l10n", &self.prompt_l10n)
             .field("chdir", &self.chdir)
+            .field("keep_preamble", &self.keep_preamble)
             .finish()
     }
 }

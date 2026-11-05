@@ -190,6 +190,9 @@ impl Driver<'_> {
     /// host that asked "is the runner still live?" first would see a runner that is merely gone
     /// and leave at exit 4 where the reference exits 2.
     pub(super) async fn wait_for_run_once(&mut self, runner: &str, pos: usize) -> Option<RunOnce> {
+        // Whoever waits here takes no fork for the step: the runner already has, the others never
+        // will.
+        self.passed(pos);
         loop {
             if self.stopped() {
                 return None;
@@ -260,7 +263,7 @@ impl Driver<'_> {
     /// Waits until the hosts in front of this one in a `host_pinned` batch have queued for their
     /// forks. `None` when the run is interrupted.
     pub(super) async fn wait_turn(&mut self, mine: usize) -> Option<()> {
-        let mut turn = self.plan.turn.subscribe();
+        let mut turn = self.plan.turns.first.subscribe();
         tokio::select! {
             reached = turn.wait_for(|reached| *reached >= mine) => reached.ok().map(|_| ()),
             () = async {
@@ -297,6 +300,7 @@ impl Driver<'_> {
     /// Returns the length of the step list when the play is over for this host, which is what the
     /// driver's own bound reads as "done", and `None` when the run was interrupted on the way.
     pub(super) async fn advance(&mut self, pos: usize) -> Option<usize> {
+        self.passed(pos);
         let compiled = self.plan.steps();
         // An `any_errors_fatal` step is finished for this host only when it is finished for the
         // batch. A host that failed there makes this one fail at the same step: it does not step

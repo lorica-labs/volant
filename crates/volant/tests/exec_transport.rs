@@ -168,6 +168,7 @@ fn sudo() -> Option<Escalation> {
         flags: None,
         prompt_l10n: Vec::new(),
         chdir: None,
+        keep_preamble: false,
     })
 }
 
@@ -278,6 +279,7 @@ async fn su_is_refused_until_a_runtime_can_give_it_a_terminal() {
             flags: None,
             prompt_l10n: Vec::new(),
             chdir: None,
+            keep_preamble: false,
         })
     };
     match runtime
@@ -357,6 +359,7 @@ async fn become_on_a_target_with_no_shell_says_why_it_cannot() {
         flags: None,
         prompt_l10n: Vec::new(),
         chdir: None,
+        keep_preamble: false,
     };
     match runtime
         .target("nosh")

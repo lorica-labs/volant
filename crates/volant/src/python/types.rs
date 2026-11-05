@@ -146,14 +146,14 @@ pub fn payload_key(module: &str) -> &str {
 
 /// Whether only the controller's ansible-core can say what this name is: a collection's module,
 /// or a name no builtin has (`my_module`, `ansible.legacy.my_module`), which a `library/` beside
-/// the playbook, in a role, or on the configured path may hold. `ansible.builtin.nosuch` is not
-/// one: it is a typo in a namespace ansible-core owns whole, and nothing can supply it.
+/// the playbook, in a role, or on the configured path may hold. An `ansible.builtin.` name that is
+/// no builtin is one too: ansible-core's `ansible_builtin_runtime.yml` may route it to a
+/// collection (`ansible.builtin.formerly_core_ping`), or retire it with its own message.
 pub fn is_resolved_name(module: &str) -> bool {
     !module.is_empty()
         // A name written as a template is known only once the task renders it for its host.
         && !crate::template::Templar::is_template(module)
         && !crate::playbook::names_no_action(module)
-        && !module.starts_with("ansible.builtin.")
         && !volant_protocol::modules::is_builtin(module)
 }
 

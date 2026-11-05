@@ -99,7 +99,12 @@ const RESTRICTED_FACTS: [&str; 39] = [
 ///
 /// `ansible_python_module_rlimit_nofile` sets the open file limit every module starts with: a
 /// host that named its own could starve the modules the play runs there.
-const ENGINE_RESTRICTED_FACTS: [&str; 17] = [
+///
+/// `ansible_interpreter_python_fallback` is the list of names a discovery probes through a shell
+/// line on the host: a host that named its own would choose the interpreter every module runs
+/// under.
+const ENGINE_RESTRICTED_FACTS: [&str; 18] = [
+    "ansible_interpreter_python_fallback",
     "ansible_host_key_checking",
     "ansible_python_module_rlimit_nofile",
     "ansible_ssh_host_key_checking",

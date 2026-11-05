@@ -360,7 +360,7 @@ fn loop_control_sub_keys_are_read() {
 #[rstest]
 #[case::set_fact("set_fact: owner=root state=here", "set_fact", &[("owner", "root"), ("state", "here")])]
 #[case::free_form_alias("ansible.legacy.shell: echo a=b", "ansible.legacy.shell", &[("_raw_params", "echo a=b")])]
-#[case::unknown_builtin("ansible.builtin.nosuch: echo a", "ansible.builtin.nosuch", &[])]
+#[case::unknown_builtin("ansible.builtin.nosuch: echo a", "ansible.builtin.nosuch", &[("_raw_params", "echo a")])]
 #[case::library_stray("my_library_module: a=1 stray", "my_library_module", &[("_raw_params", "stray"), ("a", "1")])]
 #[case::include_vars_pairs("include_vars: file=v.yml name=ns", "include_vars", &[("file", "v.yml"), ("name", "ns")])]
 #[case::include_vars_path("include_vars: vars/v.yml", "include_vars", &[("_raw_params", "vars/v.yml")])]

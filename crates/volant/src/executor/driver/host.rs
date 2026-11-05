@@ -29,6 +29,9 @@ pub(super) struct Driver<'a> {
     /// The `any_errors_fatal` step another host failed at, found when this host finished it. Read
     /// at the top of the host's loop, where it becomes a failure at that step.
     pub(super) peer_fatal: Option<usize>,
+    /// The host's place in the batch's queue for forks, when it takes one step by step in the
+    /// play's host order (`linear` with fewer forks than hosts).
+    pub(super) place: Option<usize>,
 }
 
 impl Driver<'_> {

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The `galaxy` command: the options of `ansible-galaxy` 2.19.12, its install directories, the
-//! checks it makes before any work, then the subcommand. `init` is refused until it is native, and
-//! the commands that need a Galaxy account are always refused.
+//! checks it makes before any work, then the subcommand. `role init` is refused until it is
+//! native, and the commands that need a Galaxy account are always refused.
 
 mod args;
 
@@ -107,7 +107,17 @@ fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
                 verbose,
             );
         }
-        Kind::Collection(Collection::Init { .. }) => "collection init",
+        Kind::Collection(Collection::Init {
+            force,
+            init_path,
+            collection_skeleton,
+            extra_vars,
+            collection_name,
+            ..
+        }) => {
+            let paths = (init_path.as_deref(), collection_skeleton.as_deref());
+            return galaxy::init::given(collection_name, paths, *force, extra_vars, &config);
+        }
         Kind::Collection(Collection::Build {
             force,
             output_path,

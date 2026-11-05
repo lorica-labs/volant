@@ -24,8 +24,9 @@ use super::sudo::{become_success, interactive};
 const SUCCESS_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Starts `agent` under `sudo` as `escalation` asks, with `soft` as its open file limit, and
-/// returns the link over what follows the success line.
+/// returns the link over what follows the success line. `host` names the link in its `-vvv` lines.
 pub(in crate::transport) async fn local_sudo(
+    host: &str,
     agent: &str,
     escalation: &Escalation,
     soft: Option<u64>,
@@ -41,8 +42,9 @@ pub(in crate::transport) async fn local_sudo(
     if let Some(dir) = escalation.chdir.as_deref() {
         command.current_dir(dir);
     }
+    command.args(&argv[1..]);
+    super::super::trace::local_link(host, &command);
     let spawned = command
-        .args(&argv[1..])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

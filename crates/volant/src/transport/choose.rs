@@ -303,6 +303,16 @@ impl Transport {
         agents: &AgentSource,
         escalation: Option<&Escalation>,
     ) -> Result<AgentLink, ConnectError> {
+        self.connect_for("localhost", agents, escalation).await
+    }
+
+    /// [`Transport::connect`] for `host`, the name a local link's `-vvv` lines carry.
+    pub async fn connect_for(
+        &self,
+        host: &str,
+        agents: &AgentSource,
+        escalation: Option<&Escalation>,
+    ) -> Result<AgentLink, ConnectError> {
         match self {
             Transport::Local => {
                 let agent = agents
@@ -313,7 +323,7 @@ impl Transport {
                 match escalation {
                     // `su` reads its password from a terminal, so it gets one of its own.
                     Some(e) if e.method == BecomeMethod::Su => {
-                        return local_su(&agent, e).await;
+                        return local_su(host, &agent, e).await;
                     }
                     // `sudo_chdir` to a directory that is not there: the reference's `cd` fails
                     // before `sudo` starts, a task failure with the shell's complaint.
@@ -323,7 +333,7 @@ impl Transport {
                             e.chdir.as_deref().unwrap_or_default()
                         )));
                     }
-                    Some(e) => return local_sudo(&agent, e, soft).await,
+                    Some(e) => return local_sudo(host, &agent, e, soft).await,
                     None => {}
                 }
                 // The agent gets the open file limit the run started with from a shell in front
@@ -343,6 +353,7 @@ impl Transport {
                     }
                     None => Command::new(&agent),
                 };
+                super::trace::local_link(host, &command);
                 let child = command
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())

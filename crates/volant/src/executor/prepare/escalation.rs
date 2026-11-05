@@ -99,8 +99,17 @@ pub(super) fn become_for(
     } else {
         None
     };
-    let on = host_setting(vars, "ansible_become")
-        .and_then(as_bool_value)
+    // A host's setting may be a template, as an `include_vars` file's values are until they are
+    // used: the reference renders it before it reads it.
+    let rendered = |name: &str| match host_setting(vars, name) {
+        Some(Value::String(text)) if Templar::is_template(text) => {
+            templar.render(text, vars).map(Some)
+        }
+        value => Ok(value.cloned()),
+    };
+    let on = rendered("ansible_become")?
+        .as_ref()
+        .and_then(|value| as_bool_value(value).or_else(|| super::keyword::strict_boolean(value)))
         .or(written)
         .or(from_play)
         .unwrap_or(defaults.r#become);
@@ -112,8 +121,8 @@ pub(super) fn become_for(
     // the defaults that carry `ansible.cfg` and the command line: this catches the value
     // reaching an escalating task through `group_vars`, `host_vars`, `--extra-vars` or a
     // `set_fact`, which the startup pass cannot see.
-    let (method, source) = match host_setting(vars, "ansible_become_method").and_then(Value::as_str)
-    {
+    let method = rendered("ansible_become_method")?;
+    let (method, source) = match method.as_ref().and_then(Value::as_str) {
         Some(method) => (method, "ansible_become_method"),
         None => (
             task.connect

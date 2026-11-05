@@ -1,5 +1,5 @@
 ---
-sourceHash: fc6065391248
+sourceHash: b7c715440ad5
 title: Verbindungen und become
 description: Wie Volant einen Host erreicht, welche Hostvariablen und ansible.cfg-Einstellungen es liest und wie become über sudo und su funktioniert.
 ---
@@ -45,6 +45,8 @@ Ein Name, der sich zu einem Plugin auflöst, das Volant nicht selbst steuert, et
 Ein Name, der sich zu nichts auflöst, lässt den Task mit `the connection plugin '<name>' was not found` fehlschlagen, wie bei Ansible. Dazu gehört ein kurzer Name, der zu einer nicht installierten Collection geleitet wird, etwa `docker` ohne community.docker, nach der Warnung, die ansible-core dafür ausgibt, und `ansible.builtin.paramiko`, das ansible-core 2.19.12 unter diesem Namen nicht mitbringt. Das gilt unabhängig davon, ob der Wert die eigene Verbindung des Hosts ist, die eines `delegate_to`-Ziels oder die des Hosts, der einen `run_once`-Task ausführt.
 
 Ein Passwort kommt aus `-k`, aus `--connection-password-file` oder aus der Variable `ansible_password`. Volant übergibt es `ssh` über `SSH_ASKPASS` und eine private temporäre Datei, die am Ende des Laufs entfernt wird; das setzt OpenSSH 8.4 oder neuer voraus. `ssh` läuft dann mit `BatchMode=no` und `NumberOfPasswordPrompts=1`, sodass eine falsche Antwort den Versuch beendet. Das Passwort steht nie in einer Kommandozeile, in der Umgebung eines Programms oder in der Ausgabe, auch nicht bei `-vvvv`. Ein per Vault verschlüsseltes `ansible_password` funktioniert wie jede verschlüsselte Variable. Ohne Passwort läuft `ssh` mit `BatchMode=yes` und fragt nie nach; ein Host, der nach einem Passwort oder einer Passphrase fragen würde, wird deshalb als nicht erreichbar gemeldet, statt den Lauf zu blockieren.
+
+Mit `-vvv` gibt die Verbindung eines `local`-Hosts `ESTABLISH LOCAL CONNECTION FOR USER: <user>` und `EXEC <the command line>` aus. Diese Zeilen nennen den Befehl, mit dem Volant den Agent startet, einmal pro Verbindung, und `log_verbosity` schreibt sie ins Log, auch wenn sie nicht angezeigt werden.
 
 ## Docker-Container
 

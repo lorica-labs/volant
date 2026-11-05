@@ -100,7 +100,6 @@ These differ from `ansible-playbook` without a message before the run, or with a
 | What | What happens |
 |---|---|
 | `vars_plugins/` | Ignored. |
-| A cache plugin of your own as `fact_caching` | The run stops at exit 4 with `fact cache plugin '<name>' ... is not supported yet`, naming the file when it is in `cache_plugins/` or on `ANSIBLE_CACHE_PLUGINS`. |
 | `stdout_callback` naming a collection's callback other than `json`, such as `community.general.unixy` | The run stops before the first play with `Could not load '<name>' callback plugin.`, followed by the plugin's file when the controller's ansible-core finds one, such as a plugin in `callback_plugins/`. `default`, `minimal`, `oneline`, `tree` and `json` work. |
 | `callbacks_enabled` | `junit`, `tree`, `ansible.posix.timer` and `ansible.posix.profile_tasks` run. Any other name is skipped with `[WARNING]: Skipping callback plugin '<name>', unable to load`, followed by the plugin's file when the controller's ansible-core finds one. `volant.compat.record` is skipped without a warning. |
 | `volant check` and `volant lint` | They do not exist. Run them from ansible-core or ansible-lint. |

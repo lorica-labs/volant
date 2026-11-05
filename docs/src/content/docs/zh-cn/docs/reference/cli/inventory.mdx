@@ -65,6 +65,10 @@ volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUB
   与 `--list` 一起使用时，只保留匹配该模式的主机。组仍然保留，连同其子组。没有匹配任何内容的模式会发出警告，并打印一个没有主机的 inventory。
 </Option>
 
+<Option name="--playbook-dir" arg="BASEDIR">
+  playbook 本应所在的位置：它旁边的插件目录中的 inventory 和 cache 插件会被加载。`ANSIBLE_PLAYBOOK_DIR` 也可以设置它。
+</Option>
+
 <Option name="-e, --extra-vars" arg="VARS">
   额外变量，加到每台主机上，优先于其他所有层。
 </Option>

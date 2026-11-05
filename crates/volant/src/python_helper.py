@@ -116,6 +116,9 @@ def pack(entries):
 LOADED = []
 
 
+CACHES = {}
+
+
 def loaders():
     """`init_plugin_loader()`, once per helper: a second call warns on stderr that the
     collection finder is already configured, and a run that resolves and then builds asks twice.
@@ -994,6 +997,8 @@ def inventory(path, plugin=None):
         )
         wrapper = _InventoryDataWrapper(manager._inventory, target_plugin=target, origin=origin)
         target.parse(wrapper, loader, path, cache=True)
+        if hasattr(target, "update_cache_if_changed"):
+            target.update_cache_if_changed()
         data = manager._inventory
         # What `ansible-inventory --list` does next: the variables of each host, which is where
         # the reference warns about a variable that has a reserved name.
@@ -1019,6 +1024,36 @@ def inventory(path, plugin=None):
         return {"verbose": verbose, "warnings": warnings, "error": str(failure)}
     finally:
         display._warning, display.v = said, spoke
+
+
+def cache_plugin(name, operation, host=None, facts=None):
+    """One operation on a fact cache plugin, which loads once: `load` answers the `warning` the
+    reference prints when it cannot."""
+    from ansible.plugins.loader import cache_loader
+
+    if operation == "load":
+        try:
+            plugin = cache_loader.get(name)
+        except Exception as failure:
+            return {"warning": str(failure)}
+        if plugin is None:
+            return {"warning": "Unable to load the cache plugin %r." % name}
+        CACHES[name] = plugin
+        return {}
+    plugin = CACHES[name]
+    if operation == "get":
+        try:
+            return {"facts": plugin.get(host)}
+        except KeyError:
+            return {}
+    if operation == "set":
+        plugin.set(host, facts)
+    else:
+        try:
+            plugin.delete(host)
+        except KeyError:
+            pass
+    return {}
 
 
 def lookup_needs(name):
@@ -1099,6 +1134,8 @@ def call(request):
     kind, name = request["kind"], request["name"]
     if kind == "inventory":
         return {"value": inventory(request["args"][0], request["kwargs"].get("plugin"))}
+    if kind == "cache":
+        return {"value": cache_plugin(name, *request["args"])}
     if kind == "inventory_plugin":
         from ansible.plugins.loader import inventory_loader
 

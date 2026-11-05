@@ -397,6 +397,18 @@ impl Bridge {
         .map(str::to_string)
     }
 
+    /// One operation on the cache plugin `plugin`: `args` is the operation and its arguments.
+    ///
+    /// # Errors
+    /// [`BridgeError`] when the helper cannot start, or the plugin raised.
+    pub fn cache(&self, plugin: &str, args: &Value) -> Result<Value, BridgeError> {
+        self.request(
+            PluginKind::Lookup,
+            plugin,
+            json!({"kind": "cache", "name": plugin, "args": args, "kwargs": {}}),
+        )
+    }
+
     /// Whether the controller's ansible-core loads an inventory plugin of that name.
     pub fn inventory_plugin_exists(&self, plugin: &str) -> bool {
         self.request(

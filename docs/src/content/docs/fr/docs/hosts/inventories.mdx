@@ -135,7 +135,7 @@ fact_caching_timeout = 3600
 
 | Paramètre | Variable d'environnement | Signification |
 |---|---|---|
-| `fact_caching` | `ANSIBLE_CACHE_PLUGIN` | `memory` (la valeur par défaut, par exécution) ou `jsonfile`. `ansible.builtin.memory` et `ansible.builtin.jsonfile` fonctionnent aussi. |
+| `fact_caching` | `ANSIBLE_CACHE_PLUGIN` | `memory` (la valeur par défaut, par exécution), `jsonfile` ou un plugin Python. `ansible.builtin.memory` et `ansible.builtin.jsonfile` fonctionnent aussi. |
 | `fact_caching_connection` | `ANSIBLE_CACHE_PLUGIN_CONNECTION` | Le répertoire qui contient les fichiers. `jsonfile` en a besoin ; sans lui, l'exécution garde les facts en mémoire. |
 | `fact_caching_timeout` | `ANSIBLE_CACHE_PLUGIN_TIMEOUT` | Nombre de secondes pendant lesquelles un fichier reste frais. 86400 par défaut. `0` n'expire jamais. |
 | `fact_caching_prefix` | `ANSIBLE_CACHE_PLUGIN_PREFIX` | Placé devant le nom de chaque fichier. Vide par défaut. |
@@ -143,7 +143,7 @@ fact_caching_timeout = 3600
 
 Chaque hôte a un fichier, nommé `<prefix>s1_<host>`.
 
-Tout autre plugin de cache, comme `redis` ou `yaml`, termine l'exécution avec le code de sortie 4 et le message `fact cache plugin '<name>' (from '<origin>') is not supported yet; use 'memory' or 'jsonfile'`.
+Tout autre nom, comme un plugin dans `cache_plugins/` ou d'une collection, se charge par l'ansible-core du contrôleur, qui lit les options du plugin lui-même. Un plugin qu'il ne peut pas charger affiche un avertissement comme `[WARNING]: Unable to load the cache plugin '<name>'.` et l'exécution garde les facts en mémoire.
 
 ### Collecte
 

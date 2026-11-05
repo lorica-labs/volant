@@ -101,7 +101,6 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 | 内容 | 会发生什么 |
 |---|---|
 | `vars_plugins/` | 被忽略。 |
-| 自己写的 cache 插件作为 `fact_caching` | 运行以退出码 4 和 `fact cache plugin '<name>' ... is not supported yet` 停止；文件在 `cache_plugins/` 或 `ANSIBLE_CACHE_PLUGINS` 中时会给出文件。 |
 | `stdout_callback` 指定 `json` 以外的 collection callback，例如 `community.general.unixy` | 运行在第一个 play 之前以 `Could not load '<name>' callback plugin.` 停止；控制端的 ansible-core 找到插件文件时（例如 `callback_plugins/` 中的插件），后面会给出该文件。`default`、`minimal`、`oneline`、`tree` 和 `json` 可以用。 |
 | `callbacks_enabled` | `junit`、`tree`、`ansible.posix.timer` 和 `ansible.posix.profile_tasks` 会运行。其他名字都以 `[WARNING]: Skipping callback plugin '<name>', unable to load` 被跳过；控制端的 ansible-core 找到插件文件时，后面会给出该文件。`volant.compat.record` 被跳过，不打印警告。 |
 | `volant check` 和 `volant lint` | 它们不存在。请用 ansible-core 或 ansible-lint 运行。 |

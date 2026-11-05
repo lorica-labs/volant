@@ -8,7 +8,7 @@ ansible-galaxy-collection-scm  #1372
 ansible-playbook-callbacks     #1333
 ansible_log                    #1336
 assert                         #1282
-cache-plugins                  #1334
+cache-plugins                  #1282
 callback-dispatch              #1333
 callback_results               #1333
 conditionals                   #1282
@@ -18,7 +18,6 @@ fork_safe_stdio                #1333
 gather_facts-errors            #1330
 include_vars                   #1282
 interpreter_discovery_python   #1397
-inventory_cache                #1334
 inventory_script               #1282
 lookup_env                     #1282
 protomatter                    #1282

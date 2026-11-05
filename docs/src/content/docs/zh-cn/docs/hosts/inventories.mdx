@@ -135,7 +135,7 @@ fact_caching_timeout = 3600
 
 | 设置 | 环境变量 | 含义 |
 |---|---|---|
-| `fact_caching` | `ANSIBLE_CACHE_PLUGIN` | `memory`（默认，每次运行独立）或 `jsonfile`。`ansible.builtin.memory` 和 `ansible.builtin.jsonfile` 同样可用。 |
+| `fact_caching` | `ANSIBLE_CACHE_PLUGIN` | `memory`（默认，每次运行独立）、`jsonfile` 或 Python 插件。`ansible.builtin.memory` 和 `ansible.builtin.jsonfile` 同样可用。 |
 | `fact_caching_connection` | `ANSIBLE_CACHE_PLUGIN_CONNECTION` | 存放这些文件的目录。`jsonfile` 需要它；没有它时，运行把 facts 保留在内存中。 |
 | `fact_caching_timeout` | `ANSIBLE_CACHE_PLUGIN_TIMEOUT` | 文件保持有效的秒数。默认 86400。`0` 表示永不过期。 |
 | `fact_caching_prefix` | `ANSIBLE_CACHE_PLUGIN_PREFIX` | 加在每个文件名前面。默认为空。 |
@@ -143,7 +143,7 @@ fact_caching_timeout = 3600
 
 每台主机有一个文件，名为 `<prefix>s1_<host>`。
 
-其他任何缓存插件，例如 `redis` 或 `yaml`，都会让运行以退出码 4 结束，并给出消息 `fact cache plugin '<name>' (from '<origin>') is not supported yet; use 'memory' or 'jsonfile'`。
+其他任何名字，例如 `cache_plugins/` 中的插件或 collection 的插件，都通过控制端的 ansible-core 加载，插件自己的选项由它读取。无法加载的插件会打印警告，例如 `[WARNING]: Unable to load the cache plugin '<name>'.`，运行把 facts 保留在内存中。
 
 ### 收集
 

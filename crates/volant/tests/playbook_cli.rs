@@ -6345,6 +6345,62 @@ fn an_own_stdout_callback_prints_the_run() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `display_traceback` shows what failed in `gather_facts` and its fact modules; it stays off by
+/// default, where each failure frames its message alone.
+#[test]
+fn display_traceback_shows_the_failed_fact_modules() {
+    let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
+        return;
+    };
+    let dir = probe_dir("fact-tracebacks");
+    std::fs::create_dir_all(dir.join("library")).expect("the library");
+    for name in ["bang1", "bang2"] {
+        std::fs::write(
+            dir.join("library").join(format!("{name}.py")),
+            format!(
+                "from ansible.module_utils.basic import AnsibleModule\n\nAnsibleModule({{}}).fail_json('{name} went bang')\n"
+            ),
+        )
+        .expect("the module");
+    }
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: localhost\n  gather_facts: false\n  vars:\n    ansible_facts_modules: [bang1, bang2]\n  tasks:\n    - gather_facts:\n        parallel: false\n",
+    )
+    .expect("the play");
+    let run = |env: &[(&str, &str)]| {
+        let out = volant_within_env(
+            &[
+                "playbook",
+                "-i",
+                "localhost,",
+                "-c",
+                "local",
+                dir.join("play.yml").to_str().expect("a path"),
+            ],
+            std::time::Duration::from_secs(60),
+            env,
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let plain = run(&[("VOLANT_PYTHON", &python)]);
+    assert_eq!(plain.matches("End Sub-Event").count(), 1, "{plain}");
+    assert!(!plain.contains("Sub-Traceback"), "{plain}");
+    assert!(plain.contains("(traceback unavailable)"), "{plain}");
+    let shown = run(&[
+        ("VOLANT_PYTHON", &python),
+        ("ANSIBLE_DISPLAY_TRACEBACK", "error"),
+    ]);
+    for wanted in [
+        "Sub-Traceback 2 of 2",
+        "action/gather_facts.py",
+        "bang1 went bang",
+    ] {
+        assert!(shown.contains(wanted), "{wanted}: {shown}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A run with no Python callback starts no helper: no interpreter is needed for this.
 #[test]
 fn a_run_with_no_python_callback_looks_for_no_interpreter() {

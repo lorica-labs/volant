@@ -77,6 +77,10 @@ A file that exists but cannot be read is skipped, and the run continues with the
   Never colour the output. `force_color` wins over it.
 </Option>
 
+<Option name="display_traceback" id="defaults-display-traceback" default="never" env="ANSIBLE_DISPLAY_TRACEBACK">
+  Which events show a traceback, as a comma-separated list. With `error` or `always`, a failed Python action plugin that gathers errors, such as `gather_facts` running its fact modules, shows its traceback and those of its modules, and registers it as `exception`. Every other failure keeps `(traceback unavailable)`.
+</Option>
+
 <Option name="deprecation_warnings" id="defaults-deprecation-warnings" default="true" env="ANSIBLE_DEPRECATION_WARNINGS">
   Print the `[DEPRECATION WARNING]` notices and the line that tells how to stop them. Set to `False` to print neither.
 </Option>

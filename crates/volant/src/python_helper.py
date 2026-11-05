@@ -1276,6 +1276,7 @@ def shim():
     if SHIM:
         return SHIM
     from ansible._internal._errors import _captured
+    from ansible.module_utils._internal import _traceback
     from ansible.errors import AnsibleConnectionFailure, AnsibleError
     from ansible.module_utils.common.json import Direction, get_module_decoder
     from ansible.plugins.action import ActionBase
@@ -1400,6 +1401,10 @@ def shim():
         if ignore_unknown_opts:
             # The module drops what it does not declare, as it does for the reference.
             args["_ansible_ignore_unknown_opts"] = True
+        # As `_update_module_args` asks, so the failed module sends its traceback.
+        tracebacks = _traceback.traceback_for()
+        if tracebacks:
+            args["_ansible_tracebacks_for"] = tracebacks
         fields = {"name": name, "args": args, "files": []}
         if wrap_async:
             # Started as a job of the host with the task's `async_val` as its limit, which

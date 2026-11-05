@@ -78,6 +78,10 @@ Eine Datei, die existiert, sich aber nicht lesen lässt, wird übersprungen, und
   Färbt die Ausgabe nie. `force_color` schlägt es.
 </Option>
 
+<Option name="display_traceback" id="defaults-display-traceback" default="never" env="ANSIBLE_DISPLAY_TRACEBACK">
+  Welche Ereignisse einen Traceback zeigen, als kommagetrennte Liste. Mit `error` oder `always` zeigt ein fehlgeschlagenes Python-Action-Plugin, das Fehler sammelt, etwa `gather_facts` mit seinen Fact-Modulen, seinen Traceback und die seiner Module und registriert ihn als `exception`. Jeder andere Fehler behält `(traceback unavailable)`.
+</Option>
+
 <Option name="deprecation_warnings" id="defaults-deprecation-warnings" default="true" env="ANSIBLE_DEPRECATION_WARNINGS">
   Gibt die `[DEPRECATION WARNING]`-Hinweise und die Zeile aus, die sagt, wie man sie abstellt. Mit `False` wird beides nicht ausgegeben.
 </Option>

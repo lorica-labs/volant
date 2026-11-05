@@ -7,7 +7,6 @@ cache-plugins                  #1334
 conditionals                   #1282
 deprecations                   #1282
 filter_encryption              #1282
-gather_facts-errors            #1330
 include_vars                   #1282
 inventory_cache                #1334
 inventory_script               #1282

@@ -78,6 +78,10 @@ Un fichier qui existe mais ne peut pas être lu est ignoré, et l'exécution con
   Ne colore jamais la sortie. `force_color` l'emporte sur lui.
 </Option>
 
+<Option name="display_traceback" id="defaults-display-traceback" default="never" env="ANSIBLE_DISPLAY_TRACEBACK">
+  Les événements qui affichent un traceback, en liste séparée par des virgules. Avec `error` ou `always`, un plugin d'action Python en échec qui regroupe des erreurs, comme `gather_facts` avec ses modules de facts, affiche son traceback et ceux de ses modules, et l'enregistre comme `exception`. Tout autre échec garde `(traceback unavailable)`.
+</Option>
+
 <Option name="deprecation_warnings" id="defaults-deprecation-warnings" default="true" env="ANSIBLE_DEPRECATION_WARNINGS">
   Affiche les avis `[DEPRECATION WARNING]` et la ligne qui explique comment les arrêter. Réglez-le sur `False` pour n'afficher ni l'un ni l'autre.
 </Option>

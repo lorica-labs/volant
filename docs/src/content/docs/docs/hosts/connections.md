@@ -45,6 +45,8 @@ A name that resolves to nothing fails the task with `the connection plugin '<nam
 
 A password comes from `-k`, from `--connection-password-file` or from the `ansible_password` variable. Volant hands it to `ssh` through `SSH_ASKPASS` and a private temporary file that is removed at the end of the run, which needs OpenSSH 8.4 or later. `ssh` then runs with `BatchMode=no` and `NumberOfPasswordPrompts=1`, so one wrong answer ends the attempt. The password is never on a command line, in the environment of a program or in the output, `-vvvv` included. A vaulted `ansible_password` works like any vaulted variable. Without a password, `ssh` runs with `BatchMode=yes` and never prompts, so a host that would ask for a password or a passphrase is reported unreachable instead of hanging the run.
 
+With `-vvv`, a `local` host's link prints `ESTABLISH LOCAL CONNECTION FOR USER: <user>` and `EXEC <the command line>`. They name the command Volant runs to start the agent, once per link, and `log_verbosity` sends them to the log even when they are not shown.
+
 ## Docker containers
 
 `ansible_connection: docker`, or `community.docker.docker`, runs a play inside a running container, with no sshd in it and no network path to it. Both names need community.docker installed on the controller, as they do for `ansible-playbook`. Volant runs the `docker` program from your `PATH`, so `DOCKER_HOST`, `DOCKER_CONTEXT` and `DOCKER_CONFIG` reach it through the environment.

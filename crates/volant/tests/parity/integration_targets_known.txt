@@ -4,7 +4,6 @@
 ansiballz_debug                #1336
 ansiballz_debugging            #1330
 ansible-galaxy-collection-scm  #1372
-ansible_log                    #1336
 assert                         #1282
 cache-plugins                  #1334
 conditionals                   #1282
@@ -16,7 +15,6 @@ interpreter_discovery_python   #1397
 inventory_cache                #1334
 inventory_script               #1282
 lookup_env                     #1282
-module_defaults                #1367
 protomatter                    #1282
 remote_tmp                     #1336
 set_fact                       #1282
@@ -24,4 +22,3 @@ shell                          #1336
 strategy-external              #1335
 template                       #1355
 templating                     #1282
-var_templating                 #1336

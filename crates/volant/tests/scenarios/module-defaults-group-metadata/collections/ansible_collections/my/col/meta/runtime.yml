@@ -1,0 +1,18 @@
+action_groups:
+  fine:
+    - metadata: {}
+  two_keys:
+    - unexpected_key: x
+      metadata: {}
+  twice:
+    - metadata: {}
+    - metadata: {}
+  not_a_dict:
+    - metadata: [fine]
+  unknown_key:
+    - metadata:
+        unexpected_key: fine
+  wrong_type:
+    - metadata:
+        extend_group:
+          name: fine

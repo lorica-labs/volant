@@ -1574,12 +1574,7 @@ fn escalated_links_survive_a_batch_that_a_register_closed() {
             String::from_utf8_lossy(&out.stderr)
         );
         let recorded = std::fs::read_to_string(&log).expect("the fake sudo wrote its log");
-        // The version probe settles which `sudo` form the link uses and is not a launch of the
-        // agent itself; everything else in the log is one.
-        let launches = recorded
-            .lines()
-            .filter(|line| !line.contains("--version"))
-            .count();
+        let launches = recorded.lines().count();
         let _ = std::fs::remove_dir_all(&dir);
         (launches, recorded)
     };
@@ -1680,12 +1675,20 @@ fn a_flush_point_behind_a_registered_task_opens_with_one_fork(
 #[case::a_missing_password(
     Some("#!/bin/sh\necho 'sudo: a password is required' >&2\nexit 1\n"),
     None,
-    volant::transport::MISSING_SUDO_PASSWORD
+    "sudo: a password is required"
 )]
 #[case::a_rejected_password(
-    Some("#!/bin/sh\ncat > /dev/null\necho 'sudo: Sorry, try again.' >&2\nexit 1\n"),
+    Some(
+        "#!/bin/sh\n\
+         while [ \"$1\" != -p ]; do shift; done\n\
+         echo \"$2\" >&2\n\
+         read -r given\n\
+         echo 'Sorry, try again.' >&2\n\
+         echo \"$2\" >&2\n\
+         read -r given\n"
+    ),
     Some("not-the-password\n"),
-    volant::transport::INCORRECT_SUDO_PASSWORD
+    "Duplicate become password prompt encountered"
 )]
 #[case::no_sudo_at_all(None, None, "sudo")]
 fn an_escalation_that_cannot_happen_fails_the_task(
@@ -1806,8 +1809,8 @@ fn volant_feeding_stdin(args: &[&str], dir: &Path, line: &str) -> Output {
     )
 }
 
-/// The only path the password itself travels: `sudo -k -S` reads it off the link's stdin, ahead of
-/// the first protocol frame.
+/// The only path the password itself travels: `sudo -S` asks with its prompt and reads it off the
+/// link's stdin, ahead of the first protocol frame.
 #[test]
 fn a_correct_sudo_password_is_consumed_before_the_first_frame() {
     let expected = format!("only-this-run-{}", std::process::id());
@@ -1815,6 +1818,8 @@ fn a_correct_sudo_password_is_consumed_before_the_first_frame() {
         "goodpassword",
         &format!(
             "#!/bin/sh\n\
+             while [ \"$1\" != -p ]; do shift; done\n\
+             echo \"$2\" >&2\n\
              IFS= read -r given\n\
              [ \"$given\" = {expected} ] || {{ echo 'sudo: Sorry, try again.' >&2; exit 1; }}\n\
              while [ $# -gt 0 ] && [ \"$1\" != -- ]; do shift; done\n\

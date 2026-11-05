@@ -338,7 +338,7 @@ sudo -H <form> -u <user> -- volant-agent
 
 The escalated agent is kept until the end of the play, so a play of escalated tasks pays for `sudo` once per host.
 
-Over a `local` connection the agent starts behind a shell that first prints a success line, as ansible-core's command prints its `BECOME-SUCCESS-<random>`. Whatever a `become_exe` wrapper prints before `sudo` runs is therefore never read as the agent's output, and it goes to the controller's standard error. With `ansible_local_become_strip_preamble: false` it is kept instead: what the wrapper printed and the success line go in front of the `stdout` and `stderr` of each `raw` task that escalates through that agent. Such tasks get an agent of their own.
+Over a `local` connection `sudo` runs as ansible-core's local connection runs it. There is no probe: the agent starts behind a shell that first prints a success line, as ansible-core's command prints its `BECOME-SUCCESS-<random>`, so nothing a `become_exe` wrapper prints first is read as the agent's output. With a password, `sudo` gets `-S -p "[sudo via ansible, key=<random>] password:"`, and the password goes out when that prompt shows on stdout or stderr. Without one it gets `-S -n`. `ansible_local_become_success_timeout` limits the wait for the success line, 10 seconds by default. A `raw` task that escalates through that agent shows in its `stderr` what `sudo` printed there after the prompt. With `ansible_local_become_strip_preamble: false` it shows everything both streams said before the agent started, prompt and success line included, and such tasks get an agent of their own.
 
 ### Which setting wins
 
@@ -366,9 +366,9 @@ It is written once to `sudo`'s standard input. It never appears in a command lin
 
 ### The sudo probe
 
-Volant asks `sudo` which form to use instead of assuming one. It tries `sudo -n` first, and falls back to `sudo -k -S -p ''` only when `sudo` itself rejects the request for lack of authentication. [Decision record 0004](/docs/decisions/0004-become-runs-a-second-agent-under-sudo/) explains why a guess would hang the link. On a host that ran before, Volant first starts the cached agent under `sudo -n` in the same `ssh` session as its checks, and runs the probe only when that does not work, as [The agent on your hosts](/docs/internals/agent/) describes.
+Except over a `local` connection, Volant asks `sudo` which form to use instead of assuming one. It tries `sudo -n` first, and falls back to `sudo -k -S -p ''` only when `sudo` itself rejects the request for lack of authentication. [Decision record 0004](/docs/decisions/0004-become-runs-a-second-agent-under-sudo/) explains why a guess would hang the link. On a host that ran before, Volant first starts the cached agent under `sudo -n` in the same `ssh` session as its checks, and runs the probe only when that does not work, as [The agent on your hosts](/docs/internals/agent/) describes.
 
-When escalation fails, for a missing password, a wrong one or a `sudoers` rule that forbids the command, the task fails and the host stays reachable. The messages are Ansible's own: `Missing sudo password` or `Incorrect sudo password`. A task given another password gets an agent of its own, so a wrong password fails even after the right one worked, and `ignore_errors` covers that failure as it does any other.
+When escalation fails, for a missing password, a wrong one or a `sudoers` rule that forbids the command, the task fails and the host stays reachable. The messages are Ansible's own: `Missing sudo password` or `Incorrect sudo password`. A task given another password gets an agent of its own, so a wrong password fails even after the right one worked, and `ignore_errors` covers that failure as it does any other. Over a `local` connection the messages are those of ansible-core's local connection: `Premature end of stream waiting for become success`, followed by what each stream said, and `Duplicate become password prompt encountered` for a wrong password. `Timed out waiting for become success` makes the host unreachable.
 
 ### su
 

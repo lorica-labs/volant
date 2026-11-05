@@ -173,6 +173,7 @@ fn the_link_facts_follow_the_transport(
         prompt_l10n: Vec::new(),
         chdir: None,
         keep_preamble: false,
+        success_timeout: None,
     });
     let delegated = delegate.map(|name| (name.to_string(), HostVars::default()));
     let facts = LinkFacts::of(&transport, escalation.as_ref(), delegated.as_ref());

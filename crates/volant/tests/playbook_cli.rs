@@ -5166,6 +5166,35 @@ fn an_import_tasks_naming_a_missing_file_stops_the_run() {
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 
+/// An included file that imports a missing one names it in front of the loader's own sentences.
+#[test]
+fn an_import_missing_from_an_included_file_is_named_first() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    std::fs::write(
+        dir.path().join("site.yml"),
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - include_tasks: inc.yml
+",
+    )
+    .expect("the playbook is written");
+    std::fs::write(
+        dir.path().join("inc.yml"),
+        "- import_tasks: nosuch.yml
+",
+    )
+    .expect("the included file is written");
+    let path = dir.path().join("site.yml");
+    let out = volant(&["playbook", &path.display().to_string()]);
+    let text = String::from_utf8(out.stderr).unwrap() + &String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(
+        text.contains("nosuch.yml' on the Ansible Controller: Unable to retrieve file contents."),
+        "{text}"
+    );
+}
+
 /// `import_playbook` is a play-level statement; written as a task, the reference cannot run it
 /// either, and dies with its own traceback rather than a message naming what was wrong.
 #[test]

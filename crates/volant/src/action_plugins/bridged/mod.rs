@@ -73,6 +73,8 @@ pub(super) struct Bridged {
     stale: bool,
     /// The `connect_timeout` argument of `wait_for_connection`, for a fresh link.
     connect_timeout: Duration,
+    /// The host a `-vvv` line of this action's commands names.
+    remote_addr: String,
 }
 
 /// The fields of ansible-core's `PlayContext` a plugin reads off the link its module runs over.
@@ -311,6 +313,10 @@ pub(super) fn start(
         }),
     );
     let play_context = play_context_of(&ctx, &running);
+    let remote_addr = play_context["remote_addr"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
     let task_vars = Value::Object(task_vars);
     // A host no agent runs on: the helper makes the connection itself, and the plugin's own
     // become plugin when the task escalates.
@@ -372,6 +378,7 @@ pub(super) fn start(
                 .and_then(Value::as_u64)
                 .unwrap_or(5),
         ),
+        remote_addr,
     })
 }
 

@@ -290,6 +290,8 @@ Um beide zu leeren, entfernen Sie die beiden Verzeichnisse. Sonst bleibt nichts 
 ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-* ~/.ansible/tmp/volant-blobs-*'
 ```
 
+Mit `ANSIBLE_KEEP_REMOTE_FILES=1` oder `keep_remote_files` in `ansible.cfg` läuft ein Modul ohne eigenes Plugin so, wie ansible-core es ausführt. ansible-core baut seinen AnsiballZ-Wrapper, Volant kopiert ihn nach `<remote_tmp>/ansible-tmp-*/AnsiballZ_<module>.py` und lässt ihn dort liegen, und seine Befehle `explode` und `execute` funktionieren. Der Host braucht dafür Python, und jeder solche Task ist langsamer als über den Agent. `-vvv` gibt jedes `PUT` und `EXEC` aus. `copy`, `template` und die anderen Plugins, für die Volant eine eigene Version hat, hinterlassen keinen Wrapper.
+
 [Der Agent auf Ihren Hosts](/de/docs/internals/agent/#der-agent-cache) behandelt das Hochladen, die Reparatur eines beschädigten Caches und die Berechtigungsprüfungen.
 
 ## Dauerhafte Verbindungen

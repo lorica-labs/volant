@@ -1322,6 +1322,9 @@ def shim():
         # (`WANT_JSON`, or one that only prints its JSON) here:
         # no persistent connection stands behind the link.
         socket_path = None
+        # Whether this action runs its module as ansible-core does, from a wrapper on the host in
+        # a temporary directory of ansible-core's own: `normal` over an agent's link.
+        wrapped = False
 
         def __init__(self, ident, shell, play_context, ssh_options=None):
             self._ident = ident
@@ -1449,7 +1452,7 @@ def shim():
 
     def toward_link(shimmed, kept):
         def method(self, *args, **kwargs):
-            if isinstance(self._connection, Link):
+            if isinstance(self._connection, Link) and not self._connection.wrapped:
                 return shimmed(self, *args, **kwargs)
             return kept(self, *args, **kwargs)
 
@@ -1897,7 +1900,9 @@ def run_action(ident, request):
         # its `gather_facts` plugin: that plugin picks a network host's facts module from its
         # `ansible_network_os`, and `setup` for any other host.
         written = name = "ansible.legacy.gather_facts"
-    if owned and name in ("normal", "ansible.builtin.normal", "ansible.legacy.normal"):
+    wrapped = False
+    if name in ("normal", "ansible.builtin.normal", "ansible.legacy.normal"):
+        wrapped = not owned
         name = handler_for(written)
     if not CALL_NAME.match(name) or not plugin_loader.action_loader.has_plugin(name):
         return {"error": {"kind": "not_found", "message": "the handler '%s' was not found" % name}}
@@ -1957,6 +1962,7 @@ def run_action(ident, request):
                 connection = owned_connection(link, context, task, connection_vars, templar, kept)
             else:
                 connection = parts["Link"](ident, shell, context, ssh_options)
+                connection.wrapped = wrapped
             try:
                 if owned:
                     connection, socket_path = persistent(connection, name, context, task)

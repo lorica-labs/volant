@@ -543,6 +543,7 @@ async fn run_all(
             forced
         }
     };
+    crate::action_plugins::keep_remote_files(config.keep_remote_files);
     let python = python.map(|union| union.armed(config.native_modules, facts));
     let (run_tags, skip_tags) = selection.lists();
     store.set_tags(run_tags, skip_tags);

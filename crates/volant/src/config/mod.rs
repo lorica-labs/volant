@@ -53,6 +53,7 @@ pub struct Config {
     pub private_key_file: Option<PathBuf>,
     pub host_key_checking: bool,
     pub remote_tmp: String,
+    pub keep_remote_files: bool,
     /// `[defaults] async_dir`: where a job's status file goes when neither `ansible_async_dir`
     /// nor `ANSIBLE_ASYNC_DIR` names a directory.
     pub async_dir: Option<String>,
@@ -400,13 +401,7 @@ impl Config {
             config.host_named_dest_dirs =
                 host_named_dest_dirs(&value, "env: VOLANT_HOST_NAMED_DEST_DIRS")?;
         }
-        if let Ok(value) = std::env::var("VOLANT_NATIVE_MODULES") {
-            config.native_modules = boolean(
-                "VOLANT_NATIVE_MODULES",
-                "env: VOLANT_NATIVE_MODULES",
-                &value,
-            )?;
-        }
+        settings::read_switches(&mut config)?;
         if let Ok(value) = std::env::var("VOLANT_RUNTIME") {
             config.runtime = runtime_mode(&value, "env: VOLANT_RUNTIME")?;
         }

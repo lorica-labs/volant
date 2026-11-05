@@ -293,6 +293,9 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
                     config.async_dir = Some(dir.to_string());
                 }
             }
+            "keep_remote_files" => {
+                config.keep_remote_files = boolean("DEFAULT_KEEP_REMOTE_FILES", origin, value)?;
+            }
             "remote_tmp" => {
                 let tmp = value.trim();
                 if !tmp.is_empty() {

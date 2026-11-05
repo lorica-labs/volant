@@ -247,6 +247,26 @@ fn mark_unsafe_expression(
     }
 }
 
+/// A task's arguments as its action statement says them. Only that statement is checked for the
+/// prefix the engine keeps for itself, as `_normalize_parameters` checks it: the `args` keyword
+/// and a free-form action go unchecked. The reference raises a plain `AnsibleError`, not a parser
+/// error: exit 1 from a playbook, a failed host from a dynamic include.
+pub(super) fn task_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>> {
+    let args = module_args(module, value)?;
+    if !is_command_line(module)
+        && let Some(arg) = args.keys().find(|arg| arg.starts_with("_ansible_"))
+    {
+        return Err(crate::stats::Refusal::plain(
+            1,
+            format!(
+                "Invalid parameter specified beginning with keyword '_ansible_' for action \
+                 '{module}': '{arg}'. The prefix '_ansible_' is reserved for internal use only."
+            ),
+        ));
+    }
+    Ok(args)
+}
+
 pub(super) fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>> {
     let mut args = Map::new();
     match value {

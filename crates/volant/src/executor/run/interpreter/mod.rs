@@ -92,7 +92,8 @@ pub(in crate::executor) fn running_host_vars<'a>(
 ///
 /// A blank value is unset too, the way a blank `ansible_remote_tmp` already is: a playbook
 /// writing `"{{ py_override | default('') }}"` asked for nothing, and an empty path would have
-/// the host trying to start nothing and naming nothing when it failed.
+/// the host trying to start nothing and naming nothing when it failed. So is one that rendered to
+/// `omit`, which the reference reads as the setting's default.
 pub(in crate::executor) fn requested_interpreter<V: crate::vars::HostSettings + ?Sized>(
     vars: &V,
 ) -> Option<String> {
@@ -101,6 +102,7 @@ pub(in crate::executor) fn requested_interpreter<V: crate::vars::HostSettings + 
         .map(str::trim)
         .filter(|asked| {
             !asked.is_empty()
+                && *asked != crate::vars::omit_token()
                 && !matches!(
                     *asked,
                     "auto" | "auto_legacy" | "auto_silent" | "auto_legacy_silent"
@@ -145,6 +147,18 @@ pub(in crate::executor) fn silent_discovery<V: crate::vars::HostSettings + ?Size
     crate::vars::host_setting(vars, "ansible_python_interpreter")
         .and_then(Value::as_str)
         .is_some_and(|asked| matches!(asked.trim(), "auto_silent" | "auto_legacy_silent"))
+}
+
+/// Whether a task on `host` discovers its interpreter now: the fact is not in the store yet. The
+/// reference gives the implicit `localhost` the controller's own Python as its interpreter, so
+/// nothing is discovered there.
+pub(in crate::executor) fn discovery_due(
+    store: &std::sync::Mutex<crate::vars::VarStore>,
+    host: &str,
+) -> bool {
+    let vars = store.lock().expect("vars lock");
+    !vars.is_implicit_localhost(host)
+        && !vars.all_gathered(&[host.to_string()], DISCOVERED_INTERPRETER)
 }
 
 /// Puts the discovered interpreter in the result's `ansible_facts`, where the reference returns
@@ -246,7 +260,9 @@ pub(in crate::executor) fn chosen_interpreter(
                 named,
                 crate::template::UNDEFINED.to_string(),
             );
-            Err(TaskResult::failed_with(format!("Task failed: {message}")))
+            let mut failed = TaskResult::failed_with(format!("Task failed: {message}"));
+            failed.0.insert("changed".into(), json!(false));
+            Err(failed)
         }
         Some(named) => Ok(named.to_string()),
         // Worded as what it is. The controller uploads the agent it shipped with, so an agent

@@ -1,0 +1,23 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: omit for python
+      ping:
+      vars:
+        ansible_python_interpreter: "{{ omit }}"
+      register: omitted
+
+    - debug:
+        msg: "{{ omitted.ansible_facts.discovered_interpreter_python is defined }}"
+
+    - meta: clear_facts
+
+    - name: omit for another interpreter
+      own_shebang:
+      vars:
+        ansible_no_such_interpreter: "{{ omit }}"
+      register: own
+      ignore_errors: true
+
+    - debug:
+        msg: "{{ own.msg is contains('no_such_interpreter') }}"

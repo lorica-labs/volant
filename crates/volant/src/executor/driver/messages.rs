@@ -127,6 +127,21 @@ impl Driver<'_> {
         resolved
     }
 
+    /// The line the reference prints from `-vvv` before it looks for an interpreter, so it shows
+    /// even when the connection then fails.
+    pub(super) async fn discovering(&self, index: usize) {
+        let _ = self
+            .tx
+            .send(Event::Display {
+                host: self.name.to_string(),
+                index,
+                line: format!("<{}> Attempting python interpreter discovery.", self.name),
+                shade: Shade::Verbose(3),
+                banner: true,
+            })
+            .await;
+    }
+
     /// Tells the coordinator this host is done with the step at `index`.
     pub(super) async fn task_done(&self, index: usize) {
         self.passed(index);

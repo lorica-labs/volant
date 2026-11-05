@@ -384,19 +384,6 @@ impl Bridge {
         )
     }
 
-    /// Where the controller's ansible-core finds the `kind` plugin `name` (`callback`, `cache`),
-    /// `None` when it finds none or cannot be asked.
-    pub fn plugin_path(&self, kind: &str, name: &str) -> Option<String> {
-        self.request(
-            PluginKind::Lookup,
-            name,
-            json!({"kind": "plugin_path", "name": name, "args": [kind], "kwargs": {}}),
-        )
-        .ok()?
-        .as_str()
-        .map(str::to_string)
-    }
-
     /// Whether the controller's ansible-core loads an inventory plugin of that name.
     pub fn inventory_plugin_exists(&self, plugin: &str) -> bool {
         self.request(

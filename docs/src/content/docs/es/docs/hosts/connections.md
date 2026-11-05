@@ -1,5 +1,5 @@
 ---
-sourceHash: b7c715440ad5
+sourceHash: 798067bf652a
 title: Conexiones y become
 description: Cómo llega Volant a un host, las variables de host y los ajustes de ansible.cfg que lee, y cómo funciona become mediante sudo y su.
 ---
@@ -289,6 +289,8 @@ Para borrar ambos, elimina los dos directorios. No queda nada más:
 ```sh
 ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-* ~/.ansible/tmp/volant-blobs-*'
 ```
+
+Con `ANSIBLE_KEEP_REMOTE_FILES=1`, o `keep_remote_files` en `ansible.cfg`, un módulo sin plugin propio se ejecuta como lo ejecuta ansible-core. ansible-core construye su wrapper AnsiballZ, Volant lo copia a `<remote_tmp>/ansible-tmp-*/AnsiballZ_<module>.py` y lo deja allí, y sus comandos `explode` y `execute` funcionan. Para esto el host necesita Python, y cada una de estas tareas es más lenta que a través del agente. `-vvv` muestra cada `PUT` y `EXEC`. `copy`, `template` y los demás plugins de los que Volant tiene versión propia no dejan wrapper.
 
 [El agente en tus hosts](/es/docs/internals/agent/#la-caché-del-agente) describe la subida, la reparación de una caché dañada y las comprobaciones de permisos.
 

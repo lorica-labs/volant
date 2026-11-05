@@ -19,7 +19,7 @@ use crate::vars::{HostSettings, host_setting};
 
 use super::super::batch::send_batch;
 use super::super::channel::AgentChannel;
-use super::{DISCOVERED_INTERPRETER, DISCOVERY_HELP, chosen_interpreter, discovery_warning};
+use super::{Asked, DISCOVERED_INTERPRETER, DISCOVERY_HELP, chosen_interpreter, discovery_warning};
 
 /// Where the reference lands when the list finds nothing, or when the probe breaks.
 const LAST_RESORT: &str = "/usr/bin/python3";
@@ -134,7 +134,7 @@ impl Found {
     pub(in crate::executor) fn chosen(
         &self,
         index: usize,
-        asked: Option<&str>,
+        asked: Option<&Asked>,
     ) -> Result<String, TaskResult> {
         chosen_interpreter(asked, &self.interpreters(index))
     }

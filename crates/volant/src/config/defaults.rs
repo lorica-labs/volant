@@ -13,6 +13,7 @@ impl Default for Config {
             private_key_file: None,
             host_key_checking: true,
             remote_tmp: DEFAULT_REMOTE_TMP.to_string(),
+            keep_remote_files: false,
             async_dir: None,
             forks: DEFAULT_FORKS,
             r#become: false,

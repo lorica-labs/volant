@@ -86,6 +86,12 @@ impl Replay {
     /// The answers of `recording`, for a replay running in `root`.
     pub(crate) fn new(recording: &Recording, root: &Path) -> Self {
         let cwd = Path::new(&recording.header.cwd);
+        // A path a module answered, such as a job's status file, is read back under this directory.
+        let places = (recording.header.cwd.clone(), root.display().to_string());
+        let here = |result: &Value| match result {
+            Value::Object(map) => Value::Object(super::alike::moved(map, &places)),
+            other => other.clone(),
+        };
         let mut paths: HashMap<&str, String> = HashMap::new();
         // The occurrence each (host, task uuid) was given, and how many each (host, path) has.
         let mut occurrence: HashMap<(&str, &str), usize> = HashMap::new();
@@ -110,7 +116,7 @@ impl Replay {
                         *next += 1;
                         *next - 1
                     });
-                    let result = event.get("result").cloned().unwrap_or(Value::Null);
+                    let result = event.get("result").map_or(Value::Null, here);
                     if kind == "retry" {
                         retries.entry((host, uuid)).or_default().push(result);
                         continue;
@@ -195,6 +201,11 @@ impl Replay {
             )));
         };
         let mut reply = module_answer(map, looped);
+        // The callback's copy of a result has no `failed`, which `clean_copy` took off: the status
+        // is what is left of it, and all there is for a failure with no `rc`, a job's end included.
+        if answer.status == "failed" && attempt > answer.attempts.len() {
+            reply.entry("failed").or_insert(Value::Bool(true));
+        }
         // An `until` that reads an unknown value ends at the attempt the recording ended at.
         if !task.until.is_empty() && attempt > answer.attempts.len() {
             reply.insert(FINAL.into(), Value::Bool(true));

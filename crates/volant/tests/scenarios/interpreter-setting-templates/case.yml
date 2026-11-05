@@ -1,0 +1,5 @@
+# An interpreter setting that renders to `omit` is not set: Python discovers, a module with another
+# interpreter keeps its own shebang.
+needs: [ansible-core]
+runs:
+  - args: [-i, inv.ini, templates.yml]

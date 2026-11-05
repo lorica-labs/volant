@@ -126,6 +126,14 @@ pub(in crate::executor) async fn poll_job<C: AgentChannel>(
             banner: true,
         })
     };
+    let heard = |method: &'static str, result: &TaskResult| {
+        tx.send(crate::executor::coordinator::Event::AsyncStatus {
+            host: host.to_string(),
+            index,
+            method,
+            result: result.clone(),
+        })
+    };
     let Some(jid) = started
         .0
         .get(JOB_ID)
@@ -193,6 +201,7 @@ pub(in crate::executor) async fn poll_job<C: AgentChannel>(
             break;
         }
         left = left.saturating_sub(poll);
+        let _ = heard("v2_runner_on_async_poll", &status).await;
         let _ = show(format!(
             "ASYNC POLL on {host}: jid={} started={} finished={}",
             python_repr(status.0.get(JOB_ID)),
@@ -254,6 +263,12 @@ pub(in crate::executor) async fn poll_job<C: AgentChannel>(
         python_repr(shown)
     ))
     .await;
+    let method = if verdict == "FAILED" {
+        "v2_runner_on_async_failed"
+    } else {
+        "v2_runner_on_async_ok"
+    };
+    let _ = heard(method, &result).await;
     Polled::Done(result)
 }
 

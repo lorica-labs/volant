@@ -31,7 +31,7 @@ pub(super) async fn sweep_abandoned<C: AgentChannel>(
     item: &Item,
     union: Option<&Union>,
     interpreters: &[String],
-    asked: Option<&str>,
+    asked: Option<&crate::executor::run::interpreter::Asked>,
     stop: &mut watch::Receiver<bool>,
     stop_broken: &mut bool,
     logs: &mut Vec<String>,

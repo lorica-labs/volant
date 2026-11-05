@@ -10,8 +10,8 @@ use super::channel::Relinker;
 use super::channel::{AgentChannel, Relink, with_connect_timeout};
 use super::controller::pause;
 use super::interpreter::{
-    chosen_interpreter, python_for, requested_interpreter, running_host_vars, step_tasks, sub_task,
-    unreachable_ending,
+    asked_interpreter, chosen_interpreter, python_for, requested_interpreter, running_host_vars,
+    step_tasks, sub_task, unreachable_ending,
 };
 #[cfg(unix)]
 use super::judge::condition_vars;
@@ -2980,7 +2980,7 @@ fn the_playbook_interpreter_wins_and_a_missing_one_says_so() {
             "/usr/bin/python3.12"
         );
         assert_eq!(
-            chosen_interpreter(Some("/usr/bin/python3"), &found)
+            chosen_interpreter(Some(&Ok("/usr/bin/python3".to_string())), &found)
                 .expect("what the playbook asked for"),
             "/usr/bin/python3"
         );
@@ -2988,7 +2988,7 @@ fn the_playbook_interpreter_wins_and_a_missing_one_says_so() {
     {
         assert_eq!(
             chosen_interpreter(
-                Some("/opt/python3.12/bin/python"),
+                Some(&Ok("/opt/python3.12/bin/python".to_string())),
                 &["/usr/bin/python3".to_string()]
             )
             .expect("the playbook named it, so it travels"),
@@ -3000,14 +3000,22 @@ fn the_playbook_interpreter_wins_and_a_missing_one_says_so() {
             ("{{ nopy }}", "Task failed: 'nopy' is undefined"),
             (
                 "{{ root }}/bin/{{ name }}",
-                "Task failed: The task includes an option with an undefined variable.",
+                "Task failed: 'root' is undefined",
             ),
         ] {
-            let failure = chosen_interpreter(Some(named), &["/usr/bin/python3".to_string()])
+            let mut vars = HostVars::default();
+            vars.map
+                .insert("ansible_python_interpreter".to_string(), json!(named), None);
+            let failure = asked_interpreter(&vars, &templar())
+                .expect("the setting is set")
                 .expect_err("a template that did not render is not a path");
             let msg = failure.0.get("msg").and_then(Value::as_str).unwrap_or("");
-            assert!(msg.starts_with(want), "{named}: {msg}");
+            assert_eq!(msg, want, "{named}");
             assert!(failure.failed(), "{failure:?}");
+            assert!(
+                failure.0.contains_key(crate::render::CHAIN_KEY),
+                "{failure:?}"
+            );
         }
     }
     {

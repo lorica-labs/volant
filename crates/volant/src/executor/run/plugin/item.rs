@@ -47,7 +47,7 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
     item: &Item,
     union: Option<&Union>,
     interpreters: &[String],
-    asked: Option<&str>,
+    asked: Option<&crate::executor::run::interpreter::Asked>,
     stop: &mut watch::Receiver<bool>,
     stop_broken: &mut bool,
     logs: &mut Vec<String>,

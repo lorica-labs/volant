@@ -312,6 +312,17 @@ fn line_tree(value: &Value, file: Option<&Path>, line: usize) -> Option<TagTree>
 fn line_tagged(vars: &serde_json::Map<String, Value>, file: Option<&Path>, line: usize) -> Tagged {
     let mut out = Tagged::default();
     for (key, value) in vars {
+        if let (Value::String(text), Some(path)) = (value, file)
+            && crate::template::Templar::is_stored_template(text)
+            && let Ok(path) = std::path::absolute(path)
+        {
+            let origin = crate::playbook::Origin {
+                path: path.display().to_string().into(),
+                line,
+                col: 0,
+            };
+            crate::template::note_written(key, text, origin);
+        }
         out.insert(key.clone(), value.clone(), line_tree(value, file, line));
     }
     out

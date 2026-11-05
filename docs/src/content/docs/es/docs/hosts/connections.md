@@ -1,5 +1,5 @@
 ---
-sourceHash: 798067bf652a
+sourceHash: 159c4aca9e0e
 title: Conexiones y become
 description: Cómo llega Volant a un host, las variables de host y los ajustes de ansible.cfg que lee, y cómo funciona become mediante sudo y su.
 ---

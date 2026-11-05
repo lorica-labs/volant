@@ -1,5 +1,5 @@
 ---
-sourceHash: 798067bf652a
+sourceHash: 159c4aca9e0e
 title: 连接与 become
 description: Volant 如何连接到主机、它读取的主机变量和 ansible.cfg 设置，以及 become 如何通过 sudo 和 su 工作。
 ---

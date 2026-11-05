@@ -199,6 +199,7 @@ fn a_ping_that_lost_its_link_is_retried_over_a_new_one() {
         deadline: Instant::now() + Duration::from_secs(600),
         stale: false,
         connect_timeout: Duration::from_secs(5),
+        remote_addr: String::new(),
     };
     to_plugin.send(FromHelper::Ask(ping())).unwrap();
     assert!(matches!(plugin.next(None), Step::RunDropping(_)));
@@ -247,6 +248,7 @@ fn a_command_that_must_not_escalate_runs_as_the_connection_user(
         deadline: Instant::now() + Duration::from_secs(600),
         stale: false,
         connect_timeout: Duration::from_secs(5),
+        remote_addr: String::new(),
     };
     let ask = Ask::Command {
         cmd: "true".into(),
@@ -372,6 +374,7 @@ fn a_wrapped_module_starts_as_a_job(
         deadline: Instant::now() + Duration::from_secs(600),
         stale: false,
         connect_timeout: Duration::from_secs(5),
+        remote_addr: String::new(),
     };
     let ask = Ask::Module {
         name: name.into(),
@@ -421,6 +424,7 @@ fn another_host_s_variables_say_whether_they_render(#[case] host: &str, #[case] 
         deadline: Instant::now() + Duration::from_secs(600),
         stale: false,
         connect_timeout: Duration::from_secs(5),
+        remote_addr: String::new(),
     };
     let ask = Ask::HostVar { host: host.into() };
     let Err(answer) = plugin.step_for(ask) else {

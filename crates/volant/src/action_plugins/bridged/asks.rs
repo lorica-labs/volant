@@ -7,7 +7,8 @@ use serde_json::{Value, json};
 use volant_protocol::TaskResult;
 use volant_protocol::modules::short_name;
 
-use super::super::{Step, Sub, is_gone};
+use super::super::wrapper::WRAPPER;
+use super::super::{Kind, Step, Sub, is_gone};
 use super::helpers::{command_reply, failure_or, plain_path, raw};
 use super::{Bridged, Pending};
 use crate::bridge::{Ask, BridgeError, Reply, TmpOp};
@@ -18,6 +19,13 @@ fn plain(step: Step) -> Step {
 }
 
 impl Bridged {
+    /// A module run from its wrapper shows what the reference's connection shows of it.
+    fn show(&self, text: &str) {
+        if Kind::Bridged(self.name) == WRAPPER {
+            crate::transport::trace::action_line(&self.remote_addr, text);
+        }
+    }
+
     /// The step an ask becomes, or the reply it gets without one.
     #[expect(clippy::too_many_lines)]
     pub(super) fn step_for(&mut self, ask: Ask) -> Result<(Step, Pending), Reply> {
@@ -111,6 +119,7 @@ impl Bridged {
                         "Connection.exec_command with input is not supported yet".into(),
                     ));
                 }
+                self.show(&format!("EXEC {cmd}"));
                 let mut args = raw(cmd);
                 // With no stdin and `sudoable`, the reference sends the command through `ssh -tt`.
                 if !sudoable {
@@ -125,6 +134,7 @@ impl Bridged {
                 mode,
             } => {
                 let shown = local.display().to_string();
+                self.show(&format!("PUT {shown} TO {remote}"));
                 let bytes = std::fs::read(&local)
                     .map_err(|err| Reply::Error(format!("could not read {shown}: {err}")))?;
                 Ok((

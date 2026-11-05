@@ -191,7 +191,7 @@ Un archivo que existe pero no se puede leer se omite, y la ejecución continúa 
 </Option>
 
 <Option name="fact_caching" id="defaults-fact-caching" default="memory" env="ANSIBLE_CACHE_PLUGIN">
-  `memory` guarda los facts durante la ejecución, `jsonfile` los guarda entre ejecuciones. Consulta [La caché de facts](/es/docs/hosts/inventories/#la-caché-de-facts).
+  `memory` guarda los facts durante la ejecución, `jsonfile` los guarda entre ejecuciones y cualquier otro nombre es un plugin de Python. Consulta [La caché de facts](/es/docs/hosts/inventories/#la-caché-de-facts).
 </Option>
 
 <Option name="fact_caching_connection" id="defaults-fact-caching-connection" env="ANSIBLE_CACHE_PLUGIN_CONNECTION">

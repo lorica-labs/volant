@@ -2,8 +2,8 @@
 use super::*;
 use rstest::rstest;
 
-fn cache(dir: &Path, timeout: i64) -> FactCache {
-    FactCache {
+fn cache(dir: &Path, timeout: i64) -> Files {
+    Files {
         dir: dir.to_path_buf(),
         prefix: "pfx_".into(),
         timeout,
@@ -104,7 +104,7 @@ fn the_settings_that_cannot_make_a_cache_say_so() {
         fact_caching: "jsonfile".into(),
         ..Config::default()
     };
-    let (none, warnings) = FactCache::open(&config);
+    let (none, warnings) = Files::open(&config);
     assert!(none.is_none());
     assert_eq!(
         warnings,
@@ -114,7 +114,7 @@ fn the_settings_that_cannot_make_a_cache_say_so() {
     let blocker = dir.path().join("f");
     std::fs::write(&blocker, "").unwrap();
     config.fact_caching_connection = Some(blocker.join("fc"));
-    let (none, warnings) = FactCache::open(&config);
+    let (none, warnings) = Files::open(&config);
     assert!(none.is_none());
     assert!(
         warnings[0]

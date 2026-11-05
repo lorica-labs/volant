@@ -51,8 +51,9 @@ impl InventoryPlugin for Auto {
         };
         match parse_builtin(name, source, into, cx) {
             Some(result) => result,
-            // A plugin of a collection runs in ansible-core, in the helper that starts only now.
-            None if name.contains('.') => {
+            // A plugin of a collection or beside the playbook runs in ansible-core, in the helper
+            // that starts only now.
+            None if name.contains('.') || cx.helper().inventory_plugin_exists(name) => {
                 let answer = cx
                     .helper()
                     .inventory(name, path)

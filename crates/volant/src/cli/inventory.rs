@@ -61,6 +61,9 @@ pub struct InventoryArgs {
         value_name = "SOURCE"
     )]
     inventory: Vec<String>,
+    /// Where a playbook would have sat: the plugin directories beside it are read.
+    #[arg(long = "playbook-dir", value_name = "BASEDIR")]
+    playbook_dir: Option<PathBuf>,
     /// Limit `--list` to the hosts matching this pattern.
     #[arg(short = 'l', long = "limit", value_name = "SUBSET")]
     limit: Option<String>,
@@ -139,7 +142,7 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
     crate::vault::install(secrets);
     let base = std::env::current_dir()?;
     let unreadable = extra::unreadable(&args.extra_vars, &base);
-    let loaded = match load(&args.inventory, &config, unreadable.as_ref(), &mut out) {
+    let loaded = match load(args, &config, unreadable.as_ref(), &mut out) {
         Ok(inventory) => inventory,
         Err(code) => return Ok(code),
     };
@@ -363,13 +366,18 @@ fn yaml_list(
 /// is said while reading goes to the terminal as `ansible-playbook` says it. `Err` carries the
 /// exit code, with the message already printed.
 fn load(
-    given: &[String],
+    args: &InventoryArgs,
     config: &Config,
     unreadable: Option<&extra::Unreadable>,
     out: &mut Renderer,
 ) -> Result<Inventory, i32> {
-    let sources = inventory_sources(given, config);
+    let sources = inventory_sources(&args.inventory, config);
     let bridge = Bridge::late();
+    let playbook_dir = super::args::playbook_dir(args.playbook_dir.as_deref());
+    if let Some(dir) = playbook_dir.and_then(|dir| std::path::absolute(dir).ok()) {
+        // Nothing can refuse them: no helper is running yet.
+        let _ = bridge.set_plugin_dirs(vec![dir]);
+    }
     let mut plugins = config.inventory_plugins.clone();
     plugins.extra_vars_error = unreadable.map(|u| (u.message.clone(), u.origin.clone()));
     let loaded = load_sources_with(&sources, &plugins, &|| Arc::clone(&bridge));

@@ -3,13 +3,12 @@
 # target that differs, and an entry goes away with the fix of its issue.
 ansiballz_debugging            #1330
 assert                         #1282
-cache-plugins                  #1334
+cache-plugins                  #1282
 conditionals                   #1282
 deprecations                   #1282
 filter_encryption              #1282
 gather_facts-errors            #1330
 include_vars                   #1282
-inventory_cache                #1334
 inventory_script               #1282
 lookup_env                     #1282
 protomatter                    #1282

@@ -65,6 +65,10 @@ Genau eine der Optionen `--list`, `--host` und `--graph` ist erforderlich.
   Behält mit `--list` nur die Hosts, die zum Muster passen. Gruppen bleiben, mit ihren Kindern. Ein Muster ohne Treffer warnt und gibt ein Inventory ohne Host aus.
 </Option>
 
+<Option name="--playbook-dir" arg="BASEDIR">
+  Wo ein Playbook gelegen hätte: Inventory- und Cache-Plugins aus den Plugin-Verzeichnissen daneben werden geladen. `ANSIBLE_PLAYBOOK_DIR` setzt es ebenfalls.
+</Option>
+
 <Option name="-e, --extra-vars" arg="VARS">
   Zusätzliche Variablen, jedem Host hinzugefügt und stärker als jede andere Ebene.
 </Option>

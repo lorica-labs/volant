@@ -108,7 +108,7 @@ async fn run_all(
         Vec::new()
     };
     // The cache directory is made when the plugin loads, before any playbook is read.
-    let (cache, cache_warnings) = crate::fact_cache::FactCache::open(&config);
+    let (cache, cache_warnings) = crate::fact_cache::FactCache::open(&config, &bridge);
     for warning in &cache_warnings {
         out.warning(warning, false);
     }
@@ -491,6 +491,7 @@ async fn run_all(
         Arc::clone(&bridge),
         super::hosts::with_pattern(args, limit.as_ref())?,
     );
+    let cache = cache.filter(|cache| cache.load().map_err(|why| out.warning(&why, false)).is_ok());
     if let Some(cache) = &cache {
         let mut names: Vec<String> = inventory
             .resolve("all")

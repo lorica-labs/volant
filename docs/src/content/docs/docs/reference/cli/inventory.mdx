@@ -64,6 +64,10 @@ Exactly one of `--list`, `--host` and `--graph` is required.
   With `--list`, keep only the hosts matching the pattern. Groups stay, with their children. A pattern that matches nothing warns and prints an inventory with no host.
 </Option>
 
+<Option name="--playbook-dir" arg="BASEDIR">
+  Where a playbook would have sat: the inventory and cache plugins in the plugin directories beside it load. `ANSIBLE_PLAYBOOK_DIR` sets it too.
+</Option>
+
 <Option name="-e, --extra-vars" arg="VARS">
   Extra variables, added to every host and winning over every other layer.
 </Option>

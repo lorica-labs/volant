@@ -195,7 +195,7 @@ Un fichier qui existe mais ne peut pas être lu est ignoré, et l'exécution con
 </Option>
 
 <Option name="fact_caching" id="defaults-fact-caching" default="memory" env="ANSIBLE_CACHE_PLUGIN">
-  `memory` garde les facts le temps de l'exécution, `jsonfile` les garde d'une exécution à l'autre. Voir [Le cache de facts](/fr/docs/hosts/inventories/#le-cache-de-facts).
+  `memory` garde les facts le temps de l'exécution, `jsonfile` les garde d'une exécution à l'autre, et tout autre nom est un plugin Python. Voir [Le cache de facts](/fr/docs/hosts/inventories/#le-cache-de-facts).
 </Option>
 
 <Option name="fact_caching_connection" id="defaults-fact-caching-connection" env="ANSIBLE_CACHE_PLUGIN_CONNECTION">

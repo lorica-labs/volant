@@ -327,7 +327,7 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
             // A zero reaches the caller as zero, where the single startup check refuses it.
             // A value that is no number at all is the reference's own exit 5 instead.
             "forks" => config.forks = forks(integer("DEFAULT_FORKS", origin, value)?),
-            "fact_caching" => config.fact_caching = cache_plugin(value, origin)?,
+            "fact_caching" => config.fact_caching = cache_plugin(value),
             "fact_caching_connection" => {
                 config.fact_caching_connection = Some(expand_home(value.trim(), base));
             }

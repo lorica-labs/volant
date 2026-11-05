@@ -65,6 +65,10 @@ Se requiere exactamente una de `--list`, `--host` y `--graph`.
   Con `--list`, conserva solo los hosts que coinciden con el patrón. Los grupos se quedan, con sus hijos. Un patrón que no coincide con nada avisa e imprime un inventario sin hosts.
 </Option>
 
+<Option name="--playbook-dir" arg="BASEDIR">
+  Donde estaría un playbook: se cargan los plugins de inventario y de caché de los directorios de plugins junto a él. `ANSIBLE_PLAYBOOK_DIR` también lo define.
+</Option>
+
 <Option name="-e, --extra-vars" arg="VARS">
   Variables adicionales, añadidas a cada host y que ganan sobre todas las demás capas.
 </Option>

@@ -291,6 +291,11 @@ pub(super) fn start(
     } else {
         running.clone()
     };
+    // An interpreter setting that rendered to `omit` is not set: `_get_shebang` keeps the module's
+    // own line, or discovers for Python.
+    task_vars.retain(|name, value| {
+        !name.ends_with("_interpreter") || value.as_str() != Some(crate::vars::omit_token())
+    });
     // Where the plugin looks for a `src`: the role's root, the directory of the task's file, then
     // the playbook's directory, as `Task.get_search_path` answers for a task that is in a role,
     // the roles it is a dependency of coming right after the role.

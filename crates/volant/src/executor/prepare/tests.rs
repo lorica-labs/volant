@@ -693,6 +693,10 @@ fn become_follows_the_variable_then_the_task_then_the_play() {
             "the variable turns a play's become off"
         );
         assert!(
+            escalate(None, None, json!({"on": 1, "ansible_become": "{{ on }}"})).is_some(),
+            "a template is rendered first, and 1 is true"
+        );
+        assert!(
             escalate(None, Some(false), json!({"ansible_become": true})).is_some(),
             "and turns it on where the play said no"
         );
@@ -922,6 +926,7 @@ fn the_become_password_is_redacted_in_debug_output() {
         prompt_l10n: Vec::new(),
         chdir: None,
         keep_preamble: false,
+        success_timeout: None,
     };
     assert!(!format!("{escalation:?}").contains("s3cret"));
     let mut d = defaults();

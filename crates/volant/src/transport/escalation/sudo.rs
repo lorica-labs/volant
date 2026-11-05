@@ -4,7 +4,7 @@
 use super::super::defaults::{ConnectError, Escalation};
 use super::super::shell::single_quoted;
 
-/// Which `sudo` form a link uses. The escalation probe settles it and the link itself then
+/// Which `sudo` form a remote link uses. The escalation probe settles it and the link itself then
 /// uses the same one, so the two can never disagree about whether a password is offered.
 ///
 /// `-n` is the form for a `sudo` that will not ask for anything: it never reads stdin, so
@@ -94,21 +94,6 @@ pub(in crate::transport) fn interactive(flag: &str) -> Option<String> {
         Some(at) => format!("-{}{}", &cluster[..at], &cluster[at + 1..]),
         None => flag.to_string(),
     })
-}
-
-/// The command line that starts a local agent, under `sudo` when escalation is asked for.
-pub(in crate::transport) fn local_argv(agent: &str, escalated: Escalated<'_>) -> Vec<String> {
-    let Some((escalation, form)) = escalated else {
-        return vec![agent.to_string()];
-    };
-    let mut argv = sudo_words(escalation, form);
-    // An empty `become_user` names nobody, so `sudo` runs as its own default, root: sudo.py
-    // leaves `-u` out for it.
-    if !escalation.user.is_empty() {
-        argv.extend(["-u".to_string(), escalation.user.clone()]);
-    }
-    argv.extend(["--".to_string(), agent.to_string()]);
-    argv
 }
 
 /// One remote command as the escalated user, or unchanged when the link does not escalate.

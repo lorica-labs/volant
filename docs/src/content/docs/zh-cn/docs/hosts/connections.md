@@ -1,5 +1,5 @@
 ---
-sourceHash: 7668cce931df
+sourceHash: b7c715440ad5
 title: 连接与 become
 description: Volant 如何连接到主机、它读取的主机变量和 ansible.cfg 设置，以及 become 如何通过 sudo 和 su 工作。
 ---
@@ -45,6 +45,8 @@ Volant 连接到受管主机，在那里放置一个小型静态 agent（运行�
 什么都解析不到的名字会让 task 失败，并给出 `the connection plugin '<name>' was not found`，与 Ansible 一样。这包括被转到未安装 collection 的短名字，例如没有 community.docker 时的 `docker`（在 ansible-core 为它打印的警告之后），以及 `ansible.builtin.paramiko`，ansible-core 2.19.12 不以这个名字提供它。不论这个值是主机自己的连接、`delegate_to` 目标的连接，还是运行 `run_once` task 的那台主机的连接，都是如此。
 
 密码来自 `-k`、`--connection-password-file` 或 `ansible_password` 变量。Volant 通过 `SSH_ASKPASS` 和一个运行结束时会删除的私有临时文件把它交给 `ssh`，这需要 OpenSSH 8.4 或更高版本。随后 `ssh` 以 `BatchMode=no` 和 `NumberOfPasswordPrompts=1` 运行，所以一次错误的回答就会结束这次尝试。密码绝不会出现在命令行、程序的环境或输出中，`-vvvv` 也不例外。用 vault 加密的 `ansible_password` 与任何 vault 加密的变量一样工作。没有密码时，`ssh` 以 `BatchMode=yes` 运行，从不提示，所以需要密码或口令的主机会被报告为不可达，而不是让运行卡住。
+
+使用 `-vvv` 时，`local` 主机的链路会打印 `ESTABLISH LOCAL CONNECTION FOR USER: <user>` 和 `EXEC <the command line>`。这两行给出 Volant 启动 agent 的命令，每条链路一次；即使不显示，`log_verbosity` 也会把它们写入日志。
 
 ## Docker 容器
 
@@ -339,7 +341,7 @@ sudo -H <form> -u <user> -- volant-agent
 
 提权 agent 会保持到 play 结束，所以由提权 task 组成的 play，每台主机只需为 `sudo` 付出一次代价。
 
-通过 `local` 连接时，agent 在一个 shell 后面启动，这个 shell 先打印一行成功标记，就像 ansible-core 的命令打印它的 `BECOME-SUCCESS-<random>`。因此 `become_exe` 包装脚本在 `sudo` 运行之前打印的内容不会被当成 agent 的输出，而是写到控制节点的标准错误。设置 `ansible_local_become_strip_preamble: false` 时会保留这些内容：包装脚本打印的内容和成功标记会放在每个通过该 agent 提权的 `raw` task 的 `stdout` 和 `stderr` 前面。这样的 task 使用单独的 agent。
+通过 `local` 连接时，`sudo` 的运行方式与 ansible-core 的 `local` 连接相同。这里没有探测：agent 在一个 shell 后面启动，这个 shell 先打印一行成功标记，就像 ansible-core 的命令打印它的 `BECOME-SUCCESS-<random>`，所以 `become_exe` 包装脚本先打印的内容不会被当成 agent 的输出。有密码时，`sudo` 得到 `-S -p "[sudo via ansible, key=<random>] password:"`，当这个提示出现在 stdout 或 stderr 上时才发送密码。没有密码时，它得到 `-S -n`。`ansible_local_become_success_timeout` 限制等待成功标记的时间，默认 10 秒。通过该 agent 提权的 `raw` task 会在 `stderr` 里显示 `sudo` 在提示之后打印的内容。设置 `ansible_local_become_strip_preamble: false` 时，它会显示两个流在 agent 启动前打印的全部内容，包括提示和成功标记，这样的 task 使用单独的 agent。
 
 ### 哪个设置优先
 
@@ -367,9 +369,9 @@ sudo -H <form> -u <user> -- volant-agent
 
 ### sudo 探测
 
-Volant 会询问 `sudo` 该用哪种形式，而不是假设其中一种。它先尝试 `sudo -n`，只有当 `sudo` 本身因缺少认证而拒绝请求时，才退回到 `sudo -k -S -p ''`。为什么靠猜测会让链路挂起，见[决策记录 0004](/zh-cn/docs/decisions/0004-become-runs-a-second-agent-under-sudo/)。对已经运行过的主机，Volant 先在做检查的同一个 `ssh` 会话里用 `sudo -n` 启动缓存的 agent，只有这样不行时才运行探测，见[主机上的 agent](/zh-cn/docs/internals/agent/)。
+除 `local` 连接外，Volant 会询问 `sudo` 该用哪种形式，而不是假设其中一种。它先尝试 `sudo -n`，只有当 `sudo` 本身因缺少认证而拒绝请求时，才退回到 `sudo -k -S -p ''`。为什么靠猜测会让链路挂起，见[决策记录 0004](/zh-cn/docs/decisions/0004-become-runs-a-second-agent-under-sudo/)。对已经运行过的主机，Volant 先在做检查的同一个 `ssh` 会话里用 `sudo -n` 启动缓存的 agent，只有这样不行时才运行探测，见[主机上的 agent](/zh-cn/docs/internals/agent/)。
 
-当提权失败时，无论是缺少密码、密码错误，还是 `sudoers` 规则禁止该命令，task 都会失败，主机仍然可达。消息是 Ansible 自己的：`Missing sudo password` 或 `Incorrect sudo password`。使用另一个密码的 task 会得到自己的 agent，因此即使正确的密码已经成功过，错误的密码仍会失败，而 `ignore_errors` 会像对待其他失败一样覆盖这种失败。
+当提权失败时，无论是缺少密码、密码错误，还是 `sudoers` 规则禁止该命令，task 都会失败，主机仍然可达。消息是 Ansible 自己的：`Missing sudo password` 或 `Incorrect sudo password`。使用另一个密码的 task 会得到自己的 agent，因此即使正确的密码已经成功过，错误的密码仍会失败，而 `ignore_errors` 会像对待其他失败一样覆盖这种失败。 通过 `local` 连接时，消息与 ansible-core 的 `local` 连接相同：`Premature end of stream waiting for become success`，后面跟着每个流打印的内容；密码错误时是 `Duplicate become password prompt encountered`。`Timed out waiting for become success` 会让主机变为不可达。
 
 ### su
 

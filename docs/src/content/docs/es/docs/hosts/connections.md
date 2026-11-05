@@ -1,5 +1,5 @@
 ---
-sourceHash: 7668cce931df
+sourceHash: b7c715440ad5
 title: Conexiones y become
 description: Cómo llega Volant a un host, las variables de host y los ajustes de ansible.cfg que lee, y cómo funciona become mediante sudo y su.
 ---
@@ -45,6 +45,8 @@ Un nombre que se resuelve en un plugin que Volant no maneja por sí mismo, como 
 Un nombre que no se resuelve en nada hace fallar la tarea con `the connection plugin '<name>' was not found`, como hace Ansible. Eso incluye un nombre corto dirigido a una colección que no está instalada, como `docker` sin community.docker, tras el aviso que ansible-core muestra para él, y `ansible.builtin.paramiko`, que ansible-core 2.19.12 no tiene con ese nombre. Esto vale tanto si el valor es la conexión del propio host, la de un destino de `delegate_to` o la del host que ejecuta una tarea `run_once`.
 
 Una contraseña viene de `-k`, de `--connection-password-file` o de la variable `ansible_password`. Volant se la entrega a `ssh` mediante `SSH_ASKPASS` y un archivo temporal privado que se elimina al final de la ejecución, lo que exige OpenSSH 8.4 o posterior. Entonces `ssh` se ejecuta con `BatchMode=no` y `NumberOfPasswordPrompts=1`, de modo que una respuesta incorrecta termina el intento. La contraseña nunca aparece en una línea de comandos, en el entorno de un programa ni en la salida, ni siquiera con `-vvvv`. Un `ansible_password` cifrado con vault funciona como cualquier variable cifrada. Sin contraseña, `ssh` se ejecuta con `BatchMode=yes` y nunca pregunta, así que un host que pediría una contraseña o una frase de paso se marca como inalcanzable en lugar de bloquear la ejecución.
+
+Con `-vvv`, el enlace de un host `local` imprime `ESTABLISH LOCAL CONNECTION FOR USER: <user>` y `EXEC <the command line>`. Esas líneas nombran el comando con el que Volant arranca el agente, una vez por enlace, y `log_verbosity` las envía al registro aunque no se muestren.
 
 ## Contenedores Docker
 
@@ -339,7 +341,7 @@ sudo -H <form> -u <user> -- volant-agent
 
 El agente escalado se conserva hasta el final del play, así que un play de tareas con escalado paga `sudo` una vez por host.
 
-Con una conexión `local`, el agente arranca detrás de una shell que primero imprime una línea de éxito, como el comando de ansible-core imprime su `BECOME-SUCCESS-<random>`. Lo que un envoltorio de `become_exe` imprime antes de que corra `sudo` nunca se lee como salida del agente, y va a la salida de error estándar del controlador. Con `ansible_local_become_strip_preamble: false` se conserva: lo que imprimió el envoltorio y la línea de éxito van delante del `stdout` y del `stderr` de cada tarea `raw` que escala con ese agente. Esas tareas tienen un agente propio.
+Con una conexión `local`, `sudo` corre como lo arranca la conexión `local` de ansible-core. No hay sonda: el agente arranca detrás de una shell que primero imprime una línea de éxito, como el comando de ansible-core imprime su `BECOME-SUCCESS-<random>`, así que nada de lo que un envoltorio de `become_exe` imprima primero se lee como salida del agente. Con contraseña, `sudo` recibe `-S -p "[sudo via ansible, key=<random>] password:"`, y la contraseña sale cuando ese prompt aparece en stdout o stderr. Sin contraseña recibe `-S -n`. `ansible_local_become_success_timeout` limita la espera de la línea de éxito, 10 segundos por defecto. Una tarea `raw` que escala con ese agente muestra en su `stderr` lo que `sudo` imprimió allí después del prompt. Con `ansible_local_become_strip_preamble: false` muestra todo lo que dijeron los dos flujos antes de que arrancara el agente, incluidos el prompt y la línea de éxito, y esas tareas tienen un agente propio.
 
 ### Qué ajuste gana
 
@@ -367,9 +369,9 @@ Se escribe una sola vez en la entrada estándar de `sudo`. Nunca aparece en una 
 
 ### La sonda de sudo
 
-Volant le pregunta a `sudo` qué forma usar en lugar de suponer una. Prueba primero `sudo -n` y recurre a `sudo -k -S -p ''` solo cuando el propio `sudo` rechaza la petición por falta de autenticación. El [registro de decisión 0004](/es/docs/decisions/0004-become-runs-a-second-agent-under-sudo/) explica por qué una suposición bloquearía el enlace. En un host que ya se usó, Volant arranca primero el agente en caché con `sudo -n` en la misma sesión `ssh` que sus comprobaciones, y solo ejecuta la sonda cuando eso no funciona, como describe [El agente en tus hosts](/es/docs/internals/agent/).
+Salvo con una conexión `local`, Volant le pregunta a `sudo` qué forma usar en lugar de suponer una. Prueba primero `sudo -n` y recurre a `sudo -k -S -p ''` solo cuando el propio `sudo` rechaza la petición por falta de autenticación. El [registro de decisión 0004](/es/docs/decisions/0004-become-runs-a-second-agent-under-sudo/) explica por qué una suposición bloquearía el enlace. En un host que ya se usó, Volant arranca primero el agente en caché con `sudo -n` en la misma sesión `ssh` que sus comprobaciones, y solo ejecuta la sonda cuando eso no funciona, como describe [El agente en tus hosts](/es/docs/internals/agent/).
 
-Cuando el escalado falla, por falta de contraseña, por una contraseña incorrecta o por una regla de `sudoers` que prohíbe el comando, la tarea falla y el host sigue siendo alcanzable. Los mensajes son los propios de Ansible: `Missing sudo password` o `Incorrect sudo password`. Una tarea con otra contraseña recibe un agente propio, así que una contraseña incorrecta falla aunque la correcta ya haya funcionado, e `ignore_errors` cubre ese fallo como cualquier otro.
+Cuando el escalado falla, por falta de contraseña, por una contraseña incorrecta o por una regla de `sudoers` que prohíbe el comando, la tarea falla y el host sigue siendo alcanzable. Los mensajes son los propios de Ansible: `Missing sudo password` o `Incorrect sudo password`. Una tarea con otra contraseña recibe un agente propio, así que una contraseña incorrecta falla aunque la correcta ya haya funcionado, e `ignore_errors` cubre ese fallo como cualquier otro. Con una conexión `local`, los mensajes son los de la conexión `local` de ansible-core: `Premature end of stream waiting for become success`, seguido de lo que dijo cada flujo, y `Duplicate become password prompt encountered` con una contraseña incorrecta. `Timed out waiting for become success` deja el host inalcanzable.
 
 ### su
 

@@ -114,6 +114,9 @@ pub struct Escalation {
     /// `ansible_local_become_strip_preamble: false`: what a local `sudo` printed before the agent
     /// started is kept, and put in front of each `raw` task's output.
     pub keep_preamble: bool,
+    /// `ansible_local_become_success_timeout`: how long a local `sudo` may take to start the
+    /// agent's shell.
+    pub success_timeout: Option<Duration>,
 }
 
 /// How a link escalates, less the user: two links to one user through different programs,
@@ -163,6 +166,7 @@ impl std::fmt::Debug for Escalation {
             .field("prompt_l10n", &self.prompt_l10n)
             .field("chdir", &self.chdir)
             .field("keep_preamble", &self.keep_preamble)
+            .field("success_timeout", &self.success_timeout)
             .finish()
     }
 }
@@ -186,11 +190,14 @@ pub const SU_PREMATURE_END: &str = "Premature end of stream waiting for become s
 
 /// The result of a task whose host refused to escalate, `msg` saying why. Measured for
 /// `Incorrect su password` (scout case `c5w`) and, over a local connection, `Premature end of
-/// stream`: the reference raises them from its connection, so the result is `changed: false` and
+/// stream` and `Duplicate become password prompt`: the reference raises them from its connection, so the result is `changed: false` and
 /// a `msg` that already says `Task failed: `. The other refusals keep their shape until they are
 /// measured too.
 pub fn refused_escalation(msg: String) -> volant_protocol::TaskResult {
-    if msg == INCORRECT_SU_PASSWORD || msg.starts_with(SU_PREMATURE_END) {
+    if msg == INCORRECT_SU_PASSWORD
+        || msg.starts_with("Premature end of stream")
+        || msg.starts_with("Duplicate become password prompt")
+    {
         let mut shaped = volant_protocol::TaskResult::failed_with(crate::render::task_failed(&msg));
         shaped.0.insert("changed".into(), Value::Bool(false));
         shaped

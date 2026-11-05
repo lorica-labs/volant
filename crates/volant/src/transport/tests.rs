@@ -17,9 +17,8 @@ use super::control::{CONTROL_PATH_MAX, asks_for_debug};
 #[cfg(unix)]
 use super::control::{STOP_MASTER_TIMEOUT, control_dir_in};
 use super::escalation::{
-    SudoForm, agent_version_ran, become_success, escalated_command, escalation_outcome,
-    interactive, local_argv, preamble, settle_form, su_command, su_ended, su_exchange, sudo_prefix,
-    unreachable_message,
+    SudoForm, become_success, escalated_command, escalation_outcome, interactive, preamble,
+    settle_form, su_command, su_ended, su_exchange, sudo_prefix, unreachable_message,
 };
 use super::shell::shell_word;
 use super::*;
@@ -48,57 +47,13 @@ fn escalation(password: Option<&str>) -> Escalation {
         prompt_l10n: Vec::new(),
         chdir: None,
         keep_preamble: false,
+        success_timeout: None,
     }
 }
 
 /// The sudo command line, the stdin preamble and the remote prefix follow the probed form.
 #[test]
 fn the_sudo_words_follow_the_probed_form() {
-    {
-        let password = format!("only-this-run-{}", std::process::id());
-        let secret = escalation(Some(password.as_str()));
-        let argv = local_argv("/usr/bin/volant-agent", Some((&secret, SudoForm::NoPrompt)));
-        assert_eq!(
-            argv,
-            [
-                "sudo",
-                "-H",
-                "-n",
-                "-u",
-                "deploy",
-                "--",
-                "/usr/bin/volant-agent"
-            ]
-        );
-        let argv = local_argv(
-            "/usr/bin/volant-agent",
-            Some((&secret, SudoForm::ReadStdin)),
-        );
-        assert_eq!(
-            argv,
-            [
-                "sudo",
-                "-H",
-                "-k",
-                "-S",
-                "-p",
-                "",
-                "-u",
-                "deploy",
-                "--",
-                "/usr/bin/volant-agent"
-            ]
-        );
-        assert!(
-            !argv.contains(&password),
-            "the password never reaches a command line: {argv:?}"
-        );
-        assert_eq!(
-            local_argv("/usr/bin/volant-agent", None),
-            ["/usr/bin/volant-agent"],
-            "without escalation the agent is the command"
-        );
-    }
     {
         let password = format!("only-this-run-{}", std::process::id());
         let secret = escalation(Some(password.as_str()));
@@ -161,6 +116,7 @@ fn become_exe_and_become_flags_shape_the_sudo_words(#[case] form: SudoForm, #[ca
         prompt_l10n: Vec::new(),
         chdir: None,
         keep_preamble: false,
+        success_timeout: None,
         ..escalation(Some("pw"))
     };
     assert_eq!(sudo_prefix(Some((&e, form))), want);
@@ -196,6 +152,7 @@ fn the_su_command_is_the_references_with_a_raw_terminal() {
         prompt_l10n: Vec::new(),
         chdir: None,
         keep_preamble: false,
+        success_timeout: None,
         ..e
     };
     assert!(
@@ -516,6 +473,10 @@ fn refused(stderr: &str) -> Captured {
     }
 }
 
+fn exited_zero(probe: &Captured) -> bool {
+    probe.code == Some(0)
+}
+
 /// The `sudo` form is settled by asking `sudo`, not by whether a password happens to be
 /// available.
 #[tokio::test]
@@ -528,7 +489,7 @@ async fn the_probe_settles_the_form_by_asking_sudo_before_offering_anything() {
     let without = escalation(None);
 
     let asked = RefCell::new(Vec::new());
-    let (form, _) = settle_form(&with, agent_version_ran, |form| {
+    let (form, _) = settle_form(&with, exited_zero, |form| {
         asked.borrow_mut().push(form);
         ready(Ok(agent_version()))
     })
@@ -547,7 +508,7 @@ async fn the_probe_settles_the_form_by_asking_sudo_before_offering_anything() {
     );
 
     let asked = RefCell::new(Vec::new());
-    let (form, _) = settle_form(&with, agent_version_ran, |form| {
+    let (form, _) = settle_form(&with, exited_zero, |form| {
         asked.borrow_mut().push(form);
         ready(Ok(match form {
             SudoForm::NoPrompt => refused("sudo: a password is required"),
@@ -561,7 +522,7 @@ async fn the_probe_settles_the_form_by_asking_sudo_before_offering_anything() {
     assert!(preamble(Some((&with, form))).is_some());
 
     let asked = RefCell::new(Vec::new());
-    let err = settle_form(&without, agent_version_ran, |form| {
+    let err = settle_form(&without, exited_zero, |form| {
         asked.borrow_mut().push(form);
         ready(Ok(refused("sudo: a password is required")))
     })
@@ -574,7 +535,7 @@ async fn the_probe_settles_the_form_by_asking_sudo_before_offering_anything() {
         "with nothing to offer there is nothing to try twice"
     );
 
-    let err = settle_form(&with, agent_version_ran, |form| {
+    let err = settle_form(&with, exited_zero, |form| {
         ready(Ok(match form {
             SudoForm::NoPrompt => refused("sudo: a password is required"),
             SudoForm::ReadStdin => refused("sudo: 1 incorrect password attempt"),
@@ -585,7 +546,7 @@ async fn the_probe_settles_the_form_by_asking_sudo_before_offering_anything() {
     assert_eq!(err.to_string(), INCORRECT_SUDO_PASSWORD);
 
     let asked = RefCell::new(Vec::new());
-    let err = settle_form(&with, agent_version_ran, |form| {
+    let err = settle_form(&with, exited_zero, |form| {
         asked.borrow_mut().push(form);
         ready(Ok(refused("sh: 1: sudo: not found")))
     })
@@ -597,33 +558,6 @@ async fn the_probe_settles_the_form_by_asking_sudo_before_offering_anything() {
         [SudoForm::NoPrompt],
         "a refusal no password can answer is final"
     );
-}
-
-/// A `sudo` that exits zero having run something else is not an escalation that worked.
-#[test]
-fn local_escalation_succeeds_only_on_the_agents_own_version_line() {
-    let printed = |code, stdout: &str| {
-        agent_version_ran(&Captured {
-            code,
-            stdout: stdout.to_string(),
-            stderr: String::new(),
-        })
-    };
-    let version = format!("volant-agent {}", env!("CARGO_PKG_VERSION"));
-    assert!(printed(Some(0), &version));
-    assert!(
-        printed(Some(0), &format!("{version}\n")),
-        "a trailing newline is not a different version"
-    );
-    assert!(
-        !printed(Some(0), "volant-agent 0.0.0-stale"),
-        "another version is not this agent"
-    );
-    assert!(
-        !printed(Some(0), ""),
-        "a zero exit with nothing printed proves nothing"
-    );
-    assert!(!printed(Some(1), &version), "a refusal is a refusal");
 }
 
 /// The remote probe cannot ask for a version, because it is the upload of that very agent it
@@ -676,6 +610,7 @@ fn an_escalated_bootstrap_command_is_expanded_by_a_shell_running_as_that_user() 
     let moved = Escalation {
         chdir: Some("/srv".into()),
         keep_preamble: false,
+        success_timeout: None,
         ..escalation(None)
     };
     assert_eq!(

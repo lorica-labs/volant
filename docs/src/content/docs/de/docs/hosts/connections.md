@@ -1,5 +1,5 @@
 ---
-sourceHash: 7668cce931df
+sourceHash: fc6065391248
 title: Verbindungen und become
 description: Wie Volant einen Host erreicht, welche Hostvariablen und ansible.cfg-Einstellungen es liest und wie become über sudo und su funktioniert.
 ---
@@ -339,7 +339,7 @@ sudo -H <form> -u <user> -- volant-agent
 
 Der Agent mit erweiterten Rechten bleibt bis zum Ende des Plays bestehen, sodass ein Play mit solchen Tasks `sudo` pro Host nur einmal bezahlt.
 
-Über eine `local`-Verbindung startet der Agent hinter einer Shell, die zuerst eine Erfolgszeile ausgibt, so wie der Befehl von ansible-core sein `BECOME-SUCCESS-<random>` ausgibt. Was ein `become_exe`-Wrapper ausgibt, bevor `sudo` läuft, wird deshalb nie als Ausgabe des Agents gelesen und landet auf der Standardfehlerausgabe des Controllers. Mit `ansible_local_become_strip_preamble: false` bleibt es stattdessen erhalten: was der Wrapper ausgab und die Erfolgszeile stehen vor `stdout` und `stderr` jedes `raw`-Tasks, der über diesen Agent seine Rechte erweitert. Solche Tasks bekommen einen eigenen Agent.
+Über eine `local`-Verbindung läuft `sudo` so, wie die `local`-Verbindung von ansible-core es startet. Es gibt keine Probe: Der Agent startet hinter einer Shell, die zuerst eine Erfolgszeile ausgibt, so wie der Befehl von ansible-core sein `BECOME-SUCCESS-<random>` ausgibt, deshalb wird nichts, was ein `become_exe`-Wrapper zuerst ausgibt, als Ausgabe des Agents gelesen. Mit einem Passwort bekommt `sudo` `-S -p "[sudo via ansible, key=<random>] password:"`, und das Passwort geht hinaus, sobald dieser Prompt auf stdout oder stderr erscheint. Ohne Passwort bekommt es `-S -n`. `ansible_local_become_success_timeout` begrenzt das Warten auf die Erfolgszeile, standardmäßig 10 Sekunden. Ein `raw`-Task, der über diesen Agent seine Rechte erweitert, zeigt in seinem `stderr`, was `sudo` dort nach dem Prompt ausgab. Mit `ansible_local_become_strip_preamble: false` zeigt er alles, was beide Streams vor dem Start des Agents ausgaben, einschließlich Prompt und Erfolgszeile, und solche Tasks bekommen einen eigenen Agent.
 
 ### Welche Einstellung gewinnt
 
@@ -367,9 +367,9 @@ Es wird einmal in die Standardeingabe von `sudo` geschrieben. Es erscheint nie i
 
 ### Die sudo-Probe
 
-Volant fragt `sudo`, welche Form zu verwenden ist, statt eine anzunehmen. Es probiert zuerst `sudo -n` und weicht auf `sudo -k -S -p ''` nur aus, wenn `sudo` selbst die Anfrage wegen fehlender Authentifizierung ablehnt. [Entscheidungsdokument 0004](/de/docs/decisions/0004-become-runs-a-second-agent-under-sudo/) erklärt, warum ein Raten die Verbindung blockieren würde. Auf einem Host, der schon einmal lief, startet Volant zuerst den gecachten Agent unter `sudo -n` in derselben `ssh`-Sitzung wie seine Prüfungen und führt die Probe nur aus, wenn das nicht klappt, wie [Der Agent auf Ihren Hosts](/de/docs/internals/agent/) beschreibt.
+Außer über eine `local`-Verbindung fragt Volant `sudo`, welche Form zu verwenden ist, statt eine anzunehmen. Es probiert zuerst `sudo -n` und weicht auf `sudo -k -S -p ''` nur aus, wenn `sudo` selbst die Anfrage wegen fehlender Authentifizierung ablehnt. [Entscheidungsdokument 0004](/de/docs/decisions/0004-become-runs-a-second-agent-under-sudo/) erklärt, warum ein Raten die Verbindung blockieren würde. Auf einem Host, der schon einmal lief, startet Volant zuerst den gecachten Agent unter `sudo -n` in derselben `ssh`-Sitzung wie seine Prüfungen und führt die Probe nur aus, wenn das nicht klappt, wie [Der Agent auf Ihren Hosts](/de/docs/internals/agent/) beschreibt.
 
-Schlägt die Rechteausweitung fehl, sei es wegen eines fehlenden oder falschen Passworts oder einer `sudoers`-Regel, die den Befehl verbietet, schlägt der Task fehl, und der Host bleibt erreichbar. Die Meldungen sind die von Ansible: `Missing sudo password` oder `Incorrect sudo password`. Ein Task mit einem anderen Passwort bekommt einen eigenen Agenten, sodass ein falsches Passwort auch dann fehlschlägt, wenn das richtige schon funktioniert hat, und `ignore_errors` diesen Fehler wie jeden anderen abdeckt.
+Schlägt die Rechteausweitung fehl, sei es wegen eines fehlenden oder falschen Passworts oder einer `sudoers`-Regel, die den Befehl verbietet, schlägt der Task fehl, und der Host bleibt erreichbar. Die Meldungen sind die von Ansible: `Missing sudo password` oder `Incorrect sudo password`. Ein Task mit einem anderen Passwort bekommt einen eigenen Agenten, sodass ein falsches Passwort auch dann fehlschlägt, wenn das richtige schon funktioniert hat, und `ignore_errors` diesen Fehler wie jeden anderen abdeckt. Über eine `local`-Verbindung gelten die Meldungen der `local`-Verbindung von ansible-core: `Premature end of stream waiting for become success`, gefolgt von dem, was jeder Stream ausgab, und `Duplicate become password prompt encountered` bei einem falschen Passwort. `Timed out waiting for become success` macht den Host unerreichbar.
 
 ### su
 

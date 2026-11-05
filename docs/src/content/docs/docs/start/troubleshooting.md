@@ -22,7 +22,7 @@ Most of what this release cannot run is named before Volant connects to anything
 | `task 'NAME': keyword 'KEYWORD' is not supported yet on 'MODULE'` | Check the keyword in [Keywords](/docs/reference/keywords/). Remove it, or keep this play under `ansible-playbook` for now. |
 | `task 'NAME': argument 'ARGUMENT' is not supported yet on 'MODULE'` | Check the module in [Modules](/docs/reference/modules/). Most refused arguments have a workaround there. |
 | `couldn't resolve module/action 'NAME'` | Check the spelling. If the module comes from a collection, install it with `volant runtime install --collections NAMESPACE.COLLECTION`. |
-| `strategy 'NAME' is not supported yet` | Use `linear`, `free`, `host_pinned` or `debug`. |
+| `strategy 'NAME' is not supported yet` | Use `linear`, `free`, `host_pinned` or `debug`. A strategy plugin runs only when it subclasses one of them and adds nothing. |
 | `become_method 'NAME' is not supported yet` | Use `sudo` or `su`. This one exits with 2. |
 | `the role 'NAME' was not found in ...` | The message lists the directories it searched. Add the role's directory to `roles_path`. This one exits with 1. |
 

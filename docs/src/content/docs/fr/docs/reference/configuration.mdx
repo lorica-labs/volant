@@ -55,7 +55,7 @@ Un fichier qui existe mais ne peut pas être lu est ignoré, et l'exécution con
 </Option>
 
 <Option name="strategy" id="defaults-strategy" default="linear" env="ANSIBLE_STRATEGY">
-  La stratégie d'un play qui n'en nomme aucune : `linear`, `free`, `host_pinned` ou `debug`, aussi sous `ansible.builtin.`. Tout autre nom affiche l'avertissement de dépréciation d'ansible-core pour les plugins de stratégie hors de `ansible.builtin`, puis est refusé.
+  La stratégie d'un play qui n'en nomme aucune : `linear`, `free`, `host_pinned` ou `debug`, aussi sous `ansible.builtin.`. Tout autre nom affiche l'avertissement de dépréciation d'ansible-core pour les plugins de stratégie hors de `ansible.builtin`. Un plugin qui hérite de l'une d'elles sans rien ajouter s'exécute comme cette stratégie, et tout autre nom est refusé.
 </Option>
 
 <Option name="async_dir" id="defaults-async-dir" default="~/.ansible_async" env="ANSIBLE_ASYNC_DIR">

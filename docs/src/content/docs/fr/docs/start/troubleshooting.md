@@ -23,7 +23,7 @@ Presque tout ce que cette version ne sait pas exécuter est nommé avant que Vol
 | `task 'NAME': keyword 'KEYWORD' is not supported yet on 'MODULE'` | Vérifiez le mot-clé dans [Mots-clés](/fr/docs/reference/keywords/). Retirez-le, ou gardez ce play sous `ansible-playbook` pour l'instant. |
 | `task 'NAME': argument 'ARGUMENT' is not supported yet on 'MODULE'` | Vérifiez le module dans [Modules](/fr/docs/reference/modules/). La plupart des arguments refusés y ont une solution de contournement. |
 | `couldn't resolve module/action 'NAME'` | Vérifiez l'orthographe. Si le module vient d'une collection, installez-la avec `volant runtime install --collections NAMESPACE.COLLECTION`. |
-| `strategy 'NAME' is not supported yet` | Utilisez `linear`, `free`, `host_pinned` ou `debug`. |
+| `strategy 'NAME' is not supported yet` | Utilisez `linear`, `free`, `host_pinned` ou `debug`. Un plugin de stratégie ne s'exécute que s'il hérite de l'une d'elles sans rien ajouter. |
 | `become_method 'NAME' is not supported yet` | Utilisez `sudo` ou `su`. Celui-ci se termine avec le code 2. |
 | `the role 'NAME' was not found in ...` | Le message liste les répertoires explorés. Ajoutez le répertoire du rôle à `roles_path`. Celui-ci se termine avec le code 1. |
 

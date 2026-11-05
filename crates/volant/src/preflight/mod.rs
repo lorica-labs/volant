@@ -19,6 +19,7 @@
 //! it out upward would mean compiling every play twice. Neither is worth it, and a later change
 //! that "fixes" this by weakening the first pass is a regression, not a cleanup.
 
+use crate::bridge::Bridge;
 use anyhow::bail;
 use volant_protocol::modules::{import_module, include_module, is_builtin, is_known};
 
@@ -55,13 +56,42 @@ pub fn builtin_strategy(name: &str) -> Option<&'static str> {
     STRATEGIES.into_iter().find(|known| *known == short)
 }
 
-/// The refusal of a strategy that is none of [`STRATEGIES`], after the deprecation ansible-core
-/// 2.19.12 prints as it loads any strategy outside `ansible.builtin`, a missing one included.
+/// The deprecation ansible-core 2.19.12 prints, once a run, as it loads any strategy outside
+/// `ansible.builtin`, a missing one included.
+fn warn_external_strategy() {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| {
+        crate::playbook::print_deprecation_line(
+            "Use of strategy plugins not included in ansible.builtin are deprecated and do not carry any backwards compatibility guarantees. No alternative for third party strategy plugins is currently planned. This feature will be removed from ansible-core in a future release.",
+        );
+    });
+}
+
+/// The refusal of a strategy that is none of [`STRATEGIES`], after its deprecation.
 pub fn unsupported_strategy(name: &str) -> String {
-    crate::playbook::print_deprecation_line(
-        "Use of strategy plugins not included in ansible.builtin are deprecated and do not carry any backwards compatibility guarantees. No alternative for third party strategy plugins is currently planned. This feature will be removed from ansible-core in a future release.",
-    );
+    warn_external_strategy();
     format!("strategy '{name}' is not supported yet")
+}
+
+/// The builtin strategy that walks a play as the plugin `name` would, after its deprecation.
+pub fn strategy_base(name: &str, bridge: &Bridge) -> Option<&'static str> {
+    let base = bridge.strategy_base(name)?;
+    warn_external_strategy();
+    builtin_strategy(&base)
+}
+
+/// Puts the builtin strategy in place of each plugin that only renames one. Only a run naming a
+/// strategy outside [`STRATEGIES`] asks the helper.
+pub fn settle_strategies(playbooks: &mut [Playbook], bridge: &Bridge) {
+    for play in playbooks.iter_mut().flat_map(|pb| pb.plays.iter_mut()) {
+        if let Some(name) = &play.strategy
+            && !Templar::is_template(name)
+            && builtin_strategy(name).is_none()
+            && let Some(base) = strategy_base(name, bridge)
+        {
+            play.strategy = Some(base.to_string());
+        }
+    }
 }
 
 /// Exit 4 for the refusals raised here: the reference exits 4 for a playbook it cannot load,

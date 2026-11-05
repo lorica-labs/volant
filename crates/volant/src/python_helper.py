@@ -1089,6 +1089,27 @@ def lookup_needs(name):
     return {"names": sorted(names), "all": False}
 
 
+def strategy_base(name):
+    """The builtin strategy a strategy plugin only renames, or None. Volant walks a play with its
+    own strategies and cannot run a plugin's code, so only a direct subclass of a builtin one that
+    adds nothing to it walks the play the same there."""
+    from ansible.plugins.loader import strategy_loader
+
+    class Empty:
+        pass
+
+    plugin = strategy_loader.get(name, class_only=True)
+    if plugin is None or len(plugin.__bases__) != 1:
+        return None
+    base = plugin.__bases__[0]
+    package, _, builtin = base.__module__.rpartition(".")
+    stamped = {"_original_path", "_load_name", "_redirected_names", "ansible_aliases", "ansible_name"}
+    added = set(vars(plugin)) - set(vars(Empty)) - stamped
+    if package != "ansible.plugins.strategy" or base.__name__ != "StrategyModule" or added:
+        return None
+    return builtin
+
+
 def call(request):
     """One filter, test or lookup, run through ansible-core's own Jinja environment so its
     argument handling, error text and `errors`/`wantlist` shaping are the reference's."""
@@ -1103,6 +1124,8 @@ def call(request):
         from ansible.plugins.loader import inventory_loader
 
         return {"value": inventory_loader.has_plugin(name)}
+    if kind == "strategy_base":
+        return {"value": strategy_base(name)}
     if kind == "diff":
         return {"value": diff_text(request["args"][0], request["kwargs"].get("color", False))}
     if kind == "action_groups":

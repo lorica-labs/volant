@@ -394,6 +394,17 @@ impl Bridge {
         .is_ok_and(|found| found.as_bool() == Some(true))
     }
 
+    /// The builtin strategy a strategy plugin only renames: a direct subclass of it that adds
+    /// nothing.
+    pub fn strategy_base(&self, plugin: &str) -> Option<String> {
+        let base = self.request(
+            PluginKind::Lookup,
+            plugin,
+            json!({"kind": "strategy_base", "name": plugin, "args": [], "kwargs": {}}),
+        );
+        base.ok()?.as_str().map(str::to_string)
+    }
+
     fn defaults_request(
         &self,
         kind: &str,

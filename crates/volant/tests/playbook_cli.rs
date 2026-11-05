@@ -6345,6 +6345,56 @@ fn an_own_stdout_callback_prints_the_run() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A strategy plugin that subclasses a builtin one and adds nothing walks the play as that one;
+/// a plugin with code of its own is refused by name.
+#[test]
+fn a_strategy_plugin_runs_only_when_it_adds_nothing() {
+    let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
+        return;
+    };
+    let dir = probe_dir("own-strategy");
+    let plugins = dir.join("strategy_plugins");
+    std::fs::create_dir_all(&plugins).expect("the plugin directory");
+    let head = "from ansible.plugins.strategy.linear import StrategyModule as Linear\n\nclass StrategyModule(Linear):\n";
+    std::fs::write(plugins.join("same.py"), format!("{head}    pass\n")).expect("the plugin");
+    std::fs::write(
+        plugins.join("own.py"),
+        format!("{head}    def run(self, iterator, play_context):\n        return 0\n"),
+    )
+    .expect("the plugin");
+    let play = |name: &str| {
+        let path = dir.join(format!("{name}.yml"));
+        std::fs::write(
+            &path,
+            format!(
+                "- hosts: localhost\n  gather_facts: false\n  strategy: {name}\n  tasks:\n    - debug: {{msg: walked}}\n"
+            ),
+        )
+        .expect("the play");
+        volant_within_env(
+            &[
+                "playbook",
+                "-i",
+                "localhost,",
+                path.to_str().expect("a path"),
+            ],
+            std::time::Duration::from_secs(60),
+            &[("VOLANT_PYTHON", &python)],
+        )
+    };
+    let same = play("same");
+    let shown = String::from_utf8_lossy(&same.stdout);
+    let err = String::from_utf8_lossy(&same.stderr);
+    assert!(same.status.success(), "{shown}{err}");
+    assert!(shown.contains("walked"), "{shown}");
+    assert!(err.contains("Use of strategy plugins"), "{err}");
+    let own = play("own");
+    let err = String::from_utf8_lossy(&own.stderr);
+    assert_eq!(own.status.code(), Some(4), "{err}");
+    assert!(err.contains("strategy 'own' is not supported yet"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A run with no Python callback starts no helper: no interpreter is needed for this.
 #[test]
 fn a_run_with_no_python_callback_looks_for_no_interpreter() {

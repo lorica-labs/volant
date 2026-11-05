@@ -55,7 +55,7 @@ Un archivo que existe pero no se puede leer se omite, y la ejecución continúa 
 </Option>
 
 <Option name="strategy" id="defaults-strategy" default="linear" env="ANSIBLE_STRATEGY">
-  La estrategia de un play que no nombra ninguna: `linear`, `free`, `host_pinned` o `debug`, también bajo `ansible.builtin.`. Cualquier otro nombre muestra el aviso de obsolescencia de ansible-core para los plugins de estrategia fuera de `ansible.builtin` y después se rechaza.
+  La estrategia de un play que no nombra ninguna: `linear`, `free`, `host_pinned` o `debug`, también bajo `ansible.builtin.`. Cualquier otro nombre muestra el aviso de obsolescencia de ansible-core para los plugins de estrategia fuera de `ansible.builtin`. Un plugin que hereda de una de estas y no añade nada se ejecuta como esa estrategia, y cualquier otro nombre se rechaza.
 </Option>
 
 <Option name="async_dir" id="defaults-async-dir" default="~/.ansible_async" env="ANSIBLE_ASYNC_DIR">

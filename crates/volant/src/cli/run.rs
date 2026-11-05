@@ -150,6 +150,7 @@ async fn run_all(
     let checking = std::time::Instant::now();
     if !mode.wanted() {
         crate::lock::before_run(&config, args.locked, out)?;
+        preflight::settle_strategies(&mut playbooks, &bridge);
         playbooks.iter().try_for_each(preflight::check)?;
     }
     let mut preflight_micros = micros(checking);

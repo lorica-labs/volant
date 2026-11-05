@@ -13,16 +13,7 @@ use std::time::Duration;
 
 /// Scenarios the replay cannot answer yet, left out of `just golden shadow`, with the issue that
 /// will bring them in.
-const NOT_YET: &[(&str, &str)] = &[
-    (
-        "async-poll",
-        "https://github.com/lorica-labs/volant/issues/920",
-    ),
-    (
-        "async-status",
-        "https://github.com/lorica-labs/volant/issues/920",
-    ),
-];
+const NOT_YET: &[(&str, &str)] = &[];
 
 fn copy(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).expect("mkdir");

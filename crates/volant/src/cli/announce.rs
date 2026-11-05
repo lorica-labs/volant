@@ -209,7 +209,18 @@ pub(super) fn load_callbacks(
             eprintln!("[ERROR]: {why}");
             return Err(1);
         }
-        Err(why) => out.warning(&format!("Python callback plugins not loaded: {why}"), false),
+        // No interpreter: what the run named is what it cannot load, as ansible-core would say.
+        Err(why) if wanted.enabled.is_empty() => {
+            out.warning(&format!("Python callback plugins not loaded: {why}"), false);
+        }
+        Err(_) => {
+            for enabled in &wanted.enabled {
+                out.warning(
+                    &format!("Skipping callback plugin '{enabled}', unable to load"),
+                    false,
+                );
+            }
+        }
     }
     if adhoc.is_some() {
         out.hear_playbook(std::path::Path::new("__adhoc_playbook__"));

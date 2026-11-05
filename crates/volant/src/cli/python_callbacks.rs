@@ -99,7 +99,7 @@ pub(super) fn python_callbacks(
         return Ok(None);
     }
     let helper = CallbackHelper::start().map_err(|err| match wanted.stdout {
-        Some(name) => format!("Could not load '{name}' callback plugin: {err:#}"),
+        Some(name) => format!("Could not load '{name}' callback plugin."),
         None => format!("{err:#}"),
     })?;
     let mut python = PythonCallbacks::new(helper);

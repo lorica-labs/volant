@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use tokio::sync::watch;
 
 use crate::compile::{Step, StepKind};
+use crate::playbook::Play;
 use crate::render::Renderer;
 use crate::stats::{Outcome, Stats};
 
@@ -45,6 +46,11 @@ pub(super) fn header_for(
 /// The banner one step gets: a handler says so, measured - `RUNNING HANDLER [second handler]`
 /// where an ordinary task says `TASK [...]`.
 pub(super) fn header(step: &Step, name: &str, out: &mut Renderer) {
+    announce(step, name, false, out);
+}
+
+/// [`header`], with `once` for a banner that comes back as hosts take turns.
+fn announce(step: &Step, name: &str, once: bool, out: &mut Renderer) {
     out.set_action(&step.task.module);
     out.task_started(name, &step.task.module, step.task.origin.as_ref());
     match step.kind {
@@ -56,11 +62,7 @@ pub(super) fn header(step: &Step, name: &str, out: &mut Renderer) {
     }
     // `profile_tasks` keys a task by its uuid, which a later `serial` batch runs again: the
     // step's place in the play stands for it.
-    let path = step.task.origin.as_ref().map(|origin| {
-        let file = std::path::absolute(&*origin.path)
-            .unwrap_or_else(|_| std::path::PathBuf::from(&*origin.path));
-        format!("{}:{}", file.display(), origin.line)
-    });
+    let path = path_of(step);
     // `junit` names a task with its arguments as the task wrote them, `k=v` joined by `, `.
     let args = (!step.task.censors()).then(|| {
         step.task
@@ -80,6 +82,83 @@ pub(super) fn header(step: &Step, name: &str, out: &mut Renderer) {
         args: args.as_deref(),
         action: &step.task.module,
     });
+    if out.hears_python() {
+        out.hear_task(python_task(step, name), once);
+    }
+}
+
+/// `file:line` of the step, absolute.
+fn path_of(step: &Step) -> Option<String> {
+    step.task.origin.as_ref().map(|origin| {
+        let file = std::path::absolute(&*origin.path)
+            .unwrap_or_else(|_| std::path::PathBuf::from(&*origin.path));
+        format!("{}:{}", file.display(), origin.line)
+    })
+}
+
+/// The step as a Python plugin reads it, its arguments hidden when the task is `no_log`.
+fn python_task(step: &Step, name: &str) -> crate::render::PythonTask {
+    let task = &step.task;
+    let path = path_of(step);
+    let mut fields = serde_json::Map::new();
+    fields.insert("name".into(), name.into());
+    fields.insert("action".into(), task.module.clone().into());
+    fields.insert("no_log".into(), task.censors().into());
+    fields.insert("tags".into(), task.tags.clone().into());
+    fields.insert("path".into(), path.clone().into());
+    let handler = matches!(step.kind, StepKind::Handler(_));
+    fields.insert("handler".into(), handler.into());
+    if !task.censors() {
+        fields.insert("args".into(), task.args.clone().into());
+    }
+    if let Some(connection) = &task.connect.connection {
+        fields.insert("connection".into(), connection.clone().into());
+    }
+    if let Some(register) = &task.register {
+        fields.insert("register".into(), register.clone().into());
+    }
+    crate::render::PythonTask {
+        uuid: path.unwrap_or_else(|| name.to_string()),
+        meta: task.module.rsplit('.').next() == Some("meta"),
+        fields,
+    }
+}
+
+/// What Python plugins hear of the sections around step `index`: a flush point the compiler put
+/// in, and the `noop` that `force_handlers` fills an empty section with, which has no step here.
+pub(super) fn hear_section(
+    play: &Play,
+    step: &Step,
+    index: usize,
+    plan: &PlayPlan,
+    out: &mut Renderer,
+) {
+    let implicit = |step: &Step| matches!(step.kind, StepKind::Flush { explicit: false });
+    if !out.hears_python() || !(implicit(step) || index == 0) {
+        return;
+    }
+    if implicit(step) {
+        out.hear_flush_point();
+    }
+    if !plan.force_handlers {
+        return;
+    }
+    let closed = plan.steps().steps[..=index]
+        .iter()
+        .filter(|step| implicit(step))
+        .count();
+    let mut laid_out = 0;
+    for empty in [
+        play.pre_tasks.is_empty(),
+        play.roles.is_empty() && play.tasks.is_empty(),
+        play.post_tasks.is_empty(),
+    ] {
+        if !empty {
+            laid_out += 1;
+        } else if laid_out == closed {
+            out.hear_implicit("noop");
+        }
+    }
 }
 
 /// The banner of step `index`, unless the last line printed already belonged to it: under `free`
@@ -109,11 +188,8 @@ pub(super) fn switch_header(
     };
     let live = progress_tx.borrow().clone();
     let spoken = names.get(&(host.to_string(), index));
-    header(
-        step,
-        &task_name(step, host, plan, &live, state, spoken),
-        out,
-    );
+    let name = task_name(step, host, plan, &live, state, spoken);
+    announce(step, &name, true, out);
 }
 
 /// Files what the coordinator learns from a result when it reads it, and hands the event back: a
@@ -138,6 +214,12 @@ pub(super) fn arrived(event: Event, stats: &mut Stats) -> Event {
 /// A line a step printed as it ran. The lines under no banner are the `default` callback's own
 /// `NOTIFIED HANDLER` lines.
 fn display(line: &str, shade: Shade, banner: bool, out: &mut Renderer) {
+    if !banner {
+        out.hear_notified(line);
+        if !out.verbose_at(2) {
+            return;
+        }
+    }
     if !banner && out.shows_every_result() {
         return;
     }
@@ -165,6 +247,17 @@ pub(super) fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer)
     } = &event
     {
         out.retrying(host, name, *left, result, *censored);
+        out.hear_retry(host, result, *censored);
+        return;
+    }
+    if let Event::AsyncStatus {
+        host,
+        method,
+        result,
+        ..
+    } = &event
+    {
+        out.hear_async(host, method, result);
         return;
     }
     if let Event::Warning {
@@ -276,6 +369,7 @@ pub(super) fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer)
             out.ignoring();
         }
     }
+    out.hear_outcome(&host, outcome, &result, label.as_deref(), censored);
 }
 
 /// Shows a result line to the replay this run answers for, under `volant shadow replay`.

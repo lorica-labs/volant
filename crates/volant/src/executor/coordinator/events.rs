@@ -239,6 +239,7 @@ pub(super) fn step_of(event: &Event) -> Option<(String, usize)> {
         | Event::Retrying { host, index, .. }
         | Event::Warning { host, index, .. }
         | Event::Display { host, index, .. }
+        | Event::AsyncStatus { host, index, .. }
         | Event::UnreachableIgnored { host, index, .. }
         | Event::Banner { host, index } => Some((host.clone(), *index)),
         _ => None,

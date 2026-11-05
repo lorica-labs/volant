@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use super::args::PlaybookArgs;
 use super::plays::Plays;
+use super::python_callbacks::{Wanted, python_callbacks};
 use crate::config::Config;
 use crate::inventory::Source;
 use crate::playbook;
@@ -134,6 +135,29 @@ fn aggregate(config: &Config, name: &str, out: &mut Renderer) -> Option<Result<A
     }
 }
 
+/// Sets up the enabled callbacks this engine has, and returns the names left for ansible-core.
+/// `volant.compat.record` records ansible-core's runs for this engine, which has nothing to
+/// record, so an `ansible.cfg` both share enables it without a word here.
+fn enabled_callbacks(config: &Config, out: &mut Renderer) -> Result<Vec<String>, i32> {
+    let mut aggregates = Vec::new();
+    let mut python = Vec::new();
+    for enabled in &config.callbacks.enabled {
+        match aggregate(config, enabled, out) {
+            Some(Ok(aggregate)) => aggregates.push(aggregate),
+            Some(Err(why)) => {
+                eprintln!("[ERROR]: {why}");
+                return Err(1);
+            }
+            None if StdoutCallback::named(enabled).is_none() && !enabled.starts_with("volant.") => {
+                python.push(enabled.clone());
+            }
+            None => {}
+        }
+    }
+    out.set_aggregates(aggregates);
+    Ok(python)
+}
+
 /// Loads the run's callbacks, before the first playbook: the stdout one from `stdout_callback`,
 /// the enabled ones from `callbacks_enabled`, as ansible-core 2.19.12's `load_callbacks` does.
 /// `Err(code)` ends the run: a stdout callback this engine does not have, or a `result_format`
@@ -143,9 +167,9 @@ fn aggregate(config: &Config, name: &str, out: &mut Renderer) -> Option<Result<A
 /// `bin_ansible_callbacks` is on and `stdout_callback` names another.
 pub(super) fn load_callbacks(
     config: &Config,
+    args: &PlaybookArgs,
     plays: &Plays<'_>,
     out: &mut Renderer,
-    bridge: &crate::bridge::Bridge,
 ) -> Result<(), i32> {
     let adhoc = match plays {
         Plays::Adhoc(adhoc) => Some(*adhoc),
@@ -166,45 +190,44 @@ pub(super) fn load_callbacks(
         eprintln!("[ERROR]: {YAML_REMOVED}");
         return Err(1);
     }
-    let Some(stdout) = StdoutCallback::named(name) else {
-        // One the controller's ansible-core finds is a plugin of the playbook's own or of a
-        // collection, which this release does not run: named with its file.
-        match bridge.plugin_path("callback", name) {
-            Some(path) => eprintln!(
-                "[ERROR]: Could not load '{name}' callback plugin: '{path}' is a callback plugin this release does not run."
-            ),
-            None => eprintln!("[ERROR]: Could not load '{name}' callback plugin."),
-        }
-        return Err(1);
+    let stdout = StdoutCallback::named(name);
+    let python_enabled = if loads {
+        enabled_callbacks(config, out)?
+    } else {
+        Vec::new()
     };
-    if loads {
-        // The enabled callbacks run beside the stdout one. `volant.compat.record` records
-        // ansible-core's runs for this engine, which has nothing to record, so an `ansible.cfg`
-        // both share enables it without a word here.
-        let mut aggregates = Vec::new();
-        for enabled in &config.callbacks.enabled {
-            match aggregate(config, enabled, out) {
-                Some(Ok(aggregate)) => aggregates.push(aggregate),
-                Some(Err(why)) => {
-                    eprintln!("[ERROR]: {why}");
-                    return Err(1);
-                }
-                None if StdoutCallback::named(enabled).is_none()
-                    && !enabled.starts_with("volant.") =>
-                {
-                    let warning = match bridge.plugin_path("callback", enabled) {
-                        Some(path) => format!(
-                            "Skipping callback plugin '{enabled}', unable to load: '{path}' is a callback plugin this release does not run"
-                        ),
-                        None => format!("Skipping callback plugin '{enabled}', unable to load"),
-                    };
-                    out.warning(&warning, false);
-                }
-                None => {}
+    let wanted = Wanted {
+        stdout: stdout.is_none().then_some(name),
+        enabled: python_enabled,
+        additional: loads,
+        adhoc_dir: adhoc.and_then(|adhoc| adhoc.dir()),
+    };
+    match python_callbacks(config, args, &wanted) {
+        Ok(Some(python)) => out.set_python_callbacks(python, stdout.is_none()),
+        Ok(None) => {}
+        Err(why) if stdout.is_none() => {
+            eprintln!("[ERROR]: {why}");
+            return Err(1);
+        }
+        // No interpreter: what the run named is what it cannot load, as ansible-core would say.
+        Err(why) if wanted.enabled.is_empty() => {
+            out.warning(&format!("Python callback plugins not loaded: {why}"), false);
+        }
+        Err(_) => {
+            for enabled in &wanted.enabled {
+                out.warning(
+                    &format!("Skipping callback plugin '{enabled}', unable to load"),
+                    false,
+                );
             }
         }
-        out.set_aggregates(aggregates);
     }
+    if adhoc.is_some() {
+        out.hear_playbook(std::path::Path::new("__adhoc_playbook__"));
+    }
+    let Some(stdout) = stdout else {
+        return Ok(());
+    };
     if matches!(stdout, StdoutCallback::Default | StdoutCallback::Minimal) {
         result_format(config, stdout, out)?;
     }

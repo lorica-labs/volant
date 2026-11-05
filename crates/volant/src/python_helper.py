@@ -1098,11 +1098,6 @@ def call(request):
         from ansible.plugins.loader import inventory_loader
 
         return {"value": inventory_loader.has_plugin(name)}
-    if kind == "plugin_path":
-        from ansible.plugins import loader as plugin_loader
-
-        found = getattr(plugin_loader, "%s_loader" % request["args"][0]).find_plugin(name)
-        return {"value": found}
     if kind == "diff":
         return {"value": diff_text(request["args"][0], request["kwargs"].get("color", False))}
     if kind == "action_groups":

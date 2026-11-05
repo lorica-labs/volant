@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use rstest::rstest;
 
 use super::load_callbacks;
+use crate::cli::args::PlaybookArgs;
 use crate::cli::plays::Plays;
 use crate::config::Config;
 use crate::render::Renderer;
@@ -38,12 +39,7 @@ fn the_loader_lines_name_the_stdout_callback(
     let buf = Arc::new(Mutex::new(Vec::new()));
     let mut out = Renderer::with_writer(Box::new(Shared(buf.clone())), false, 79, 4);
     assert_eq!(
-        load_callbacks(
-            &config,
-            &Plays::Files,
-            &mut out,
-            &crate::bridge::Bridge::late()
-        ),
+        load_callbacks(&config, &PlaybookArgs::default(), &Plays::Files, &mut out),
         Ok(())
     );
     let mut want = format!(
@@ -67,12 +63,7 @@ fn a_stdout_callback_this_engine_does_not_have_ends_the_run_with_status_1() {
     config.callbacks.stdout = Some("community.general.unixy".into());
     let mut out = Renderer::with_writer(Box::new(std::io::sink()), false, 79, 0);
     assert_eq!(
-        load_callbacks(
-            &config,
-            &Plays::Files,
-            &mut out,
-            &crate::bridge::Bridge::late()
-        ),
+        load_callbacks(&config, &PlaybookArgs::default(), &Plays::Files, &mut out),
         Err(1)
     );
 }
@@ -86,12 +77,7 @@ fn the_json_callback_takes_its_indent_from_the_configuration() {
     let buf = Arc::new(Mutex::new(Vec::new()));
     let mut out = Renderer::with_writer(Box::new(Shared(buf.clone())), false, 79, 0);
     assert_eq!(
-        load_callbacks(
-            &config,
-            &Plays::Files,
-            &mut out,
-            &crate::bridge::Bridge::late()
-        ),
+        load_callbacks(&config, &PlaybookArgs::default(), &Plays::Files, &mut out),
         Ok(())
     );
     out.recap(&crate::stats::Stats::default(), None);

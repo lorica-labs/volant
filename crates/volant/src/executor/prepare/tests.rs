@@ -922,6 +922,7 @@ fn the_become_password_is_redacted_in_debug_output() {
         prompt_l10n: Vec::new(),
         chdir: None,
         keep_preamble: false,
+        success_timeout: None,
     };
     assert!(!format!("{escalation:?}").contains("s3cret"));
     let mut d = defaults();

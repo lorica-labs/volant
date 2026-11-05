@@ -1,0 +1,72 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: gather 1
+      setup:
+        gather_subset: [min]
+
+    - meta: clear_facts
+
+    - name: cleared 1
+      debug:
+        msg: "{{ ansible_facts | length }}"
+
+    - name: gather 2
+      setup:
+        gather_subset: [min]
+
+    - meta: clear_facts
+
+    - name: cleared 2
+      debug:
+        msg: "{{ ansible_facts | length }}"
+
+    - name: gather 3
+      setup:
+        gather_subset: [min]
+
+    - meta: clear_facts
+
+    - name: cleared 3
+      debug:
+        msg: "{{ ansible_facts | length }}"
+
+    - name: gather 4
+      setup:
+        gather_subset: [min]
+
+    - meta: clear_facts
+
+    - name: cleared 4
+      debug:
+        msg: "{{ ansible_facts | length }}"
+
+    - name: gather 5
+      setup:
+        gather_subset: [min]
+
+    - meta: clear_facts
+
+    - name: cleared 5
+      debug:
+        msg: "{{ ansible_facts | length }}"
+
+    - name: gather 6
+      setup:
+        gather_subset: [min]
+
+    - meta: clear_facts
+
+    - name: cleared 6
+      debug:
+        msg: "{{ ansible_facts | length }}"
+
+    - meta: clear_facts
+
+    - name: gather behind the meta
+      setup:
+        gather_subset: [min]
+
+    - name: kept
+      debug:
+        msg: "{{ ansible_facts | length > 0 }}"

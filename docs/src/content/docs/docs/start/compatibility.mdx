@@ -46,7 +46,7 @@ A file that only a dynamic `include_tasks` or `include_role` names is read when 
 | Does `async` work? | Yes: `async`, `poll`, and `poll: 0` with `async_status`. A module that ansible-core cannot run under `async` fails on each host with `This action (<name>) does not support async.` See [Running plays](/docs/playbooks/how-a-play-runs/#async-tasks). |
 | Does `--diff` work? | Yes, with `--check` or alone. A host needs Python for `apt`, `user`, `group`, `file`, `lineinfile` and `systemd` when a run asks for a check or a diff. See [Check mode, diff and listings](/docs/playbooks/check-and-diff/). |
 | Do `become`, vault and `ansible.cfg` work? | `become` through `sudo` or `su`, vault and `ansible.cfg` work. `doas` and other methods do not. See [Connections and become](/docs/hosts/connections/). |
-| Do plugins of my own work? | Partly. Action, connection, inventory and callback plugins beside the playbook or in a role run through ansible-core. A cache plugin of your own stops the run with its file named, and `vars_plugins/` are ignored. See the [known gaps](#known-gaps). |
+| Do plugins of my own work? | Partly. Action, connection, inventory, callback and cache plugins beside the playbook or in a role run through ansible-core. `vars_plugins/` are ignored. See the [known gaps](#known-gaps). |
 
 ## At a glance
 
@@ -80,7 +80,7 @@ The pre-flight check stops the run before the first connection, before any banne
 
 | What | Message shape | Exit code |
 |---|---|---|
-| A `strategy` other than `linear`, `free`, `host_pinned` and `debug`, from the play or from `ANSIBLE_STRATEGY` | ansible-core's deprecation of strategy plugins outside `ansible.builtin`, then `strategy 'x' is not supported yet` | 4 |
+| A `strategy` other than `linear`, `free`, `host_pinned` and `debug`, from the play or from `ANSIBLE_STRATEGY`, unless its plugin subclasses one of them and adds nothing | ansible-core's deprecation of strategy plugins outside `ansible.builtin`, then `strategy 'x' is not supported yet` | 4 |
 | `until`, `retries` or `delay` on `include_tasks` or `include_role` | `keyword 'until' is not supported yet on 'include_tasks'` | 4 |
 | A `pause` with a `prompt` and `seconds` or `minutes`, when standard input is a terminal | `pause cannot wait for a prompt and a duration together on a terminal ...` | 4 |
 | A module argument that ansible-core has and this release does not act on | `argument 'x' is not supported yet on 'module'`, with ` with 'v'` when only that value is refused | 4 |
@@ -100,7 +100,6 @@ These differ from `ansible-playbook` without a message before the run, or with a
 | What | What happens |
 |---|---|
 | `vars_plugins/` | Ignored. |
-| A cache plugin of your own as `fact_caching` | The run stops at exit 4 with `fact cache plugin '<name>' ... is not supported yet`, naming the file when it is in `cache_plugins/` or on `ANSIBLE_CACHE_PLUGINS`. |
 | `volant check` and `volant lint` | They do not exist. Run them from ansible-core or ansible-lint. |
 | A task with `no_log: true` that fails | On purpose. Volant prints `[ERROR]: Task failed: Action failed: <error censored due to no log>` and nothing else of the cause. ansible-core 2.19.12 prints the cause: `[ERROR]: Task failed: Action failed: <the msg of fail or assert>`, the error of the module, and the `<<< caused by >>>` blocks. That text can hold a secret, such as the `msg` of a `fail` that names a password. The [security policy](https://github.com/lorica-labs/volant/blob/main/SECURITY.md) counts a secret that reaches a log or a terminal where `no_log` hides it in ansible-core as a vulnerability, so Volant hides it. The `fatal:` line, the registered result and the recap are the same in both. To read the cause, run the task without `no_log`. |
 | SIGTERM | On purpose. Volant stops cleanly: it cancels the running tasks, removes the directory that holds the connection password, prints the recap, and exits with code 99, as it does for Ctrl-C. `ansible-playbook` does not catch SIGTERM. It dies at once with code 143 and prints no recap. Measured with `kill -TERM` during a `command: sleep`: 99 under Volant, 143 under ansible-core 2.19.12. |

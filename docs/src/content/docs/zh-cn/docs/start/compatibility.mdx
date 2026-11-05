@@ -47,7 +47,7 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 | `async` 能用吗？ | 能：`async`、`poll`，以及 `poll: 0` 搭配 `async_status`。ansible-core 无法在 `async` 下运行的模块，会在每台主机上失败，并给出 `This action (<name>) does not support async.`。见[运行 play](/zh-cn/docs/playbooks/how-a-play-runs/#异步任务)。 |
 | `--diff` 能用吗？ | 能，可以和 `--check` 一起用，也可以单独用。当运行要求检查或 diff 时，`apt`、`user`、`group`、`file`、`lineinfile` 和 `systemd` 需要主机上有 Python。见[检查模式、diff 与列表输出](/zh-cn/docs/playbooks/check-and-diff/)。 |
 | `become`、vault 和 `ansible.cfg` 能用吗？ | 通过 `sudo` 或 `su` 的 `become`、vault 和 `ansible.cfg` 都能用。`doas` 和其他方式不能。见[连接与 become](/zh-cn/docs/hosts/connections/)。 |
-| 我自己写的插件能用吗？ | 部分能用。playbook 旁边或角色中的 action、connection、inventory 和 callback 插件通过 ansible-core 运行。自己写的 cache 插件会让运行停止并给出它的文件，`vars_plugins/` 会被忽略。见[已知缺口](#已知缺口)。 |
+| 我自己写的插件能用吗？ | 部分能用。playbook 旁边或角色中的 action、connection、inventory、callback 和 cache 插件通过 ansible-core 运行。`vars_plugins/` 会被忽略。见[已知缺口](#已知缺口)。 |
 
 ## 一览
 
@@ -81,7 +81,7 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 
 | 内容 | 消息形式 | 退出码 |
 |---|---|---|
-| `strategy` 不是 `linear`、`free`、`host_pinned` 和 `debug` 之一，无论来自 play 还是 `ANSIBLE_STRATEGY` | 先打印 ansible-core 对 `ansible.builtin` 之外策略插件的弃用警告，然后是 `strategy 'x' is not supported yet` | 4 |
+| `strategy` 不是 `linear`、`free`、`host_pinned` 和 `debug` 之一，无论来自 play 还是 `ANSIBLE_STRATEGY`，除非其插件继承其中之一且不添加任何内容 | 先打印 ansible-core 对 `ansible.builtin` 之外策略插件的弃用警告，然后是 `strategy 'x' is not supported yet` | 4 |
 | `include_tasks` 或 `include_role` 上的 `until`、`retries` 或 `delay` | `keyword 'until' is not supported yet on 'include_tasks'` | 4 |
 | 标准输入是终端时，同时带 `prompt` 和 `seconds` 或 `minutes` 的 `pause` | `pause cannot wait for a prompt and a duration together on a terminal ...` | 4 |
 | ansible-core 有、而这个版本不处理的模块参数 | `argument 'x' is not supported yet on 'module'`，只有该值被拒绝时再加上 ` with 'v'` | 4 |
@@ -101,7 +101,6 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 | 内容 | 会发生什么 |
 |---|---|
 | `vars_plugins/` | 被忽略。 |
-| 自己写的 cache 插件作为 `fact_caching` | 运行以退出码 4 和 `fact cache plugin '<name>' ... is not supported yet` 停止；文件在 `cache_plugins/` 或 `ANSIBLE_CACHE_PLUGINS` 中时会给出文件。 |
 | `volant check` 和 `volant lint` | 它们不存在。请用 ansible-core 或 ansible-lint 运行。 |
 | 失败的带 `no_log: true` 的 task | 这是有意为之。Volant 打印 `[ERROR]: Task failed: Action failed: <error censored due to no log>`，不打印失败原因的其他内容。ansible-core 2.19.12 会打印原因：`[ERROR]: Task failed: Action failed: <the msg of fail or assert>`、模块的错误，以及 `<<< caused by >>>` 块。这些文字可能包含机密，例如点出密码的 `fail` 的 `msg`。[安全策略](https://github.com/lorica-labs/volant/blob/main/SECURITY.md)把在 ansible-core 里被 `no_log` 隐藏、却进入日志或终端的机密算作漏洞，所以 Volant 把它隐藏起来。`fatal:` 行、已注册的结果和汇总在两者中相同。要读到原因，请去掉 `no_log` 再运行这个 task。 |
 | SIGTERM | 这是有意为之。Volant 会干净地停止：取消正在运行的 task，删除存放连接密码的目录，打印汇总，并以退出码 99 退出，与 Ctrl-C 的处理相同。`ansible-playbook` 不捕获 SIGTERM，它会立刻以退出码 143 终止，并且不打印汇总。在 `command: sleep` 运行期间用 `kill -TERM` 测得：Volant 下是 99，ansible-core 2.19.12 下是 143。 |

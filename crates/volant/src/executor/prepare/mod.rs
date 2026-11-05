@@ -46,7 +46,7 @@ use vars::{Named, delegate_host_vars, merged_vars, resolved};
 pub(in crate::executor) use carry::carry_on;
 use carry::{Carry, paced};
 use connect::{connect_for, delegate_for, unplugged};
-use escalation::escalation_for;
+use escalation::{escalation_for, plugin_kind};
 use fields::{Fields, render_fields};
 use item::{item_failure, notify_for};
 pub(in crate::executor) use loops::undefined_causes;
@@ -377,7 +377,7 @@ pub(super) fn prepare(
     // link goes to the delegate and escalates to the user the task's own host asked for.
     let escalation =
         escalation_for(task, plan, (&base, &mut items), defaults, templar)?.map(Box::new);
-    if let Some(kind) = crate::action_plugins::kind_of(task) {
+    if let Some(kind) = plugin_kind(task, &base, templar, escalation.as_deref())? {
         return Ok(Prepared::Remote(
             items,
             escalation,

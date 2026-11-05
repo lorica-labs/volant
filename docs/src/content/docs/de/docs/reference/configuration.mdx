@@ -55,7 +55,7 @@ Eine Datei, die existiert, sich aber nicht lesen lässt, wird übersprungen, und
 </Option>
 
 <Option name="strategy" id="defaults-strategy" default="linear" env="ANSIBLE_STRATEGY">
-  Die Strategie eines Plays, das keine nennt: `linear`, `free`, `host_pinned` oder `debug`, auch mit `ansible.builtin.` davor. Jeder andere Name gibt die Deprecation-Warnung von ansible-core für Strategie-Plugins außerhalb von `ansible.builtin` aus und wird dann abgelehnt.
+  Die Strategie eines Plays, das keine nennt: `linear`, `free`, `host_pinned` oder `debug`, auch mit `ansible.builtin.` davor. Jeder andere Name gibt die Deprecation-Warnung von ansible-core für Strategie-Plugins außerhalb von `ansible.builtin` aus. Ein Plugin, das von einer dieser Strategien ableitet und nichts hinzufügt, läuft als diese Strategie, und jeder andere Name wird abgelehnt.
 </Option>
 
 <Option name="async_dir" id="defaults-async-dir" default="~/.ansible_async" env="ANSIBLE_ASYNC_DIR">
@@ -191,7 +191,7 @@ Eine Datei, die existiert, sich aber nicht lesen lässt, wird übersprungen, und
 </Option>
 
 <Option name="fact_caching" id="defaults-fact-caching" default="memory" env="ANSIBLE_CACHE_PLUGIN">
-  `memory` hält Facts für den Lauf, `jsonfile` hält sie zwischen Läufen. Siehe [Der Fact-Cache](/de/docs/hosts/inventories/#der-fact-cache).
+  `memory` hält Facts für den Lauf, `jsonfile` hält sie zwischen Läufen, und jeder andere Name ist ein Python-Plugin. Siehe [Der Fact-Cache](/de/docs/hosts/inventories/#der-fact-cache).
 </Option>
 
 <Option name="fact_caching_connection" id="defaults-fact-caching-connection" env="ANSIBLE_CACHE_PLUGIN_CONNECTION">

@@ -12,7 +12,7 @@ use super::super::RunOptions;
 use super::super::coordinator::Event;
 use super::super::prepare::Item;
 use super::super::run::{
-    ItemRetry, PluginStart, Relinker, Replayed, RetryLine, broke_before, finish, refusal,
+    Asked, ItemRetry, PluginStart, Relinker, Replayed, RetryLine, broke_before, finish, refusal,
     run_plugin_attempts, run_plugin_group, running_host_vars,
 };
 use super::Driver;
@@ -42,7 +42,7 @@ pub(super) fn plugin_step<T>(batch: &mut [(usize, T)]) -> Result<&mut (usize, T)
 pub(super) struct PluginBatch {
     pub(super) kind: Kind,
     /// The interpreter the host the module runs on asked for, read off its variables.
-    pub(super) asked: Option<String>,
+    pub(super) asked: Option<Asked>,
     /// That host's name and variables, when it is a delegate.
     pub(super) delegate: Option<(String, HostVars)>,
 }
@@ -67,7 +67,7 @@ pub(super) struct PluginItems<'a> {
     pub(super) name: &'a str,
     pub(super) union: Option<&'a Union>,
     pub(super) interpreters: &'a [String],
-    pub(super) asked: Option<&'a str>,
+    pub(super) asked: Option<&'a Asked>,
     /// Whether `received` holds results the conditions have been applied to.
     pub(super) decided: bool,
 }

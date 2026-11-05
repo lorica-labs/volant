@@ -28,12 +28,12 @@ use super::prepare::{
 };
 use super::report::report_task;
 use super::run::{
-    Attempt, DISCOVERED_INTERPRETER, Fallback, Found, ItemRetry, Polled, Relinker, Replayed,
-    RetryLine, announce_retry, break_after, broke_before, discovers_interpreter, discovery_due,
-    fact_targets, failed_task_value, fallback, finish, item_by_item, item_link, judge_attempt,
-    legacy_discovery, link_for, local_timed_out, notified_handlers, pause_lines, poll_job, polls,
-    python_for, record_facts, record_inventory_results, record_local_facts, record_registered,
-    refusal, release_at_barrier, replayed, requested_interpreter, retry_plans, run_agent_batch,
+    Asked, Attempt, DISCOVERED_INTERPRETER, Fallback, Found, ItemRetry, Polled, Relinker, Replayed,
+    RetryLine, announce_retry, asked_interpreter, break_after, broke_before, discovers_interpreter,
+    discovery_due, fact_targets, failed_task_value, fallback, finish, item_by_item, item_link,
+    judge_attempt, legacy_discovery, link_for, local_timed_out, notified_handlers, pause_lines,
+    poll_job, polls, python_for, record_facts, record_inventory_results, record_local_facts,
+    record_registered, refusal, release_at_barrier, replayed, retry_plans, run_agent_batch,
     run_local, running_host_vars, shown, silent_discovery, stamp_discovery, step_task, step_tasks,
     take_warnings, task_fails,
 };
@@ -332,7 +332,7 @@ pub(super) async fn drive_host(
         // The module payload of each step of the batch that has one, by step. Per task rather than
         // per item, because the module is the task's: a loop varies the arguments. Empty for every
         // batch this release runs today, a Python module being refused before the first connection.
-        let mut payloads: HashMap<usize, (Box<ModulePayload>, Option<String>)> = HashMap::new();
+        let mut payloads: HashMap<usize, (Box<ModulePayload>, Option<Asked>)> = HashMap::new();
         // The steps of the batch whose host picks its interpreter itself, each with whether the
         // reference warns about the choice and the list of its own it set, if any. Those results
         // carry the discovered interpreter.
@@ -1464,7 +1464,7 @@ pub(super) async fn drive_host(
                     }
                     batch_action = action.map(|kind| PluginBatch {
                         kind,
-                        asked: requested_interpreter(target_vars),
+                        asked: asked_interpreter(target_vars, &templar),
                         delegate: delegate.as_deref().cloned(),
                     });
                     batch_escalation = escalation;
@@ -1495,7 +1495,7 @@ pub(super) async fn drive_host(
                         // point: the module runs where the link goes, so its interpreter has to
                         // come from that host and not from the one delegating the task. What the
                         // value is worth against the agent's list is settled once the link is up.
-                        let asked = requested_interpreter(target_vars);
+                        let asked = asked_interpreter(target_vars, &templar);
                         payloads.insert(pos, (module, asked));
                     }
                     // A task refused for its raw parameters fails before it is sent anywhere.
@@ -1821,7 +1821,7 @@ pub(super) async fn drive_host(
                         name: &name,
                         union: plan.python.as_deref(),
                         interpreters: &interpreters,
-                        asked: asked.as_deref(),
+                        asked: asked.as_ref(),
                         decided,
                     },
                     &mut driver,
@@ -1904,7 +1904,7 @@ pub(super) async fn drive_host(
                 // read off the step and the host, and nothing about an item can change either.
                 let chosen = payloads
                     .get(index)
-                    .map(|(_, asked)| found.chosen(*index, asked.as_deref()));
+                    .map(|(_, asked)| found.chosen(*index, asked.as_ref()));
                 let python = python_for(
                     &task.module,
                     payloads.get(index).map(|(module, _)| &**module),
@@ -2088,7 +2088,7 @@ pub(super) async fn drive_host(
                     // task's module under another task's Python.
                     let chosen = payloads
                         .get(index)
-                        .map(|(_, asked)| found.chosen(*index, asked.as_deref()));
+                        .map(|(_, asked)| found.chosen(*index, asked.as_ref()));
                     let python = python_for(
                         &task.module,
                         payloads.get(index).map(|(module, _)| &**module),

@@ -42,7 +42,7 @@ Chaque playbook passe par les étapes que `volant playbook` exécute avant sa pr
 |---|---|
 | `ready` | Il se charge, passe la vérification préalable et se compile, et chaque module qu'il nomme est trouvé. |
 | `refused` | `volant playbook` s'arrêterait avant la première connexion. La raison a un type. `unsupported` est ce que Volant ne fait pas encore. `invalid` est un playbook qu'ansible-core refuse aussi, par exemple un rôle introuvable ou un module d'une collection qui n'est pas installée. Les deux comptent comme des échecs. |
-| `unknown` | Seule une exécution peut le dire. Chaque raison est listée : un `include_tasks` ou `include_role` dont le nom est un template, un module nommé par un template, ou le module d'une collection sans ansible-core à qui le demander. |
+| `unknown` | Seule une exécution peut le dire. Chaque raison est listée : un `include_tasks` ou `include_role` dont le nom est un template, un module nommé par un template, le module d'une collection sans ansible-core à qui le demander, ou des plugins de vars sans ansible-core pour les exécuter. |
 
 Un `include_tasks` ou `include_role` dont le nom est écrit en clair est suivi : le fichier ou le rôle est lu et vérifié comme l'exécution le vérifie quand un hôte atteint l'instruction. Un refus à l'intérieur rend le playbook `refused`. Un `when` sur l'instruction n'est pas évalué, donc un fichier que seuls certains hôtes lisent est vérifié quand même.
 

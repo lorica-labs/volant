@@ -1,0 +1,5 @@
+# A vars plugin beside the playbook runs before `host_group_vars`, an enabled collection plugin
+# listed after it runs after it, and each answers for `all`, the host's groups and the host.
+args: [-i, inv.ini, play.yml]
+env: {"ANSIBLE_VARS_ENABLED": "host_group_vars,acme.demo.late"}
+needs: [ansible-core]

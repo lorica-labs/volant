@@ -459,10 +459,18 @@ pub(super) fn banner_before_vars_refusal(
     err: &anyhow::Error,
     playbooks: &[playbook::Playbook],
 ) {
-    let refused = err.downcast_ref::<crate::stats::Refusal>();
-    if refused.is_some_and(|r| r.code == 4)
-        && let Some(play) = playbooks.iter().flat_map(|pb| &pb.plays).next()
+    if err
+        .downcast_ref::<crate::stats::Refusal>()
+        .is_some_and(|r| r.code == 4)
     {
+        first_banner(out, playbooks);
+    }
+}
+
+/// The first play's banner, which the reference prints before the vars plugins run as that
+/// play's first task reads its variables.
+pub(super) fn first_banner(out: &mut Renderer, playbooks: &[playbook::Playbook]) {
+    if let Some(play) = playbooks.iter().flat_map(|pb| &pb.plays).next() {
         out.play_of(play);
     }
 }

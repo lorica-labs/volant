@@ -24,6 +24,8 @@ description: 两个来源定义同一个变量时哪个胜出、魔法变量，�
 14. role 参数，以及动态 include 语句的 `vars:`
 15. `--extra-vars`
 
+vars 插件为 `all`、主机所在的每个组以及主机本身给出变量，并与同一目录下的 `group_vars` 和 `host_vars` 文件一起排序：这些文件由 `host_group_vars` 读取，它本身也是一个 vars 插件。`vars_plugins/` 目录中的插件在 `host_group_vars` 之前运行，所以文件胜过它。在 `vars_plugins_enabled` 中排在 `host_group_vars` 之后的插件在它之后运行并胜出。除 `host_group_vars` 外，所有 vars 插件都通过 ansible-core 运行。设置 `run_vars_plugins = start` 时，vars 插件只在读取 inventory 时运行一次：它们给出的值按 inventory 变量排序，playbook 目录下的 `group_vars` 和 `host_vars` 不会被读取，与 ansible-core 相同。
+
 [Role、include 与 import](/zh-cn/docs/playbooks/roles/#role-变量)说明了三个 role 层从哪里来，以及它们有何不同。
 
 只含有 `---` 和注释的变量文件，会加载为空映射，与 ansible-core 一致。内容为标量（例如 `42`）的文件仍会被拒绝。

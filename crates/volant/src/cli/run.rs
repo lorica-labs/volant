@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use anstream::ColorChoice;
 use tokio::sync::watch;
 
-use super::announce::{banner_before_vars_refusal, load_callbacks, options_dump};
+use super::announce::{banner_before_vars_refusal, first_banner, load_callbacks, options_dump};
 use super::args::PlaybookArgs;
 use super::hosts::{ListingHosts, play_hosts, rendered, resolve_limit, tag_selection};
 use super::passwords::{ask_passwords, ssh_words};
@@ -15,6 +15,7 @@ use super::plays::Plays;
 use super::setup::{SetUp, set_up};
 use super::signals::spawn_signal_watcher;
 use super::stages;
+use super::vars_plugins;
 use crate::compile;
 use crate::executor::{self, Abort, LocalPool, RunOptions, RunState};
 use crate::inventory::Host;
@@ -138,15 +139,9 @@ async fn run_all(
         syntax: args.syntax_check,
     };
     let selection = tag_selection(args, &config, mode);
-    // Every playbook is loaded first, then every one of them is checked, so an operator gets
-    // the refusal for the second playbook before the first one has touched a host. Nothing
-    // below this line may assume a keyword was handled that the pre-flight did not let past.
-    //
-    // A listing skips this on purpose. It connects to nothing and runs nothing, so a playbook
-    // this release cannot execute still lists, which is what lets an operator read a role
-    // before the release that runs its modules. What it does not skip is the loader's own
-    // refusals above, or the compilation's below: a playbook the reference cannot parse, or a
-    // role nobody can find, is still refused here with the reference's own code.
+    // Every playbook is loaded, then every one is checked, so the second playbook's refusal comes
+    // before the first touches a host. A listing skips the check: it runs nothing, so a playbook
+    // this release cannot execute still lists. The loader's and the compiler's refusals apply.
     let checking = std::time::Instant::now();
     if !mode.wanted() {
         crate::lock::before_run(&config, args.locked, out)?;
@@ -154,13 +149,9 @@ async fn run_all(
         playbooks.iter().try_for_each(preflight::check)?;
     }
     let mut preflight_micros = micros(checking);
-    // Roles are read and spliced here, before the first `PLAY` banner: a role nobody can find
-    // stops the run with nothing printed, which is where the reference stops it too. The whole
-    // compilation is wrapped in the code the reference gives a playbook it cannot make sense of,
-    // and the refusals that measured a code of their own carry it through untouched.
-    // Read here for the paths an import renders, and kept for the local-agent check further down,
-    // which runs before any host has an effective view and would otherwise read
-    // `ansible_connection` from the inventory alone.
+    // Roles are read and spliced before the first `PLAY` banner, where the reference stops on a
+    // role nobody can find. `-e` is read here for the paths an import renders, and kept for the
+    // local-agent check further down, which runs before any host has an effective view.
     let extra = crate::vars::parse_extra_vars(&args.extra_vars, &std::env::current_dir()?)?;
     let mut compiled = stages::compile_all(&playbooks, &config, &selection, &extra)?;
     profile.phase(
@@ -449,6 +440,14 @@ async fn run_all(
     let playbook_dir = playbook::base_dir(&files[0]);
     let mut store = VarStore::with_sources(&inventory, &sources, &playbook_dir, extra.clone())
         .inspect_err(|err| banner_before_vars_refusal(out, err, &playbooks))?;
+    vars_plugins::load(
+        &mut store,
+        &config.vars_plugins,
+        &reach.plugin_dirs,
+        &bridge,
+        &sources,
+    )
+    .inspect_err(|_| first_banner(out, &playbooks))?;
     store.set_forks(forks);
     store.set_verbosity(args.verbose);
     store.set_reload(

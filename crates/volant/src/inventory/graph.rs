@@ -68,6 +68,39 @@ impl Inventory {
         }
     }
 
+    /// The groups, each with its own hosts and child groups, and the hosts: what the helper
+    /// rebuilds the inventory from to run the vars plugins.
+    pub fn plugin_view(&self) -> Value {
+        let groups: Vec<Value> = self
+            .groups
+            .iter()
+            .map(|g| serde_json::json!({"name": g.name, "hosts": g.hosts, "children": g.children}))
+            .collect();
+        let hosts: Vec<&str> = self.hosts.iter().map(|h| h.name.as_str()).collect();
+        serde_json::json!({"groups": groups, "hosts": hosts})
+    }
+
+    /// Lays `vars` over what the inventory gives a group, or a host, as the reference merges what
+    /// a vars plugin answers at the inventory stage. `all` is there even when no source wrote it.
+    pub fn merge_vars(&mut self, group: bool, name: &str, vars: &crate::tags::Tagged) {
+        let target = if group && name == "all" {
+            Some(&mut self.group_mut("all").vars)
+        } else if group {
+            self.groups
+                .iter_mut()
+                .find(|g| g.name == name)
+                .map(|g| &mut g.vars)
+        } else {
+            self.hosts
+                .iter_mut()
+                .find(|h| h.name == name)
+                .map(|h| &mut h.vars)
+        };
+        if let Some(target) = target {
+            target.extend(vars);
+        }
+    }
+
     pub(super) fn group_mut(&mut self, name: &str) -> &mut Group {
         if let Some(pos) = self.groups.iter().position(|g| g.name == name) {
             return &mut self.groups[pos];

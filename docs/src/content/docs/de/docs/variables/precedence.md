@@ -24,6 +24,8 @@ Definieren zwei Quellen dieselbe Variable, gewinnt die, die in dieser Liste weit
 14. Rollenparameter und die `vars:` einer dynamischen Include-Anweisung
 15. `--extra-vars`
 
+Ein Vars-Plugin antwortet für `all`, für jede Gruppe des Hosts und für den Host selbst und reiht sich bei den `group_vars`- und `host_vars`-Dateien desselben Verzeichnisses ein: Diese Dateien liest `host_group_vars`, selbst ein Vars-Plugin. Ein Plugin in einem `vars_plugins/`-Verzeichnis läuft vor `host_group_vars`, die Dateien gewinnen also gegen es. Ein Plugin, das in `vars_plugins_enabled` nach `host_group_vars` steht, läuft danach und gewinnt. Jedes Vars-Plugin außer `host_group_vars` läuft über ansible-core. Mit `run_vars_plugins = start` laufen die Vars-Plugins einmal, sobald das Inventory gelesen ist: Was sie liefern, zählt als Inventory-Variable, und `group_vars` und `host_vars` des Playbook-Verzeichnisses werden nicht gelesen, wie in ansible-core.
+
 [Rollen](/de/docs/playbooks/roles/#rollenvariablen) erklärt, woher die drei Rollenschichten kommen und wie sie sich unterscheiden.
 
 Eine Vars-Datei, die nur `---` und Kommentare enthält, wird wie in ansible-core als leeres Mapping geladen. Eine Datei, die einen Skalar wie `42` enthält, wird weiterhin abgelehnt.

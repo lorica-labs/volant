@@ -25,6 +25,7 @@ mod connections;
 mod conversation;
 mod own;
 mod persistent;
+mod vars_plugins;
 mod wire;
 
 use conversation::{answer, defaults_shape};

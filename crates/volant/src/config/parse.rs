@@ -176,6 +176,9 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
             }
             _ => {}
         }
+        if section == "vars_host_group_vars" && key.trim() == "stage" {
+            config.vars_plugins.host_group_vars_stage = Some(value.trim().to_string());
+        }
         if section == "ssh_connection" && key.trim() == "usetty" {
             config.ssh_usetty = callback_flag(value);
         }

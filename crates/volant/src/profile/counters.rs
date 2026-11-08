@@ -23,10 +23,6 @@ pub enum Counter {
     RenderHostvars,
     /// An expression compiled.
     Compile,
-    /// What a template reads, found in the cache.
-    ReadsHit,
-    /// What a template reads, worked out.
-    ReadsMiss,
     /// A host's variable layers built.
     LayersBuilt,
     /// The entries those layers copied.
@@ -42,15 +38,13 @@ pub enum Counter {
 }
 
 /// The counters' names, in declaration order.
-const NAMES: [&str; 14] = [
+const NAMES: [&str; 12] = [
     "render_when",
     "render_args",
     "render_loop",
     "render_vars",
     "render_hostvars",
     "compile",
-    "reads_hit",
-    "reads_miss",
     "layers_built",
     "layers_entries",
     "bridge_calls",

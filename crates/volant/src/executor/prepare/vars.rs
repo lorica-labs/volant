@@ -128,8 +128,10 @@ pub(in crate::executor) fn merged_vars(
     // What an include handed down joins the role parameters rather than the task variables:
     // measured, it beats a `set_fact` of the same name, which a task's own `vars:` does not.
     let mut role_params = role.params.clone();
-    for (key, value) in include_params.iter().flat_map(|p| &p.values) {
-        role_params.combine_one(key, value, None);
+    if let Some(params) = include_params {
+        for (key, value) in &params.values {
+            role_params.combine_one(key, value, params.values.tree(key));
+        }
     }
     let scope = Scope {
         play_vars: plan.play_vars.clone(),
@@ -144,40 +146,17 @@ pub(in crate::executor) fn merged_vars(
         batch_hosts: Arc::clone(&live.live_hosts),
         all_play_hosts: Arc::clone(&plan.all_play_hosts),
     };
-    let (sources, hostvars, untrusted, untrusted_hosts) = {
+    let (sources, hostvars, named_by_host) = {
         let mut store = store.lock().expect("vars lock");
         // The shared views first: a variable of this host's own can name `hostvars` or `groups`,
         // and `resolve_vars` below has to be able to answer it.
         let hostvars = store.hostvars_shared(host);
-        let mut untrusted = store.untrusted_of(host, &scope);
-        // What an include handed down is already rendered, so its provenance cannot be read off
-        // the store: it travelled with the values.
-        untrusted.extend(
-            include_params
-                .iter()
-                .flat_map(|p| p.untrusted.iter().cloned()),
-        );
-        let mut untrusted_hosts = store.untrusted_hosts();
-        let data = Templar::is_template(host)
+        let named_by_host = Templar::is_template(host)
             || match named {
                 Named::ByTheRun => false,
                 Named::ByDelegate { data } => data || store.is_runtime_host(host),
             };
-        if data {
-            untrusted.extend(["inventory_hostname", "inventory_hostname_short"].map(String::from));
-            let mut hosts = (*untrusted_hosts).clone();
-            hosts
-                .entry(host.to_string())
-                .or_default()
-                .extend(["inventory_hostname", "inventory_hostname_short"].map(String::from));
-            untrusted_hosts = Arc::new(hosts);
-        }
-        (
-            store.host_sources(host, &scope),
-            hostvars,
-            untrusted,
-            untrusted_hosts,
-        )
+        (store.host_sources(host, &scope), hostvars, named_by_host)
     };
     // Laid without the lock: see `HostSources`.
     let layers = sources.layer(&scope);
@@ -186,10 +165,13 @@ pub(in crate::executor) fn merged_vars(
         base: layers.files,
         hostvars,
         shared: layers.shared,
+        data_lists: layers.data_lists,
         facts: layers.facts,
-        untrusted,
-        untrusted_hosts,
     };
+    if named_by_host {
+        vars.map.mark_from_host("inventory_hostname");
+        vars.map.mark_from_host("inventory_hostname_short");
+    }
     // Before anything of the task's own `vars:` resolves, never after: a lookup one of them
     // calls (`first_found`, `template`) reads these two names to find its file, and a pass that
     // resolves the task's variables without them first is a pass that lookup cannot complete on.
@@ -205,11 +187,8 @@ pub(in crate::executor) fn merged_vars(
             "inventory_hostname"
         };
         let address = ssh_host.unwrap_or_else(|| Value::String(host.to_string()));
-        if vars.untrusted.contains(from) {
-            vars.insert_untrusted("ansible_host".into(), address);
-        } else {
-            vars.insert("ansible_host".into(), address);
-        }
+        let tree = vars.tree(from).cloned();
+        vars.insert_tagged("ansible_host".into(), address, tree);
     }
     if let Some(role) = own_role {
         insert_role_names(&mut vars, role);
@@ -262,12 +241,7 @@ fn insert_role_names(vars: &mut HostVars, role: &crate::roles::RoleVars) {
 
 /// The variables of [`merged_vars`] resolved against each other.
 pub(in crate::executor) fn resolved(mut vars: HostVars, templar: &Templar) -> HostVars {
-    // The merged map carries this host's facts, so the names that came from a managed host
-    // travel into the resolution below and are left there exactly as they arrived. The set comes
-    // back wider than it went in: a `vars:` of the play, of a block or of the task itself built
-    // from a registered value is data too, and this resolution is the only place that can tell.
     crate::profile::count(crate::profile::Counter::RenderVars, 1);
-    let (map, untrusted) = templar.resolve_vars_tainted(&vars);
-    vars.set_resolved(map, untrusted);
+    vars.map = templar.resolve_vars(&vars);
     vars
 }

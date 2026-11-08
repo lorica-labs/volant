@@ -13,6 +13,78 @@ use crate::template::Templar;
 use crate::transport::ConnectionDefaults;
 use crate::vars::HostVars;
 
+/// The entries of a JSON object as a playbook writes them: every string is trusted as a template.
+pub(crate) fn written(value: &Value) -> crate::tags::Tagged {
+    let origin = crate::tags::origin_described("test");
+    let mut out = crate::tags::Tagged::default();
+    for (name, value) in value.as_object().expect("an object") {
+        let tree = crate::tags::uniform(value, origin, true);
+        out.insert(name.clone(), value.clone(), tree);
+    }
+    out
+}
+
+/// A `hostvars` map whose hosts' variables are as a playbook writes them.
+pub(crate) fn written_hostvars(hosts: crate::tags::Tagged) -> crate::vars::HostvarsMap {
+    hosts
+        .iter()
+        .map(|(host, view)| {
+            let entry = crate::vars::HostEntry::from(written(view));
+            (host.clone(), std::sync::Arc::new(entry))
+        })
+        .collect()
+}
+
+/// The tags of `value` as a playbook writes it.
+pub(crate) fn written_tree(value: &Value) -> Option<crate::tags::TagTree> {
+    crate::tags::uniform(value, crate::tags::origin_described("test"), true)
+}
+
+/// Writes `value` under `name` as a playbook writes it.
+pub(crate) fn put_written(map: &mut crate::tags::Tagged, name: &str, value: Value) {
+    let tree = written_tree(&value);
+    map.insert(name.to_string(), value, tree);
+}
+
+/// The names whose read by `host` finds what a managed host sent.
+pub(crate) fn from_host_names(
+    store: &mut crate::vars::VarStore,
+    host: &str,
+    scope: &crate::vars::Scope,
+) -> std::collections::BTreeSet<String> {
+    let layers = store.layered_for_host(host, scope);
+    let held = layers.map.iter().map(|(name, _)| name);
+    let facts = layers
+        .facts
+        .iter()
+        .filter(|(_, v)| **v != Value::Object(Map::new()));
+    held.filter(|name| layers.map.is_from_host(name))
+        .chain(facts.map(|(name, _)| name))
+        .chain(layers.data_lists.iter())
+        .cloned()
+        .collect()
+}
+
+/// The hosts `hostvars` holds a value of a managed host for, as `reader` sees them.
+pub(crate) fn hosts_with_host_values(
+    store: &mut crate::vars::VarStore,
+    reader: &str,
+) -> std::collections::BTreeSet<String> {
+    let holds = |entry: &crate::vars::HostEntry| {
+        let mut trees = entry.tags().values();
+        trees.any(|tree| crate::tags::is_from_host(tree.own()))
+    };
+    let view = store.hostvars_shared(reader);
+    let held = view.iter().filter(|(_, entry)| holds(entry));
+    held.map(|(host, _)| host.clone()).collect()
+}
+
+/// Whether the name of `host` came from a managed host.
+pub(crate) fn host_name_is_data(store: &mut crate::vars::VarStore, host: &str) -> bool {
+    let scope = crate::vars::Scope::default();
+    from_host_names(store, host, &scope).contains("inventory_hostname")
+}
+
 /// A directory removed when it goes out of scope, however the test ends.
 pub(crate) fn scratch() -> tempfile::TempDir {
     tempfile::tempdir().expect("a scratch directory")

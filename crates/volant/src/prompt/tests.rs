@@ -27,7 +27,11 @@ fn run(
             .to_string())
     };
     let ask: Option<Ask<'_>> = if terminal { Some(&mut answer) } else { None };
-    answers(&play, &templar, &Map::new(), extra, ask, &mut false)
+    let got = answers(&play, &templar, &Tagged::default(), extra, ask, &mut false)?;
+    Ok(got
+        .into_iter()
+        .map(|(name, value, _)| (name, value))
+        .collect())
 }
 
 #[test]
@@ -84,11 +88,7 @@ fn an_unsafe_default_is_kept_as_typed_text() {
         None,
     )
     .unwrap();
-    assert_eq!(
-        got[0].1,
-        crate::yaml::unsafe_data(json!("{{ q }}")),
-        "rendered once, then marked as data"
-    );
+    assert_eq!(got[0].1, json!("{{ q }}"), "rendered once");
 }
 
 #[test]

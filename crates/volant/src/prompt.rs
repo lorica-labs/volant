@@ -9,6 +9,7 @@ use serde_json::{Map, Value};
 
 use crate::executor::as_bool_value;
 use crate::playbook::{Origin, Play};
+use crate::tags::Tagged;
 use crate::template::Templar;
 
 /// How one prompt is put to the operator: the text, and whether what is typed stays hidden.
@@ -26,11 +27,11 @@ pub(crate) type Ask<'a> = &'a mut dyn FnMut(&str, bool) -> anyhow::Result<String
 pub(crate) fn answers(
     play: &Play,
     templar: &Templar,
-    vars: &Map<String, Value>,
+    vars: &Tagged,
     extra: &Map<String, Value>,
     mut ask: Option<Ask<'_>>,
     warned: &mut bool,
-) -> anyhow::Result<Vec<(String, Value)>> {
+) -> anyhow::Result<Vec<(String, Value, bool)>> {
     if play.vars_prompt.is_empty() {
         return Ok(Vec::new());
     }
@@ -83,14 +84,7 @@ pub(crate) fn answers(
         }
         let value = Value::String(text);
         // The reference marks what it asked for as safe to template unless `unsafe` says not.
-        out.push((
-            entry.name,
-            if entry.unsafe_text {
-                crate::yaml::unsafe_data(value)
-            } else {
-                value
-            },
-        ));
+        out.push((entry.name, value, !entry.unsafe_text));
     }
     Ok(out)
 }
@@ -104,7 +98,7 @@ pub(crate) fn answers(
 pub(crate) fn prompted<'a>(
     play: &'a Play,
     templar: &Templar,
-    vars: &Map<String, Value>,
+    vars: &Tagged,
     extra: &Map<String, Value>,
     warned: &mut bool,
 ) -> anyhow::Result<std::borrow::Cow<'a, Play>> {
@@ -119,8 +113,10 @@ pub(crate) fn prompted<'a>(
         None
     };
     let mut play = play.clone();
-    for (name, value) in answers(&play, templar, vars, extra, ask, warned)? {
-        play.vars.insert(name, value, None);
+    let origin = crate::tags::origin_described("vars_prompt");
+    for (name, value, trusted) in answers(&play, templar, vars, extra, ask, warned)? {
+        let tree = crate::tags::uniform(&value, origin, trusted);
+        play.vars.insert(name, value, tree);
     }
     Ok(std::borrow::Cow::Owned(play))
 }
@@ -129,7 +125,7 @@ pub(crate) fn prompted<'a>(
 fn render_once(
     templar: &Templar,
     value: &Value,
-    vars: &Map<String, Value>,
+    vars: &Tagged,
 ) -> Result<Value, crate::template::TemplateError> {
     Ok(match value {
         Value::String(text) => templar.render_one_pass(text, vars)?,
@@ -260,10 +256,7 @@ fn hash(
     salt_size: Option<i64>,
 ) -> anyhow::Result<String> {
     let vars = Map::from_iter([
-        (
-            "secret".to_string(),
-            crate::yaml::unsafe_data(Value::String(text.to_string())),
-        ),
+        ("secret".to_string(), Value::String(text.to_string())),
         ("algorithm".to_string(), Value::from(algorithm)),
         ("salt".to_string(), salt.map_or(Value::Null, Value::from)),
         (

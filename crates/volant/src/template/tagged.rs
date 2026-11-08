@@ -63,6 +63,16 @@ pub(crate) struct TagRegistry {
 }
 
 impl TagRegistry {
+    /// The template value of `value`, a result, with `tree` as its tags.
+    pub(super) fn keeping(&self, value: &serde_json::Value, tree: Option<&TagTree>) -> Value {
+        let out = built(value, tree);
+        if let Some(tree) = tree {
+            self.settle();
+            self.hold_tree(&out, tree);
+        }
+        out
+    }
+
     pub(crate) fn tag(&self, value: &Value, id: TagSetId) {
         self.settle();
         self.hold(value, id);
@@ -229,6 +239,22 @@ pub(super) fn tag(state: &minijinja::State, value: &Value, id: TagSetId) {
         && let Some(ctx) = root.downcast_object_ref::<super::context::Context>()
     {
         ctx.registry.tag(value, id);
+    }
+}
+
+/// The template value of `value`, a filter's result, with `tree` as its tags.
+pub(super) fn kept(
+    state: &minijinja::State,
+    value: &serde_json::Value,
+    tree: Option<&TagTree>,
+) -> Value {
+    let root = state.lookup(super::CONTEXT_KEY);
+    match root
+        .as_ref()
+        .and_then(|root| root.downcast_object_ref::<super::context::Context>())
+    {
+        Some(ctx) => ctx.registry.keeping(value, tree),
+        None => super::bigint::to_template(value),
     }
 }
 

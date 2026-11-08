@@ -4,6 +4,7 @@
 //! `TrustedAsTemplate`, except under `!unsafe`. Booleans and nulls carry nothing.
 
 use saphyr::{Scalar, Yaml};
+use serde_json::Value;
 
 use super::{Origins, is_vault, scalar, walk::key_text};
 use crate::tags::{self, Children, TagSet, TagTree};
@@ -97,5 +98,59 @@ fn unsafe_key<'t, 'a>(key: &'t Yaml<'a>) -> &'t Yaml<'a> {
     match key {
         Yaml::Tagged(tag, inner) if tag.handle == "!" && tag.suffix == "unsafe" => inner,
         key => key,
+    }
+}
+
+/// A value as JSON written by ansible-core carries it, and its tags: every string is trusted, as
+/// the reference trusts this JSON, except one that arrives as `{"__ansible_unsafe": text}`.
+pub(crate) fn unsafe_markers(value: &Value, origin: tags::OriginId) -> (Value, Option<TagTree>) {
+    let set = |trusted| {
+        tags::intern(TagSet {
+            origin: Some(origin),
+            trusted,
+            ..TagSet::default()
+        })
+    };
+    match value {
+        Value::Object(map)
+            if map.len() == 1 && map.get("__ansible_unsafe").is_some_and(Value::is_string) =>
+        {
+            (
+                map["__ansible_unsafe"].clone(),
+                Some(TagTree::Leaf(set(false))),
+            )
+        }
+        Value::Object(map) => {
+            let mut kids = Vec::new();
+            let out = map
+                .iter()
+                .map(|(k, v)| {
+                    let (v, tree) = unsafe_markers(v, origin);
+                    kids.extend(tree.map(|tree| (k.clone(), tree)));
+                    (k.clone(), v)
+                })
+                .collect();
+            (
+                Value::Object(out),
+                TagTree::node(set(false), Children::Map(kids)),
+            )
+        }
+        Value::Array(items) => {
+            let mut kids = Vec::new();
+            let out = items
+                .iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    let (v, tree) = unsafe_markers(v, origin);
+                    kids.extend(tree.map(|tree| (i, tree)));
+                    v
+                })
+                .collect();
+            (
+                Value::Array(out),
+                TagTree::node(set(false), Children::Seq(kids)),
+            )
+        }
+        other => (other.clone(), tags::uniform(other, origin, true)),
     }
 }

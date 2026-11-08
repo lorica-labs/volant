@@ -208,9 +208,8 @@ pub(super) fn no_facts() -> &'static Arc<Map<String, Value>> {
 }
 
 impl VarStore {
-    /// Writes a fact the playbook wrote: `include_vars`, and the engine's own bookkeeping. The
-    /// name gets its trust back, because a write from an author-side source is author content
-    /// whatever the name held before.
+    /// Writes a fact the playbook wrote: `include_vars`, and the engine's own bookkeeping. Whatever
+    /// the name held before, the value has `tree` and nothing else.
     ///
     /// A value still holding a template is rendered again by every task that reads it, and what
     /// it names can be another host's variable; see [`VarStore::templated_facts`].
@@ -220,8 +219,7 @@ impl VarStore {
     }
 
     /// Writes a variable `include_vars` read, `data` when the file held what a managed host
-    /// returned. It lands under the `set_fact` layer, see `VarStore::included`, and a name that
-    /// layer holds keeps the trust it has there, since that layer is the one that answers.
+    /// returned. It lands under the `set_fact` layer, see `VarStore::included`.
     pub fn set_included(
         &mut self,
         host: &str,
@@ -231,15 +229,11 @@ impl VarStore {
         data: bool,
     ) {
         self.templated_facts |= !data && holds_template(&value);
-        let shadowed = self.facts.get(host).is_some_and(|f| f.contains_key(key));
-        if !shadowed {
-            let names = self.untrusted.entry(host.to_string()).or_default();
-            if data {
-                names.insert(key.to_string());
-            } else {
-                names.remove(key);
-            }
-        }
+        let tree = if data {
+            Some(crate::tags::from_host(tree))
+        } else {
+            tree
+        };
         Arc::make_mut(self.included.entry(host.to_string()).or_default()).insert(
             key.to_string(),
             value,
@@ -256,9 +250,6 @@ impl VarStore {
     }
 
     fn write_fact(&mut self, host: &str, key: &str, value: Value, tree: Option<TagTree>) {
-        if let Some(names) = self.untrusted.get_mut(host) {
-            names.remove(key);
-        }
         Arc::make_mut(self.facts.entry(host.to_string()).or_default()).insert(
             key.to_string(),
             value,
@@ -269,21 +260,14 @@ impl VarStore {
 
     /// Writes a fact that came from a managed host: a module result, a `register`, a `set_fact`.
     /// The name is data from here on, and a template that reads it is not rendered again.
-    pub fn set_untrusted_fact(&mut self, host: &str, key: &str, value: Value) {
+    pub fn set_host_fact(&mut self, host: &str, key: &str, value: Value) {
         self.set_registered(host, key, value, None);
     }
 
-    /// [`VarStore::set_untrusted_fact`] for a registered result, with the tags of its parts.
+    /// [`VarStore::set_host_fact`] for a registered result, with the tags of its parts. Not
+    /// `set_fact`: a template a host returned is data and is never rendered, so it reads nothing.
     pub fn set_registered(&mut self, host: &str, key: &str, value: Value, tree: Option<TagTree>) {
-        // After, not before: `write_fact` clears the name, because a write from an author-side
-        // source gives the trust back. The cache `write_fact` dropped covers this write too,
-        // because nothing can read it between the two lines. Not `set_fact`: a template a host
-        // returned is data and is never rendered, so it reads nothing.
-        self.write_fact(host, key, value, tree);
-        self.untrusted
-            .entry(host.to_string())
-            .or_default()
-            .insert(key.to_string());
+        self.write_fact(host, key, value, Some(crate::tags::from_host(tree)));
     }
 
     /// Merges the `ansible_facts` a module returned into one host's facts, under both the names

@@ -632,7 +632,6 @@ fn vault_and_unsafe_text_load_as_data() {
         vault_text(wrapped).as_deref(),
         Some("$ANSIBLE_VAULT;1.1;AES256\n3132\n")
     );
-    assert_eq!(unsafe_text(wrapped), None);
     let docs = load(
         "raw: !unsafe 'a \"{{ x }}\" \\ b'\nl: [!unsafe '{{ y }}', 3, plain]\nn: !unsafe [{k: '{{ z }}'}, 1]\n",
         "t.yml",
@@ -641,9 +640,9 @@ fn vault_and_unsafe_text_load_as_data() {
     assert_eq!(
         to_json(&docs[0]).unwrap(),
         json!({
-            "raw": r#"{{ "a \"{{ x }}\" \\ b" | volant_unsafe }}"#,
-            "l": [r#"{{ "{{ y }}" | volant_unsafe }}"#, 3, "plain"],
-            "n": [{"k": r#"{{ "{{ z }}" | volant_unsafe }}"#}, 1],
+            "raw": r#"{{ "a \"{{ x }}\" \\ b" }}"#,
+            "l": [r#"{{ "{{ y }}" }}"#, 3, "plain"],
+            "n": [{"k": r#"{{ "{{ z }}" }}"#}, 1],
         })
     );
     // A tag on a mapping key leaves the key as written, beside a plain-leaf and a nested value.
@@ -657,7 +656,7 @@ fn vault_and_unsafe_text_load_as_data() {
     .unwrap();
     assert_eq!(
         to_json(&docs[0]).unwrap(),
-        json!({"d": {"a": 1, "b": {"c": r#"{{ "{{ x }}" | volant_unsafe }}"#}}})
+        json!({"d": {"a": 1, "b": {"c": r#"{{ "{{ x }}" }}"#}}})
     );
 }
 
@@ -672,17 +671,11 @@ fn unsafe_text_escapes_and_reads_back_whatever_it_holds() {
         "{{ a\u{85}b }}\n\r\t",
     ] {
         let wrapped = unsafe_data(Value::String(text.into()));
+        let templar = crate::template::Templar::new(std::env::temp_dir());
         assert_eq!(
-            unsafe_text(wrapped.as_str().unwrap()).as_deref(),
-            Some(text)
+            templar.render(wrapped.as_str().unwrap(), &serde_json::Map::new()),
+            Ok(json!(text))
         );
-    }
-    for not_a_wrapper in [
-        "{{ \"a\" | volant_unsafe }} {{ b }}",
-        "{{ \"a\"b\" | volant_unsafe }}",
-        "{{ \"a\\qb\" | volant_unsafe }}",
-    ] {
-        assert_eq!(unsafe_text(not_a_wrapper), None, "{not_a_wrapper:?}");
     }
 }
 
@@ -1196,14 +1189,8 @@ fn a_merged_unsafe_mapping_stays_data() {
     let text = "x: &x !unsafe {a: '{{ q }}', n: {m: '{{ q }}'}}\nd: {<<: *x, c: '{{ q }}'}\n";
     let docs = load(text, "t.yml").unwrap();
     let d = to_json(&docs[0]).unwrap()["d"].clone();
-    assert_eq!(
-        unsafe_text(d["a"].as_str().unwrap()).as_deref(),
-        Some("{{ q }}")
-    );
-    assert_eq!(
-        unsafe_text(d["n"]["m"].as_str().unwrap()).as_deref(),
-        Some("{{ q }}")
-    );
+    assert_eq!(d["a"], json!(unsafe_string("{{ q }}")));
+    assert_eq!(d["n"]["m"], json!(unsafe_string("{{ q }}")));
     assert_eq!(d["c"], json!("{{ q }}"));
 }
 

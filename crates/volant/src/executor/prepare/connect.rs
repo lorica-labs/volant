@@ -151,7 +151,7 @@ pub(super) fn delegate_for(
         let value = serde_json::json!({ name: own.unwrap_or_else(|| serde_json::json!({})) });
         for item in items {
             item.vars
-                .insert_untrusted("ansible_delegated_vars".into(), value.clone());
+                .insert_from_host("ansible_delegated_vars".into(), value.clone());
         }
     }
     Ok(delegate)

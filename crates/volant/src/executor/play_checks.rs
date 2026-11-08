@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use super::prepare::{strict_boolean, undefined_name};
 use super::{RunState, python_type};
@@ -22,7 +22,7 @@ use crate::vars::{Scope, VarsFiles, load_play_vars_file};
 pub(super) fn max_fail_percentage(
     play: &Play,
     templar: &Templar,
-    vars: &Map<String, Value>,
+    vars: &Tagged,
 ) -> anyhow::Result<Option<f64>> {
     let Some(raw) = &play.max_fail_percentage else {
         return Ok(None);
@@ -54,7 +54,7 @@ pub(super) fn max_fail_percentage(
 pub(crate) fn render_play_names<'a>(
     play: &'a Play,
     templar: &Templar,
-    vars: &Map<String, Value>,
+    vars: &Tagged,
 ) -> anyhow::Result<std::borrow::Cow<'a, Play>> {
     let templated = |v: &Option<String>| v.as_deref().is_some_and(Templar::is_template);
     if !templated(&play.strategy) && !templated(&play.order) {
@@ -108,7 +108,7 @@ pub(super) struct PlayFlags {
 pub(super) fn play_flags(
     play: &Play,
     templar: &Templar,
-    vars: &Map<String, Value>,
+    vars: &Tagged,
 ) -> anyhow::Result<PlayFlags> {
     let read = |key: &str, template: &Option<String>| -> anyhow::Result<Option<bool>> {
         let Some(raw) = template else {
@@ -141,7 +141,7 @@ pub(super) fn play_flags(
 pub(super) fn check_gather_keywords(
     play: &Play,
     templar: &Templar,
-    vars: &Map<String, Value>,
+    vars: &Tagged,
 ) -> anyhow::Result<()> {
     // With `vars_files`, a variable not defined yet may come from them: the check runs again
     // once they are read, see `recheck_gather_keywords`.
@@ -156,7 +156,7 @@ fn recheck_gather_keywords(play: &Play, state: &RunState, files: &VarsFiles) -> 
     }
     let mut vars = state.vars.lock().expect("vars lock").play_scope(&play.vars);
     for file in files.maps() {
-        vars.extend(file.as_map().clone());
+        vars.overlay(file);
     }
     check_gather(play, &state.templar, &vars, false)
 }
@@ -164,7 +164,7 @@ fn recheck_gather_keywords(play: &Play, state: &RunState, files: &VarsFiles) -> 
 fn check_gather(
     play: &Play,
     templar: &Templar,
-    vars: &Map<String, Value>,
+    vars: &Tagged,
     lenient: bool,
 ) -> anyhow::Result<()> {
     let refuse = |key: &str, why: String| {
@@ -283,31 +283,27 @@ pub(super) fn load_play_vars_files(
             all_play_hosts: all_play_hosts.into(),
             ..Scope::default()
         };
-        let (layers, untrusted, untrusted_hosts) = {
-            let mut store = state.vars.lock().expect("vars lock");
-            let untrusted = store.untrusted_of(&host.name, &scope);
-            let untrusted_hosts = store.untrusted_hosts();
-            let layers = store.layered_for_host(&host.name, &scope);
-            (layers, untrusted, untrusted_hosts)
-        };
-        let (resolved, untrusted) = state.templar.resolve_vars_tainted(Vars {
+        let layers = state
+            .vars
+            .lock()
+            .expect("vars lock")
+            .layered_for_host(&host.name, &scope);
+        let resolved = state.templar.resolve_vars(Vars {
             map: &layers.map,
-            tags: None,
+            tags: Some(layers.map.tags()),
             hostvars: None,
             shared: Some(&layers.shared),
+            data_lists: Some(&layers.data_lists),
             facts: Some(&layers.facts),
-            untrusted: Some(&untrusted),
-            untrusted_hosts: Some(&untrusted_hosts),
             base: Some(&layers.files),
         });
         let vars = Vars {
             map: &resolved,
-            tags: None,
+            tags: Some(resolved.tags()),
             hostvars: None,
             shared: Some(&layers.shared),
+            data_lists: Some(&layers.data_lists),
             facts: Some(&layers.facts),
-            untrusted: Some(&untrusted),
-            untrusted_hosts: Some(&untrusted_hosts),
             base: Some(&layers.files),
         };
         let files = read_vars_files(

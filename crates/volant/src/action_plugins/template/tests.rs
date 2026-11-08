@@ -32,18 +32,16 @@ fn with_template(name: &str, text: &str) -> Scratch {
 #[test]
 fn a_dest_a_host_named_stays_the_host_s_value() {
     let mut item = HostVars::default();
-    item.insert_untrusted("motd".into(), json!("from a host"));
+    item.insert_from_host("motd".into(), json!("from a host"));
     let untrusted: BTreeSet<String> = ["dest".to_string()].into();
     let vars = template_vars(&item, &untrusted, "t.j2", "/pb/templates/t.j2", "/tmp/x");
-    let names: Vec<&str> = vars.untrusted.iter().map(String::as_str).collect();
-    assert_eq!(names, ["motd", "template_destpath"]);
+    assert!(vars.is_from_host("motd") && vars.is_from_host("template_destpath"));
     assert_eq!(vars.get("template_destpath"), Some(&json!("/tmp/x")));
 
     let vars = template_vars(&item, &BTreeSet::new(), "t.j2", "/pb/templates/t.j2", "/x");
-    let names: Vec<&str> = vars.untrusted.iter().map(String::as_str).collect();
-    assert_eq!(
-        names,
-        ["motd"],
+    assert!(vars.is_from_host("motd"));
+    assert!(
+        !vars.is_from_host("template_destpath"),
         "a `dest` the playbook wrote is the author's"
     );
 }
@@ -55,17 +53,15 @@ fn a_src_a_host_named_stays_the_host_s_value() {
     let item = HostVars::default();
     let untrusted: BTreeSet<String> = ["src".to_string()].into();
     let vars = template_vars(&item, &untrusted, "t.j2", "/pb/templates/t.j2", "/tmp/x");
-    let names: Vec<&str> = vars.untrusted.iter().map(String::as_str).collect();
-    assert_eq!(names, ["template_fullpath", "template_path"]);
+    assert!(vars.is_from_host("template_fullpath") && vars.is_from_host("template_path"));
     assert_eq!(vars.get("template_path"), Some(&json!("t.j2")));
     assert_eq!(
         vars.get("template_fullpath"),
         Some(&json!("/pb/templates/t.j2"))
     );
+    let vars = template_vars(&item, &BTreeSet::new(), "t.j2", "/pb/templates/t.j2", "/x");
     assert!(
-        template_vars(&item, &BTreeSet::new(), "t.j2", "/pb/templates/t.j2", "/x")
-            .untrusted
-            .is_empty(),
+        !vars.is_from_host("template_fullpath") && !vars.is_from_host("template_path"),
         "a `src` the playbook wrote is the author's"
     );
 }
@@ -190,12 +186,10 @@ fn a_host_value_reaches_the_rendered_file_as_text() {
         crate::tags::Tagged::default(),
     )
     .unwrap();
-    store.set_untrusted_fact("h1", "motd", Value::String(payload.clone()));
+    store.set_host_fact("h1", "motd", Value::String(payload.clone()));
     let scope = crate::vars::Scope::default();
     let vars = HostVars {
-        map: crate::tags::Tagged::from(store.for_host("h1", &scope)),
-        untrusted: store.untrusted_of("h1", &scope),
-        untrusted_hosts: store.untrusted_hosts(),
+        map: store.layered_for_host("h1", &scope).map,
         ..HostVars::default()
     };
     let args = json!({"src": "motd.j2", "dest": "/tmp/motd"});

@@ -835,7 +835,7 @@ fn a_host_directory_a_host_named_is_refused_only_when_the_protection_is_on(
     let dir = dir_guard.path().to_path_buf();
     let dest = dir.join("fetched");
     let mut vars = HostVars::default();
-    vars.insert_untrusted("inventory_hostname".into(), json!("other-host"));
+    vars.insert_from_host("inventory_hostname".into(), json!("other-host"));
     let mut plugin = start_within(
         json!({"src": "/etc/one.txt", "dest": dest.display().to_string()}),
         &BTreeSet::new(),

@@ -72,35 +72,33 @@ fn every_golden_case_matches_the_reference() {
             bridged += 1;
             continue;
         }
-        let mut vars: Map<String, Value> = case
+        // A case's `vars` are the play's, which the reference trusts. Its `untrusted` names are the
+        // ones the reference got from a managed host, through a `command` the generator registers
+        // and carries into a `set_fact`: the same state the executor hands a render after a
+        // `register`.
+        let origin = volant::tags::origin_described("case");
+        let mut vars = volant::tags::Tagged::default();
+        for (name, value) in case
             .get("vars")
             .and_then(Value::as_object)
-            .cloned()
-            .unwrap_or_default();
-        // A case's `untrusted` names are the ones the reference got from a managed host, through
-        // a `command` the generator registers and carries into a `set_fact`. On this side they
-        // are ordinary values with their names in the untrusted set, which is the same state the
-        // executor hands a render after a `register`.
-        let untrusted: std::collections::BTreeSet<String> = case
+            .into_iter()
+            .flatten()
+        {
+            vars.insert(
+                name.clone(),
+                value.clone(),
+                volant::tags::uniform(value, origin, true),
+            );
+        }
+        for (name, value) in case
             .get("untrusted")
             .and_then(Value::as_object)
             .into_iter()
             .flatten()
-            .map(|(k, v)| {
-                vars.insert(k.clone(), v.clone());
-                k.clone()
-            })
-            .collect();
-        let vars = volant::template::Vars {
-            map: &vars,
-            tags: None,
-            hostvars: None,
-            shared: None,
-            facts: None,
-            untrusted: Some(&untrusted),
-            untrusted_hosts: None,
-            base: None,
-        };
+        {
+            vars.insert_from_host(name.clone(), value.clone());
+        }
+        let vars = volant::template::Vars::from(&vars);
         let ours: Result<Option<Value>, String> =
             if let Some(when) = case.get("when").and_then(Value::as_str) {
                 templar

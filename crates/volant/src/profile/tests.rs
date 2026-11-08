@@ -135,9 +135,9 @@ fn the_counters_are_named_in_declaration_order() {
     count(Counter::RenderWhen, 2);
     count(Counter::WireInBytes, 9);
     let all = counters();
-    assert_eq!(all.len(), 14);
+    assert_eq!(all.len(), 12);
     assert_eq!(all[0], ("render_when", 2));
-    assert_eq!(all[13], ("wire_in_bytes", 9));
+    assert_eq!(all[11], ("wire_in_bytes", 9));
     let table = Profile::default().render();
     let row = format!("\n{:<24} {:>14}\n", "render_when", 2);
     assert!(table.contains(&row), "{table}");
@@ -181,5 +181,5 @@ fn nothing_but_the_counters_is_kept_without_tracking() {
     assert_eq!(repeats(20), (0, Vec::new()));
     assert_eq!(loop_invariant(20), (0, Vec::new()));
     assert!(bridge_table().is_empty());
-    assert_eq!(counters()[10], ("bridge_calls", 1));
+    assert_eq!(counters()[8], ("bridge_calls", 1));
 }

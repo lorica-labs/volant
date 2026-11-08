@@ -933,21 +933,21 @@ fn every_bridge_case_matches_the_reference() {
             continue;
         }
         ran += 1;
-        let vars: Map<String, Value> = case
+        let origin = volant::tags::origin_described("case");
+        let mut vars = volant::tags::Tagged::default();
+        for (name, value) in case
             .get("vars")
             .and_then(Value::as_object)
-            .cloned()
-            .unwrap_or_default();
-        let vars = Vars {
-            map: &vars,
-            tags: None,
-            hostvars: None,
-            shared: None,
-            facts: None,
-            untrusted: None,
-            untrusted_hosts: None,
-            base: None,
-        };
+            .into_iter()
+            .flatten()
+        {
+            vars.insert(
+                name.clone(),
+                value.clone(),
+                volant::tags::uniform(value, origin, true),
+            );
+        }
+        let vars = Vars::from(&vars);
         let text = case["template"].as_str().expect("template is a string");
         let ours = templar.render(text, vars).map_err(|e| e.to_string());
         // A failure holds the reference's `The <kind> plugin '<name>' failed` sentence.

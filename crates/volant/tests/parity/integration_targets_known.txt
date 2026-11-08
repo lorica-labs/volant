@@ -3,10 +3,8 @@
 # target that differs, and an entry goes away with the fix of its issue.
 assert                         #1282
 cache-plugins                  #1282
-conditionals                   #1282
 deprecations                   #1282
 filter_encryption              #1282
-inventory_script               #1282
 protomatter                    #1282
 template                       #1355
 templating                     #1282

@@ -106,6 +106,9 @@ pub struct Config {
     /// `[defaults] deprecation_warnings` or `ANSIBLE_DEPRECATION_WARNINGS`: print the
     /// `[DEPRECATION WARNING]` blocks and the line that tells how to stop them. On by default.
     pub deprecation_warnings: bool,
+    /// `[defaults] allow_broken_conditionals` or `ANSIBLE_ALLOW_BROKEN_CONDITIONALS`: a condition
+    /// whose result is not a boolean goes by its truth, with a deprecation, instead of failing.
+    pub allow_broken_conditionals: bool,
     /// `[defaults] log_path` or `ANSIBLE_LOG_PATH`, and `log_verbosity` or
     /// `ANSIBLE_LOG_VERBOSITY`: the file every displayed line is written to, and the `-v` level
     /// up to which lines go there even when they are not shown.

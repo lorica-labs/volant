@@ -33,6 +33,7 @@ pub(super) fn set_up(
     let config = crate::runtime::resolve::configured(Config::load()?);
     out.set_path_on_failure(config.show_task_path_on_failure);
     playbook::set_deprecation_warnings(config.deprecation_warnings);
+    crate::template::set_allow_broken_conditionals(config.allow_broken_conditionals);
     if let Some(path) = &config.log_path
         && let Err(why) = crate::render::log::open(path, config.log_verbosity)
     {

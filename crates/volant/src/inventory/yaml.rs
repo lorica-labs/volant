@@ -135,14 +135,14 @@ fn lower(root: &Yaml) -> Result<Value, String> {
         return Err("Parsed empty YAML file".to_string());
     }
     let Yaml::Mapping(_) = root else {
-        let value = yaml::to_json(root).map_err(|e| e.to_string())?;
+        let value = yaml::to_tagged_json(root).map_err(|e| e.to_string())?;
         return Err(format!(
             "YAML inventory has invalid structure, it should be a dictionary, got: {}",
             Dialect::Yaml.type_name(&value)
         ));
     };
     if let Some(plugin) = yaml::field(root, "plugin") {
-        let value = yaml::to_json(plugin).map_err(|e| e.to_string())?;
+        let value = yaml::to_tagged_json(plugin).map_err(|e| e.to_string())?;
         if !falsy(&value) {
             return Err("Plugin configuration YAML file, not YAML inventory".to_string());
         }
@@ -174,7 +174,7 @@ fn group_name(key: &Yaml) -> Result<String, String> {
 
 fn group_value(node: &Yaml) -> Result<Value, String> {
     let Yaml::Mapping(map) = node else {
-        return yaml::to_json(node).map_err(|e| e.to_string());
+        return yaml::to_tagged_json(node).map_err(|e| e.to_string());
     };
     let mut out = Map::new();
     for (key, data) in map {
@@ -193,12 +193,12 @@ fn group_value(node: &Yaml) -> Result<Value, String> {
                     }
                     patterns.insert(
                         scalar_text(pattern),
-                        yaml::to_json(vars).map_err(|e| e.to_string())?,
+                        yaml::to_tagged_json(vars).map_err(|e| e.to_string())?,
                     );
                 }
                 Value::Object(patterns)
             }
-            _ => yaml::to_json(data).map_err(|e| e.to_string())?,
+            _ => yaml::to_tagged_json(data).map_err(|e| e.to_string())?,
         };
         out.insert(key, value);
     }

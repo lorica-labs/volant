@@ -2,15 +2,24 @@
 //! Resolving the variables that hold templates: the whole map ahead of a task, and one variable
 //! when a template reads it.
 
-use std::collections::BTreeSet;
+use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use serde_json::{Map, Value};
 
-use super::context::{Vars, context_tracking, deferred, is_literal};
+use super::context::{Vars, context_of};
+use super::tagged::{take_result, with_origin};
 use super::templar::Templar;
-use super::vm::{holds_template, unwrap_unsafe};
+use super::vm::{holds_trusted_template, reveal_vault};
 use super::{Tainted, TemplateError};
+use crate::tags::{Children, TagMap, TagSetId, TagTree, Tagged};
+
+/// The tags of what the last render over `ctx` gave, for a string written with `tree`: what it
+/// passed through, or the place the string was written and no trust.
+fn result_tree(ctx: &minijinja::Value, tree: Option<&TagTree>) -> Option<TagTree> {
+    let origin = tree.and_then(|t| crate::tags::get(t.own()).origin);
+    with_origin(take_result(ctx), origin)
+}
 
 impl Templar {
     /// What a template reads a variable as when the variable holds a template: a string renders
@@ -19,60 +28,51 @@ impl Templar {
     pub(super) fn render_read(
         &self,
         value: &Value,
+        tree: Option<&TagTree>,
         ctx: &minijinja::Value,
         tainted: &Tainted,
         any: &mut bool,
-    ) -> Result<Value, TemplateError> {
+    ) -> Result<(Value, Option<TagTree>), TemplateError> {
         match value {
             Value::String(text) => {
                 let out = self.render_in(text, ctx, tainted)?;
                 *any |= tainted.load(Ordering::Relaxed);
-                Ok(out)
+                Ok((out, result_tree(ctx, tree)))
             }
-            other => Ok(self.render_value_lenient(other, ctx, tainted, any)),
+            other => Ok(self.render_value_lenient(other, tree, ctx, tainted, any)),
         }
     }
 
-    /// Templates the string values of a variable map against the map itself, a few passes, until
+    /// Templates the trusted strings of a variable map against the map itself, a few passes, until
     /// nothing changes. Best effort: a value that fails to render is left as written, so the
     /// error surfaces where the value is used, as it does in Ansible.
     ///
-    /// A name that came from a managed host is left exactly as it arrived. This is the other
-    /// half of the barrier `render_in` holds: the merged map a task renders against carries the
-    /// facts, so a registered value whose text looks like an expression would be evaluated here,
-    /// one task before anything even reads it.
-    ///
-    /// The names that are data once it is done travel out with the map: the ones it was given
-    /// plus the ones a pass turned into data by rendering them from one of those.
-    ///
-    /// The second half is the part a caller cannot work out for itself. A task's own `vars:` are
-    /// resolved here and read nowhere else, so a name the playbook wrote over a registered value
-    /// has no entry anywhere to be looked up by: unless this set travels out with the map, the
-    /// arguments rendered against that map read the payload as author content and evaluate it.
-    pub fn resolve_vars_tainted<'a>(
-        &self,
-        vars: impl Into<Vars<'a>>,
-    ) -> (Map<String, Value>, BTreeSet<String>) {
+    /// Each value that comes out carries the tags of what it rendered to, so a result is rendered
+    /// no further, and one built from what a managed host sent carries that as well: a task's own
+    /// `vars:` are resolved here and read nowhere else, so its arguments learn it from these tags.
+    pub fn resolve_vars<'a>(&self, vars: impl Into<Vars<'a>>) -> Tagged {
         let vars = vars.into();
-        let given = || vars.untrusted.cloned().unwrap_or_default();
-        // Most maps hold no template at all: walking them once is far cheaper than the two
-        // clones a pass costs.
+        let mut tags = vars.tags.cloned().unwrap_or_default();
+        let holds = |map: &Map<String, Value>, tags: &TagMap| {
+            tags.iter().any(|(name, tree)| {
+                map.get(name)
+                    .is_some_and(|v| holds_trusted_template(v, Some(tree)))
+            })
+        };
         let host = || {
             let named =
                 |m: &Map<String, Value>| m.get("inventory_hostname")?.as_str().map(String::from);
             named(vars.map).or_else(|| vars.shared.and_then(|s| named(s)))
         };
-        if !vars.map.values().any(holds_template) {
+        // Most maps hold no template at all: walking them once is far cheaper than the two
+        // clones a pass costs.
+        if !holds(vars.map, &tags) {
             crate::vault::set_names(&host().unwrap_or_default(), Vec::new());
-            return (vars.map.clone(), given());
+            return Tagged::with_shared_tags(vars.map.clone(), tags);
         }
-        // The names the store knows about, and the ones a pass turns into data as it goes: a
-        // value rendered from a managed host's name, or from a file read at run time, is data
-        // from that pass on and the passes after this one leave it alone.
-        let mut untrusted = given();
         let mut current = vars.map.clone();
-        // What `!unsafe` loaded as is text from here on: a sibling that reads it must see the
-        // text, not the wrapper, and the name is data so no pass renders it.
+        // What a `!vault` holds is text from here on: a sibling that reads it must see the text,
+        // not the wrapper, and the name is data so no pass renders it.
         let mut vaulted = Vec::new();
         for (k, v) in &mut current {
             if let Value::String(s) = v
@@ -80,98 +80,123 @@ impl Templar {
             {
                 vaulted.push((k.clone(), s.clone()));
             }
-            // A container keeps its wrappers: they render to their text, and mark the pass's
-            // result as data, while the rest of the container still renders. Measured on
-            // ansible-core 2.19.12, `-e '{"x": {"a": {"__ansible_unsafe": "{{ 1 }}"}, "b": "{{
-            // 1 }}"}}'` reads `a` as text and `b` as `1`.
-            if !untrusted.contains(k) && v.is_string() && unwrap_unsafe(v) {
-                untrusted.insert(k.clone());
+            // A container keeps its wrappers: they render to their text while the rest of the
+            // container still renders.
+            let trusted = tags
+                .get(k)
+                .is_some_and(|t| crate::tags::is_trusted(t.own()));
+            if trusted && v.is_string() && reveal_vault(v) {
+                Arc::make_mut(&mut tags).insert(k.clone(), crate::tags::from_host(None));
             }
         }
         crate::vault::set_names(&host().unwrap_or_default(), vaulted);
         for _ in 0..5 {
+            if !holds(&current, &tags) {
+                break;
+            }
             // One context for the whole pass: every value of the map renders against the same
             // map, so building it per value paid for the same conversion once per variable.
-            let (ctx, tainted) = context_tracking(
+            let (ctx, tainted) = context_of(
                 self,
                 Vars {
                     map: &current,
-                    tags: None,
+                    tags: Some(&tags),
                     hostvars: vars.hostvars,
                     shared: vars.shared,
+                    data_lists: vars.data_lists,
                     facts: vars.facts,
-                    untrusted: Some(&untrusted),
-                    untrusted_hosts: vars.untrusted_hosts,
                     base: vars.base,
                 },
-                vars.untrusted.is_some(),
             );
             let mut next = current.clone();
+            let mut next_tags = Arc::clone(&tags);
             let mut changed = false;
-            let mut soiled = Vec::new();
-            for (k, v) in &current {
-                if untrusted.contains(k) {
+            for (name, tree) in tags.iter() {
+                let Some(value) = current.get(name) else {
+                    continue;
+                };
+                if !holds_trusted_template(value, Some(tree)) {
                     continue;
                 }
                 let mut any = false;
-                let rendered = self.render_value_lenient(v, &ctx, &tainted, &mut any);
-                if any {
-                    soiled.push(k.clone());
-                }
-                if rendered != *v {
+                let (rendered, fresh) =
+                    self.render_value_lenient(value, Some(tree), &ctx, &tainted, &mut any);
+                let fresh = if any {
+                    Some(crate::tags::from_host(fresh))
+                } else {
+                    fresh
+                };
+                if rendered != *value || fresh.as_ref() != Some(tree) {
                     changed = true;
-                    next.insert(k.clone(), rendered);
+                    next.insert(name.clone(), rendered);
+                    let table = Arc::make_mut(&mut next_tags);
+                    match fresh {
+                        Some(fresh) => _ = table.insert(name.clone(), fresh),
+                        None => _ = table.swap_remove(name),
+                    }
                 }
             }
-            untrusted.extend(soiled);
             current = next;
+            tags = next_tags;
             if !changed {
                 break;
             }
         }
-        (current, untrusted)
+        Tagged::with_shared_tags(current, tags)
     }
 
     fn render_value_lenient(
         &self,
         value: &Value,
+        tree: Option<&TagTree>,
         ctx: &minijinja::Value,
         tainted: &Tainted,
         any: &mut bool,
-    ) -> Value {
+    ) -> (Value, Option<TagTree>) {
+        let own = tree.map_or(TagSetId::NONE, TagTree::own);
         match value {
-            // A value that fails stays as written and untainted: a lookup taints the render
-            // before it fails, and a name marked as data would never be rendered again, so its
-            // template text would reach a task as a value.
-            Value::String(s) if Self::is_stored_template(s) => {
-                let before = deferred(ctx);
-                match self.render_in(s, ctx, tainted) {
+            // A value that fails stays as written and keeps its tags: a loop variable it names is
+            // bound later, and the render for that item is the one that can finish it.
+            Value::String(_) if holds_trusted_template(value, tree) => {
+                let Value::String(text) = value else {
+                    unreachable!("the arm matched a string")
+                };
+                match self.render_in(text, ctx, tainted) {
                     Ok(out) => {
-                        let soiled = tainted.load(Ordering::Relaxed) || is_literal(ctx);
-                        // A sibling handed out as written, left for the task to render (a loop
-                        // variable it names is bound later), would become data with the rest:
-                        // the value stays as written too.
-                        if soiled && deferred(ctx) != before {
-                            return value.clone();
-                        }
-                        *any |= soiled;
-                        out
+                        *any |= tainted.load(Ordering::Relaxed);
+                        (out, result_tree(ctx, tree))
                     }
-                    Err(_) => value.clone(),
+                    Err(_) => (value.clone(), tree.cloned()),
                 }
             }
-            Value::Array(items) => Value::Array(
-                items
+            Value::Array(items) => {
+                let mut kids = Vec::new();
+                let out = items
                     .iter()
-                    .map(|v| self.render_value_lenient(v, ctx, tainted, any))
-                    .collect(),
-            ),
-            Value::Object(map) => Value::Object(
-                map.iter()
-                    .map(|(k, v)| (k.clone(), self.render_value_lenient(v, ctx, tainted, any)))
-                    .collect(),
-            ),
-            other => other.clone(),
+                    .enumerate()
+                    .map(|(i, item)| {
+                        let kid = tree.and_then(|t| t.index(i));
+                        let (out, kid) = self.render_value_lenient(item, kid, ctx, tainted, any);
+                        kids.extend(kid.map(|kid| (i, kid)));
+                        out
+                    })
+                    .collect();
+                (Value::Array(out), TagTree::node(own, Children::Seq(kids)))
+            }
+            Value::Object(map) => {
+                let mut kids = Vec::new();
+                let out = map
+                    .iter()
+                    .map(|(k, item)| {
+                        let kid = tree.and_then(|t| t.at(k));
+                        let (out, kid) = self.render_value_lenient(item, kid, ctx, tainted, any);
+                        kids.extend(kid.map(|kid| (k.clone(), kid)));
+                        (k.clone(), out)
+                    })
+                    .collect();
+                (Value::Object(out), TagTree::node(own, Children::Map(kids)))
+            }
+            other => (other.clone(), tree.cloned()),
         }
     }
 }

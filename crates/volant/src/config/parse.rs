@@ -282,6 +282,10 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
                 config.deprecation_warnings =
                     boolean("DEPRECATION_WARNINGS", origin, value.trim())?;
             }
+            "allow_broken_conditionals" => {
+                config.allow_broken_conditionals =
+                    boolean("ALLOW_BROKEN_CONDITIONALS", origin, value.trim())?;
+            }
             "log_path" => config.log_path = Some(expand_home(value.trim(), base)),
             "plugin_filters_cfg" => super::filters::load(&expand_home(value.trim(), base))?,
             "log_verbosity" => {

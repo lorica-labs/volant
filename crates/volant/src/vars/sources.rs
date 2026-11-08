@@ -20,9 +20,12 @@ pub struct HostSources {
     pub(super) facts: Option<Arc<Tagged>>,
     pub(super) extra: Tagged,
     pub(super) magic: Map<String, Value>,
+    /// The names of `magic` that carry a name a managed host sent.
+    pub(super) data_magic: Vec<&'static str>,
     /// The gathered facts that beat the layers below `play_vars`.
     pub(super) answering: BTreeSet<String>,
     pub(super) shared: Arc<Map<String, Value>>,
+    pub(super) data_lists: Arc<BTreeSet<String>>,
     pub(super) gathered: Arc<Map<String, Value>>,
 }
 
@@ -53,6 +56,9 @@ impl HostSources {
         for (name, value) in self.magic {
             map.insert(name, value, None);
         }
+        for name in self.data_magic {
+            map.mark_from_host(name);
+        }
         crate::profile::count(crate::profile::Counter::LayersBuilt, 1);
         crate::profile::count(
             crate::profile::Counter::LayersEntries,
@@ -61,6 +67,7 @@ impl HostSources {
         Layers {
             map,
             shared: self.shared,
+            data_lists: self.data_lists,
             facts: self.gathered,
             files,
         }

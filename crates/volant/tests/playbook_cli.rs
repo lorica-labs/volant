@@ -8328,6 +8328,45 @@ fn a_name_a_host_printed_stays_text_on_every_route(#[case] route: &str) {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A condition a loop wrote is trusted through a splat, an include and a registered result.
+#[test]
+fn a_condition_written_in_a_loop_stays_trusted_wherever_the_item_goes() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    std::fs::write(
+        dir.path().join("site.yml"),
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - assert: '{{ item }}'
+      loop:
+        - that: 1 == 1
+    - include_tasks: inc.yml
+      loop:
+        - checks: [1 == 1]
+    - debug:
+        msg: ran
+      loop:
+        - checks: [1 == 1]
+      register: r
+    - assert:
+        that: '{{ item.item.checks }}'
+      loop: '{{ r.results }}'
+",
+    )
+    .expect("the playbook is written");
+    std::fs::write(
+        dir.path().join("inc.yml"),
+        "- assert:
+    that: '{{ item.checks }}'
+",
+    )
+    .expect("the included file is written");
+    let path = dir.path().join("site.yml");
+    let out = volant(&["playbook", &path.display().to_string()]);
+    let text = String::from_utf8(out.stderr).unwrap() + &String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+}
+
 /// Started through a link named `ansible-playbook`, the binary answers as `volant playbook`.
 #[cfg(unix)]
 #[test]

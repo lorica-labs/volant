@@ -172,7 +172,7 @@ This is a security boundary. If you find a way for host data to be evaluated as 
 | `set_fact` values | inventory variables |
 | `lookup('file')`, `lookup('pipe')`, `lookup('env')`, `lookup('template')` | `vars_files` and `include_vars` |
 
-`!unsafe` marks a value of the playbook as data. It is accepted on a value and on a mapping key, in a play, in `group_vars`, in an extra-vars file and in a YAML inventory. The filter that the YAML loader uses for the mark is hidden from playbooks: calling it fails with `No filter named 'volant_unsafe'`.
+`!unsafe` marks a value of the playbook as data. It is accepted on a value and on a mapping key, in a play, in `group_vars`, in an extra-vars file and in a YAML inventory.
 
 ### What changes for an untrusted value
 

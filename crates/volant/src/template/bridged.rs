@@ -169,10 +169,6 @@ pub(super) fn lookup(
     let needs = bridge
         .lookup_needs(name)
         .map_err(|err| failed(kind, name, err))?;
-    // The reads below hand the plugin templates it renders itself: they leave nothing unrendered
-    // in the render that calls the lookup, so they are not its deferred reads.
-    let root = state.lookup(super::CONTEXT_KEY);
-    let deferred = root.as_ref().map(super::context::deferred);
     let mut vars = Map::new();
     let read = |vars: &mut Map<String, serde_json::Value>, key: &str| -> Result<(), Error> {
         if let Some(value) = state.lookup(key).filter(|v| !v.is_undefined()) {
@@ -189,31 +185,27 @@ pub(super) fn lookup(
     }
     if needs.all {
         // A plugin that lists the variables gets every one the host has. One that cannot be
-        // sent (an object only Jinja holds) is left out; one that does not render goes as its
-        // template, which the plugin renders when it reads it and fails on as the reference does.
+        // sent (an object only Jinja holds) is left out; one that does not render, the variable
+        // that calls this plugin among them, goes as its template, which the plugin renders when
+        // it reads it and fails on as the reference does.
+        let root = state.lookup(super::CONTEXT_KEY).unwrap_or_default();
         let names: Vec<String> = root
-            .as_ref()
-            .and_then(|root| root.try_iter().ok())
+            .try_iter()
+            .ok()
             .into_iter()
             .flatten()
             .filter_map(|n| n.as_str().map(str::to_string))
             .filter(|n| !n.starts_with("__volant_") && n != "volant_version" && n != "hostvars")
             .collect();
         for key in &names {
-            if read(&mut vars, key).is_ok() && vars.contains_key(key) {
+            let sent = super::context::forgiving(&root, || read(&mut vars, key));
+            if sent.is_ok() && vars.contains_key(key) {
                 continue;
             }
             if let Some(raw) = unrendered(state, key) {
                 vars.insert(key.clone(), serde_json::json!({ UNRENDERED: raw }));
             }
         }
-    }
-    if let Some(context) = root
-        .as_ref()
-        .and_then(|root| root.downcast_object_ref::<super::context::Context>())
-        && let Some(count) = deferred
-    {
-        context.restore_deferred(count);
     }
     if (needs.all || needs.names.iter().any(|n| n == "hostvars"))
         && let Some(hosts) = hostvars(state)
@@ -269,7 +261,7 @@ fn hostvars(state: &State) -> Option<Map<String, serde_json::Value>> {
                     host.clone(),
                     serde_json::json!({
                         "vars": vars,
-                        "trusted": !context.untrusted_hosts.contains_key(host),
+                        "trusted": entry.all_templates_trusted(),
                     }),
                 )
             })
@@ -285,15 +277,9 @@ const UNRENDERED: &str = "__volant_template__";
 fn unrendered(state: &State, key: &str) -> Option<String> {
     let root = state.lookup(super::CONTEXT_KEY)?;
     let context = root.downcast_object_ref::<super::context::Context>()?;
-    if context.untrusted.contains(key) {
-        return None;
-    }
-    let raw = context
-        .vars
-        .get(key)
-        .or_else(|| context.base.as_ref().and_then(|base| base.get(key)))?
-        .as_str()?;
-    super::Templar::is_template(raw).then(|| raw.to_string())
+    let tree = context.tags.as_ref()?.get(key)?;
+    let raw = context.vars.get(key)?;
+    super::holds_trusted_template(raw, Some(tree)).then(|| raw.as_str().map(str::to_string))?
 }
 
 /// The keyword arguments of a call, by name.

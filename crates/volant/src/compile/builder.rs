@@ -130,7 +130,7 @@ pub(super) struct Builder<'a> {
     /// What an import's path renders against while the play compiles, before any host: the
     /// play's `vars:`, the extra variables and `playbook_dir`. The roles' `defaults` and `vars`
     /// and `role_path` are added when a path is rendered.
-    pub(super) static_vars: Map<String, Value>,
+    pub(super) static_vars: crate::tags::Tagged,
     /// Every role instance read so far in the play, whatever brought it in. The dependencies of an
     /// `import_role` are compared with it: measured on ansible-core 2.19.12, a role the play's
     /// `roles:` ran is not run again as a dependency of a role imported in `tasks:`.

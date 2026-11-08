@@ -1,5 +1,5 @@
 ---
-sourceHash: b3d239daaa36
+sourceHash: d050e3999ac7
 title: Configuración
 description: Los ajustes de ansible.cfg y las variables de entorno que lee Volant, sección por sección, con sus valores por defecto.
 ---
@@ -84,6 +84,10 @@ Un archivo que existe pero no se puede leer se omite, y la ejecución continúa 
 
 <Option name="deprecation_warnings" id="defaults-deprecation-warnings" default="true" env="ANSIBLE_DEPRECATION_WARNINGS">
   Imprime los avisos `[DEPRECATION WARNING]` y la línea que explica cómo silenciarlos. Con `False` no imprime ninguno de los dos.
+</Option>
+
+<Option name="allow_broken_conditionals" id="defaults-allow-broken-conditionals" default="false" env="ANSIBLE_ALLOW_BROKEN_CONDITIONALS">
+  Una condición cuyo resultado no es un booleano falla por defecto. Con `True` cuenta el valor de verdad de su resultado y se imprime un `[DEPRECATION WARNING]`.
 </Option>
 
 <Option name="log_path" id="defaults-log-path" default="unset" env="ANSIBLE_LOG_PATH">

@@ -19,7 +19,7 @@ mod text;
 use collections::{SetFilter, combine, dict2items, extract, flatten, items2dict, set_filter};
 use int::to_int;
 pub(crate) use json::python_json;
-use json::{from_json, from_yaml, to_json, to_nice_json};
+use json::{from_yaml, to_json, to_nice_json};
 use regex::{regex_escape, regex_findall, regex_replace, regex_search, regex_test};
 use text::{b64decode, b64encode, basename, comment, dirname, ipwrap, quote, split, to_uuid};
 
@@ -33,7 +33,6 @@ pub fn register(
     base_dir: PathBuf,
     bridge: Option<&std::sync::Arc<crate::bridge::Bridge>>,
 ) {
-    env.add_filter("volant_unsafe", text::volant_unsafe);
     // What a `!!binary` value loads as: its base64 text, read back as bytes.
     env.add_filter("volant_binary", |data: String| {
         volant_protocol::encoding::b64_decode(&data)
@@ -243,13 +242,7 @@ pub fn register(
     add_filter(env, "items2dict", items2dict);
     add_filter(env, "to_json", to_json);
     add_filter(env, "to_nice_json", to_nice_json);
-    add_filter(env, "from_json", |value: Value, kwargs: Kwargs| {
-        // `profile` picks how ansible-core decodes the data's tags, which this engine does not
-        // keep: measured, `from_json(profile="inventory_legacy")` parses as `from_json` does.
-        let _profile = kwargs.get::<Option<Value>>("profile")?;
-        kwargs.assert_all_used()?;
-        from_json(value)
-    });
+    add_filter(env, "from_json", json::from_json_with_profile);
     add_filter(env, "basename", basename);
     add_filter(env, "dirname", dirname);
     add_filter(env, "split", split);

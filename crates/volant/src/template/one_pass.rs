@@ -8,9 +8,16 @@ use serde_json::Value;
 use super::{Templar, TemplateError, Vars, context_of};
 
 impl Templar {
-    /// `render_one_pass`, saying as well whether the pass read a name that is data: a value from
-    /// a managed host, or a name the caller marked. The result is what the one pass made and
-    /// nothing renders it again, so text an author built out of braces stays text.
+    /// Renders `text` once. What the pass makes is the result, whatever it holds.
+    pub(crate) fn render_one_pass<'a>(
+        &self,
+        text: &str,
+        vars: impl Into<Vars<'a>>,
+    ) -> Result<Value, TemplateError> {
+        Ok(self.render_one_pass_tainted(text, vars)?.0)
+    }
+
+    /// `render_one_pass`, saying as well whether the pass read a value from a managed host.
     pub(crate) fn render_one_pass_tainted<'a>(
         &self,
         text: &str,

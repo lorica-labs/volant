@@ -56,6 +56,7 @@ fn combine_one(target: &mut Map<String, Value>, key: &str, value: &Value) {
     target.insert(key.to_string(), merged);
 }
 
+#[cfg(test)]
 pub(crate) fn extend(target: &mut Map<String, Value>, source: &Map<String, Value>) {
     for (k, v) in source {
         combine_one(target, k, v);
@@ -188,7 +189,8 @@ pub fn read_vars_document(path: &Path) -> anyhow::Result<VarsDocument> {
     let (value, tags) = match docs.first() {
         None => (Value::Null, None),
         Some(doc) => {
-            let value = yaml::to_json(doc).with_context(|| format!("in {}", path.display()))?;
+            let value =
+                yaml::to_tagged_json(doc).with_context(|| format!("in {}", path.display()))?;
             let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
             let absolute = absolute.display().to_string();
             (value, yaml::tags_of(doc, &origins, Some(&absolute), true))
@@ -295,12 +297,13 @@ pub fn parse_extra_vars(items: &[String], base: &Path) -> anyhow::Result<Tagged>
         } else if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(item) {
             // JSON is read as ansible-core's own decoder reads it, `__ansible_unsafe` and all:
             // measured, `-e '{"x": {"__ansible_unsafe": "{{ 1 }}"}}'` keeps `{{ 1 }}` as text.
-            if let Value::Object(map) = yaml::unsafe_markers(&Value::Object(map)) {
-                inline(&mut out, &map);
+            for (name, value) in &map {
+                let (value, tree) = yaml::unsafe_markers(value, origin);
+                out.combine_one(name, &value, tree.as_ref());
             }
         } else if item.starts_with('{') || item.starts_with('[') {
             let docs = yaml::load(item, "extra vars")?;
-            match docs.first().map(yaml::to_json).transpose()? {
+            match docs.first().map(yaml::to_tagged_json).transpose()? {
                 Some(Value::Object(map)) => inline(&mut out, &map),
                 _ => bail!("extra vars must be a mapping: {item}"),
             }

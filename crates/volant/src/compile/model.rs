@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The flat step list a play compiles to: steps, kinds, origins and block spans.
 
-use std::collections::BTreeSet;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -163,9 +162,7 @@ impl Origin {
 /// playbook had written it.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct IncludeParams {
-    pub values: Map<String, Value>,
-    /// The names in `values` whose render read something that came from a managed host.
-    pub untrusted: BTreeSet<String>,
+    pub values: crate::tags::Tagged,
 }
 
 impl IncludeParams {
@@ -180,8 +177,7 @@ impl IncludeParams {
             Value::from(vec![dir.display().to_string()]),
         );
         Self {
-            values,
-            untrusted: BTreeSet::new(),
+            values: values.into(),
         }
     }
 
@@ -194,7 +190,7 @@ impl IncludeParams {
             let mut names = list(self).unwrap_or_default();
             names.extend(list(outer).unwrap_or_default());
             if !names.is_empty() {
-                out.values.insert(key.into(), Value::Array(names));
+                out.values.insert(key.into(), Value::Array(names), None);
             }
         }
         out

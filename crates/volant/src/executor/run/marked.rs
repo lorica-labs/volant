@@ -7,20 +7,23 @@ use volant_protocol::TaskResult;
 use super::argspec::action_name;
 use crate::executor::prepare::Item;
 use crate::playbook::PlayTask;
+use crate::tags::TagTree;
 
-/// Each string in a `debug: var` value that is a template left as written because it did not
-/// render, written as the reference's `<< error N - ... >>` after the warning that places it at
+/// Each string in a `debug: var` value that is a trusted template, left as written because it did
+/// not render, written as the reference's `<< error N - ... >>` after the warning that places it at
 /// the entry `key` it was written under. The warnings go into `warned`, which the result shows
 /// and registers; a loop shows the same one once.
 pub(super) fn mark_failed(
     value: &mut Value,
+    tree: Option<&TagTree>,
     key: Option<&str>,
     render: &dyn Fn(&str) -> Result<Value, crate::template::TemplateError>,
     count: &mut usize,
     warned: &mut Vec<Value>,
 ) {
+    let trusted = crate::template::holds_trusted_template(value, tree);
     match value {
-        Value::String(text) if crate::template::holds_template(&Value::String(text.clone())) => {
+        Value::String(text) if trusted => {
             if let Err(e) = render(text) {
                 *count += 1;
                 let at = key.and_then(|key| crate::template::written_at(key, text));
@@ -33,12 +36,14 @@ error {count} - {}",
                 *value = Value::String(format!("<< error {count} - {} >>", e.0));
             }
         }
-        Value::Array(items) => items
-            .iter_mut()
-            .for_each(|item| mark_failed(item, None, render, count, warned)),
-        Value::Object(map) => map
-            .iter_mut()
-            .for_each(|(k, item)| mark_failed(item, Some(k), render, count, warned)),
+        Value::Array(items) => items.iter_mut().enumerate().for_each(|(i, item)| {
+            let tree = tree.and_then(|t| t.index(i));
+            mark_failed(item, tree, None, render, count, warned);
+        }),
+        Value::Object(map) => map.iter_mut().for_each(|(k, item)| {
+            let tree = tree.and_then(|t| t.at(k));
+            mark_failed(item, tree, Some(k), render, count, warned);
+        }),
         _ => {}
     }
 }
@@ -48,14 +53,20 @@ error {count} - {}",
 /// only marked ([`mark_failed`]).
 pub(super) fn undecryptable_in(
     value: &Value,
+    tree: Option<&TagTree>,
     render: &dyn Fn(&str) -> Result<Value, crate::template::TemplateError>,
 ) -> Option<crate::template::TemplateError> {
     match value {
-        Value::String(text) if crate::template::holds_template(value) => render(text)
+        Value::String(text) if crate::template::holds_trusted_template(value, tree) => render(text)
             .err()
             .filter(|e| e.0.starts_with(crate::vault::UNDECRYPTABLE)),
-        Value::Array(items) => items.iter().find_map(|item| undecryptable_in(item, render)),
-        Value::Object(map) => map.values().find_map(|item| undecryptable_in(item, render)),
+        Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .find_map(|(i, item)| undecryptable_in(item, tree.and_then(|t| t.index(i)), render)),
+        Value::Object(map) => map
+            .iter()
+            .find_map(|(k, item)| undecryptable_in(item, tree.and_then(|t| t.at(k)), render)),
         _ => None,
     }
 }

@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 use super::context::{Vars, context_of};
 use super::tagged::{take_result, with_origin};
 use super::templar::Templar;
-use super::vm::{holds_trusted_template, reveal_vault};
+use super::vm::holds_trusted_template;
 use super::{Tainted, TemplateError};
 use crate::tags::{Children, TagMap, TagSetId, TagTree, Tagged};
 
@@ -59,37 +59,33 @@ impl Templar {
                     .is_some_and(|v| holds_trusted_template(v, Some(tree)))
             })
         };
-        let host = || {
-            let named =
-                |m: &Map<String, Value>| m.get("inventory_hostname")?.as_str().map(String::from);
-            named(vars.map).or_else(|| vars.shared.and_then(|s| named(s)))
-        };
         // Most maps hold no template at all: walking them once is far cheaper than the two
         // clones a pass costs.
         if !holds(vars.map, &tags) {
-            crate::vault::set_names(&host().unwrap_or_default(), Vec::new());
             return Tagged::with_shared_tags(vars.map.clone(), tags);
         }
         let mut current = vars.map.clone();
         // What a `!vault` holds is text from here on: a sibling that reads it must see the text,
-        // not the wrapper, and the name is data so no pass renders it.
-        let mut vaulted = Vec::new();
+        // not the wrapper. The text keeps the tags of the encrypted value, without trust, and
+        // `VaultedValue`. A container keeps its wrappers: they render to their text while the
+        // rest of the container still renders, and one that does not decrypt stays as it is, to
+        // raise when something renders it.
         for (k, v) in &mut current {
-            if let Value::String(s) = v
-                && crate::yaml::vault_text(s).is_some()
-            {
-                vaulted.push((k.clone(), s.clone()));
-            }
-            // A container keeps its wrappers: they render to their text while the rest of the
-            // container still renders.
-            let trusted = tags
-                .get(k)
-                .is_some_and(|t| crate::tags::is_trusted(t.own()));
-            if trusted && v.is_string() && reveal_vault(v) {
-                Arc::make_mut(&mut tags).insert(k.clone(), crate::tags::from_host(None));
+            let Some(own) = tags.get(k).map(TagTree::own) else {
+                continue;
+            };
+            let Value::String(s) = v else { continue };
+            let Some(ciphertext) =
+                crate::yaml::vault_text(s).filter(|_| crate::tags::is_trusted(own))
+            else {
+                continue;
+            };
+            if let Ok(text) = crate::vault::reveal(&ciphertext) {
+                *s = text;
+                let tree = TagTree::Leaf(crate::tags::vaulted(own, &ciphertext));
+                Arc::make_mut(&mut tags).insert(k.clone(), tree);
             }
         }
-        crate::vault::set_names(&host().unwrap_or_default(), vaulted);
         for _ in 0..5 {
             if !holds(&current, &tags) {
                 break;

@@ -35,16 +35,6 @@ mod rewrite;
 use rewrite::mutates;
 pub(super) use rewrite::route_calls;
 
-/// `value`, a string holding a `!vault` wrapper that decrypts, replaced by what it holds; whether
-/// it was one. A wrapper that does not decrypt stays as it is, and raises when something renders it.
-pub(super) fn reveal_vault(value: &mut Value) -> bool {
-    let Value::String(s) = value else {
-        return false;
-    };
-    let text = crate::yaml::vault_text(s).and_then(|c| crate::vault::reveal(&c).ok());
-    text.map(|t| *s = t).is_some()
-}
-
 /// Whether a part of `value` is a string `tree` trusts as a template and that holds one: what a
 /// read renders. With no tree there is nothing to trust.
 pub(crate) fn holds_trusted_template(value: &Value, tree: Option<&crate::tags::TagTree>) -> bool {

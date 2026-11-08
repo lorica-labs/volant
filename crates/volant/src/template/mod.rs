@@ -155,9 +155,6 @@ pub(crate) const CONTEXT_KEY: &str = "volant::context";
 
 /// The global every `~` is compiled to call, see [`vm::route_calls`]. Unwritable in Jinja for the
 /// same reason as `HOSTVARS_KEYS`, and `Context` answers nothing for it, so no variable shadows it.
-/// What `route_calls` puts in place of the name in `NAME is vault_encrypted`, before the name.
-pub(crate) const VAULT_NAME: &str = "volant::vault_name:";
-
 const CONCAT_KEY: &str = "volant::concat";
 const ITEM_KEY: &str = "volant::item";
 /// Prefix of the name an attribute lookup is routed through; the context answers it with a

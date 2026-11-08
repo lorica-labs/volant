@@ -4,13 +4,12 @@
 
 use minijinja::machinery::{Instruction, Instructions};
 
-use super::super::bridged;
 use super::super::env::{attr_call, const_call, macro_call, var_call};
 use super::super::order::OPERATORS;
 use super::super::pymethods::mutable::MUTATORS;
 use super::super::{
     ADD_KEY, BYTES_ADD_KEY, CONCAT_KEY, CONST_KEY, ITEM_KEY, MITEM_KEY, MKLIST_KEY, MKMAP_KEY,
-    QUERY_KEY, REM_KEY, REMT_KEY, SLICE_KEY, SUB_KEY, VAULT_NAME,
+    QUERY_KEY, REM_KEY, REMT_KEY, SLICE_KEY, SUB_KEY,
 };
 #[cfg(doc)]
 use super::concat;
@@ -95,21 +94,10 @@ pub(in crate::template) fn route_calls(
     let mut links = Vec::new();
     let mut idx = 0;
     loop {
-        let named = match (instructions.get(idx), instructions.get(idx + 1)) {
-            (Some(Instruction::Lookup(name)), Some(Instruction::PerformTest(test, ..)))
-                if bridged::short(test) == "vault_encrypted" =>
-            {
-                Some(format!("{VAULT_NAME}{name}"))
-            }
-            _ => None,
-        };
         let tuple_before = idx > 0 && writes_a_tuple(instructions.get(idx - 1));
         let Some(op) = instructions.get_mut(idx) else {
             break;
         };
-        if let Some(named) = named {
-            *op = Instruction::LoadConst(minijinja::Value::from(named));
-        }
         match op {
             Instruction::StringConcat => *op = Instruction::CallFunction(CONCAT_KEY, Some(2)),
             Instruction::Eq

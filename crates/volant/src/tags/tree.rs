@@ -47,6 +47,35 @@ impl TagTree {
         kids_known && super::is_known(self.own())
     }
 
+    /// The tree with `SourceWasEncrypted` on every part: a value read from a vault-encrypted file.
+    #[must_use]
+    pub fn encrypted_source(self) -> TagTree {
+        let mark = |id| {
+            let mut set = super::get(id);
+            set.source_encrypted = true;
+            super::intern(set)
+        };
+        match self {
+            TagTree::Leaf(id) => TagTree::Leaf(mark(id)),
+            TagTree::Node(id, Children::Map(kids)) => TagTree::Node(
+                mark(id),
+                Children::Map(
+                    kids.into_iter()
+                        .map(|(k, t)| (k, t.encrypted_source()))
+                        .collect(),
+                ),
+            ),
+            TagTree::Node(id, Children::Seq(kids)) => TagTree::Node(
+                mark(id),
+                Children::Seq(
+                    kids.into_iter()
+                        .map(|(i, t)| (i, t.encrypted_source()))
+                        .collect(),
+                ),
+            ),
+        }
+    }
+
     pub fn own(&self) -> TagSetId {
         match self {
             TagTree::Leaf(id) | TagTree::Node(id, _) => *id,

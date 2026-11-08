@@ -1113,7 +1113,9 @@ fn a_vaulted_value_is_text_when_read_and_raises_only_when_used() {
     crate::vault::install(crate::vault::Secrets::new(vec![b"pw".to_vec()]));
     let resolved = t.resolve_vars(&map);
     assert_eq!(resolved["sv"], json!("{{ x }} and more"));
-    assert!(resolved.is_from_host("sv"));
+    let set = crate::tags::get(resolved.tree("sv").unwrap().own());
+    assert_eq!(set.vaulted.as_deref(), Some(cipher.as_str()));
+    assert!(!set.trusted);
     crate::vault::install(crate::vault::Secrets::new(vec![b"other".to_vec()]));
     let resolved = t.resolve_vars(&map);
     let err = t.render("{{ sv }}", &resolved).unwrap_err();
@@ -1121,6 +1123,26 @@ fn a_vaulted_value_is_text_when_read_and_raises_only_when_used() {
         err.0,
         "Attempt to use undecryptable variable: Decryption failed (no vault secrets were found that could decrypt)."
     );
+}
+
+/// `vault` returns a value tagged `VaultedValue` only under `wrap_object=True`, and
+/// `vault_encrypted` reads that tag.
+#[test]
+fn the_vault_filter_tags_its_result_only_when_asked_to_wrap_it() {
+    let t = templar();
+    for (text, want) in [
+        (
+            "{{ 'a' | vault('pw') is ansible._protomatter.tagged_with('VaultedValue') }}",
+            false,
+        ),
+        ("{{ 'a' | vault('pw') is vault_encrypted }}", false),
+        (
+            "{{ 'a' | vault('pw', wrap_object=True) is vault_encrypted }}",
+            true,
+        ),
+    ] {
+        assert_eq!(t.render(text, &Map::new()), Ok(json!(want)), "{text}");
+    }
 }
 
 /// Inside text a container prints as Python's `repr` and a whole `none` prints nothing; an

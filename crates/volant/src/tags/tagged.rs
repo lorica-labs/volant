@@ -89,6 +89,33 @@ impl Tagged {
         }
     }
 
+    /// `values` with `tags`, shared rather than copied. Names `values` lacks are never read.
+    pub fn with_shared_tags(values: Map<String, Value>, tags: Arc<TagMap>) -> Self {
+        Self { values, tags }
+    }
+
+    /// Whether the value of `name` came from a managed host.
+    pub fn is_from_host(&self, name: &str) -> bool {
+        self.tags
+            .get(name)
+            .is_some_and(|tree| super::is_from_host(tree.own()))
+    }
+
+    /// Writes a value a managed host sent under `name`: it is no template, whatever it holds.
+    pub fn insert_from_host(&mut self, name: String, value: Value) -> Option<Value> {
+        let tree = super::from_host(None);
+        self.insert(name, value, Some(tree))
+    }
+
+    /// Marks the value of `name` as a managed host's, when there is one.
+    pub fn mark_from_host(&mut self, name: &str) {
+        if self.values.contains_key(name) {
+            let tags = Arc::make_mut(&mut self.tags);
+            let tree = tags.get(name).cloned();
+            tags.insert(name.to_string(), super::from_host(tree));
+        }
+    }
+
     pub fn as_map(&self) -> &Map<String, Value> {
         &self.values
     }

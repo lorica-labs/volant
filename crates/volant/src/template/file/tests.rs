@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use crate::testing::{scratch, templar};
-use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
@@ -12,19 +11,9 @@ fn a_host_value_in_a_template_is_written_as_text() {
     let marker_guard = scratch();
     let marker = marker_guard.path().join("marker");
     let payload = format!("{{{{ lookup('pipe', 'touch {}') }}}}", marker.display());
-    let mut map = Map::new();
-    map.insert("motd".into(), Value::String(payload.clone()));
-    let untrusted: BTreeSet<String> = ["motd".to_string()].into();
-    let vars = Vars {
-        map: &map,
-        tags: None,
-        hostvars: None,
-        shared: None,
-        facts: None,
-        untrusted: Some(&untrusted),
-        untrusted_hosts: None,
-        base: None,
-    };
+    let mut map = crate::tags::Tagged::default();
+    map.insert_from_host("motd".into(), Value::String(payload.clone()));
+    let vars = Vars::from(&map);
     let out = templar()
         .render_file("banner: {{ motd }}\n", vars, &FileRender::default())
         .unwrap();

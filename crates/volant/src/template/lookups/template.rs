@@ -2,7 +2,6 @@
 //! `lookup('template')`: a template file rendered against the caller's variables.
 
 use std::cell::Cell;
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -140,60 +139,24 @@ pub(super) fn render_template_at(
         .as_ref()
         .and_then(|r| r.downcast_object_ref::<Context>());
     let mut map = ctx.map(Context::flat_vars).unwrap_or_default();
-    let mut untrusted: BTreeSet<String> =
-        ctx.map(Context::untrusted_for_nested).unwrap_or_default();
     let hostvars = ctx.and_then(|c| c.hostvars.as_ref());
     let shared = ctx.and_then(|c| c.shared.as_ref());
+    let data_lists = ctx.and_then(|c| c.data_lists.as_ref());
     let facts = ctx.and_then(|c| c.facts.as_ref());
-    let untrusted_hosts = ctx.map(|c| &c.untrusted_hosts);
-
-    let read = templar
-        .env()
-        .template_from_str(text)
-        .map(|t| t.undeclared_variables(false))
-        .unwrap_or_default();
-    for var in read {
-        if untrusted.contains(&var) || !map.get(&var).is_some_and(crate::template::holds_template) {
-            continue;
-        }
-        let rendered = templar.render_value_tainted(
-            &map[&var],
-            Vars {
-                map: &map,
-                tags: None,
-                hostvars,
-                shared,
-                facts,
-                untrusted: Some(&untrusted),
-                untrusted_hosts,
-                base: None,
-            },
-        );
-        // Lenient, like `resolve_vars_tainted`: the name may sit in a branch that never runs, or
-        // behind `default`. Dropped, it reads as undefined, so a read that does happen fails
-        // there, lazily, the way the reference's does.
-        let Ok((resolved, from_host)) = rendered else {
-            map.remove(&var);
-            continue;
-        };
-        if from_host {
-            untrusted.insert(var.clone());
-        }
-        map.insert(var, resolved);
-    }
 
     if !map.contains_key("ansible_managed") {
-        map.insert("ansible_managed".into(), "Ansible managed".into());
+        map.insert("ansible_managed".into(), "Ansible managed".into(), None);
     }
-    map.insert("template_path".into(), name.into());
+    map.insert("template_path".into(), name.into(), None);
     map.insert(
         "template_fullpath".into(),
         path.display().to_string().into(),
+        None,
     );
     // The lookup renders no destination, which the reference leaves `None`.
-    map.insert("template_destpath".into(), serde_json::Value::Null);
+    map.insert("template_destpath".into(), serde_json::Value::Null, None);
     for (name, value) in crate::template::file_vars(path) {
-        map.insert(name.into(), value);
+        map.insert(name.into(), value, None);
     }
     let named = [
         "template_path",
@@ -204,9 +167,6 @@ pub(super) fn render_template_at(
         "template_mtime",
         "template_run_date",
     ];
-    for name in named {
-        untrusted.remove(name);
-    }
     // The names just written beat a gathered fact of the same name, which would otherwise
     // answer first from its own layer.
     let facts = facts.map(|f| {
@@ -222,12 +182,11 @@ pub(super) fn render_template_at(
     });
     let vars = Vars {
         map: &map,
-        tags: None,
+        tags: Some(map.tags()),
         hostvars,
         shared,
+        data_lists,
         facts: facts.as_ref(),
-        untrusted: Some(&untrusted),
-        untrusted_hosts,
         base: None,
     };
     templar.render_file_node(text, vars, options)

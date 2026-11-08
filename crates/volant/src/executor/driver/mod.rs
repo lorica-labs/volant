@@ -263,8 +263,8 @@ pub(super) async fn drive_host(
                 let task = &c.steps[index].task;
                 if !std::mem::take(&mut peer_failure) && !result.0.contains_key(NO_FAILED_VARS) {
                     let mut vars = store.lock().expect("vars lock");
-                    vars.set_untrusted_fact(&name, "ansible_failed_task", failed_task_value(task));
-                    vars.set_untrusted_fact(
+                    vars.set_host_fact(&name, "ansible_failed_task", failed_task_value(task));
+                    vars.set_host_fact(
                         &name,
                         "ansible_failed_result",
                         Value::Object(result.0.clone()),
@@ -1233,6 +1233,7 @@ pub(super) async fn drive_host(
                             }
                         };
                         let mut r = r;
+                        crate::executor::run::keep_item_tags(task, item, &mut r);
                         let broke = break_after(task, item, &mut r, &templar);
                         labels.push(label_after(task, item, &mut r, &templar));
                         results.push((item.element.clone(), r));
@@ -2185,6 +2186,7 @@ pub(super) async fn drive_host(
                             break;
                         }
                     };
+                    crate::executor::run::keep_item_tags(task, item, &mut r);
                     labels.push(label_after(task, item, &mut r, &templar));
                     results.push((item.element.clone(), r));
                 }

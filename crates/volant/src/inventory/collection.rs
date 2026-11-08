@@ -41,15 +41,18 @@ pub(super) fn read(
         return Err(failure(error.as_str().ok_or_else(bad)?.to_string()));
     }
     let origin = Some(source.path());
-    let vars_of = |value: &Value| -> Result<serde_json::Map<String, Value>, PluginError> {
+    let origin_id = crate::tags::origin_at(&source.path().display().to_string(), 0, 0);
+    let vars_of = |value: &Value| -> Result<crate::tags::Tagged, PluginError> {
         let vars = value
             .get("vars")
             .and_then(Value::as_object)
             .ok_or_else(bad)?;
-        Ok(vars
-            .iter()
-            .map(|(k, v)| (k.clone(), yaml::unsafe_markers(v)))
-            .collect())
+        let mut out = crate::tags::Tagged::default();
+        for (k, v) in vars {
+            let (v, tree) = yaml::unsafe_markers(v, origin_id);
+            out.insert(k.clone(), v, tree);
+        }
+        Ok(out)
     };
     let named = |value: &Value| {
         value
@@ -59,7 +62,7 @@ pub(super) fn read(
     };
     for host in list(answer.get("hosts"))? {
         let host_name = named(host).ok_or_else(bad)?;
-        into.add_source_host(&host_name, None, vars_of(host)?.into(), origin);
+        into.add_source_host(&host_name, None, vars_of(host)?, origin);
     }
     for group in list(answer.get("groups"))? {
         let group_name = named(group).ok_or_else(bad)?;
@@ -71,13 +74,17 @@ pub(super) fn read(
                 .collect())
         };
         into.group_mut(&group_name);
-        for (key, value) in vars_of(group)? {
+        let vars = vars_of(group)?;
+        for (key, value) in &vars {
             if key == "ansible_group_priority" {
-                if let Some(p) = ini::priority(&value).map_err(failure)? {
+                if let Some(p) = ini::priority(value).map_err(failure)? {
                     into.group_mut(&group_name).priority = Some(p);
                 }
             } else {
-                into.group_mut(&group_name).vars.insert(key, value, None);
+                let tree = vars.tree(key).cloned();
+                into.group_mut(&group_name)
+                    .vars
+                    .insert(key.clone(), value.clone(), tree);
             }
         }
         if group_name == "all" || group_name == "ungrouped" {

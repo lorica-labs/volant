@@ -360,12 +360,9 @@ impl Session {
                     .remove(top)
                     .ok_or_else(|| PyError::Key(keys[0].clone()))?;
                 set(&mut current, &keys[1..], value)?;
-                // A value that came from a managed host stays data after an edit inside it.
-                if self.vars.untrusted.contains(top) {
-                    self.vars.insert_untrusted(top.clone(), current);
-                } else {
-                    self.vars.insert(top.clone(), current);
-                }
+                // A value keeps its tags after an edit inside it.
+                let tree = self.vars.tree(top).cloned();
+                self.vars.insert_tagged(top.clone(), current, tree);
                 Ok(())
             }
             other => match self.eval(other)? {

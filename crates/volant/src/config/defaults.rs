@@ -35,6 +35,7 @@ impl Default for Config {
             force_color: false,
             nocolor: false,
             deprecation_warnings: true,
+            allow_broken_conditionals: false,
             log_path: None,
             log_verbosity: 0,
             ssh_usetty: true,

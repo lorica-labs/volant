@@ -18,7 +18,6 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
-use super::hosts_vars::settle;
 use super::play_checks::read_vars_files;
 use super::python_type;
 use crate::compile::Compiled;
@@ -101,8 +100,6 @@ pub(crate) fn render_hosts<'a>(
             .expect("vars lock")
             .play_view(&scope, context.with_hostvars);
     }
-    let (settled, data) =
-        settle(&play.host_patterns, context.templar, &view).map_err(|why| undefined(&why))?;
     let mut patterns: Vec<String> = Vec::new();
     let mut shown = None;
     let mut nameless = false;
@@ -111,7 +108,7 @@ pub(crate) fn render_hosts<'a>(
         // it again.
         let (rendered, _) = context
             .templar
-            .render_one_pass_tainted(written, view.vars_over(&settled, &data))
+            .render_one_pass_tainted(written, view.vars())
             .map_err(|err| undefined(&err.0))?;
         match rendered {
             Value::String(text) => {

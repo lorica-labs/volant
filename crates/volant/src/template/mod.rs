@@ -50,14 +50,16 @@ pub(crate) use yaml_dump::{
 };
 
 pub use context::{ALLITEMS_KEY, Vars, complete_loop, watch_play_hosts, with_allitems};
-use context::{Context, TaintSink, context_of, take_failure};
+use context::{Context, context_of, take_failure};
 pub(crate) use env::{
     add_filter, add_test, add_text_filter, holds_undefined, truthy, type_name, undefined_through,
 };
 use env::{any_undefined, environment};
 pub use render_map::RenderedArgs;
 pub use templar::Templar;
-pub(crate) use vm::{EMBEDDED_HELP, EMBEDDED_WARNING, embeds, holds_template};
+pub(crate) use vm::{
+    EMBEDDED_HELP, EMBEDDED_WARNING, embeds, holds_template, holds_trusted_template,
+};
 use vm::{as_expression, as_template, convert_error, inline_conditional, jinja_syntax};
 
 pub(crate) use bridged::is_plugin_failure;
@@ -124,30 +126,35 @@ impl fmt::Display for TemplateError {
 
 impl std::error::Error for TemplateError {}
 
-/// Set while a render pass reads a name whose value came from a managed host rather than from
-/// the playbook. A result built from such a name is data, so the extra passes below do not run
-/// on it and an expression that arrived in a command's output is never evaluated here.
+/// Set while a render reads what came from outside the playbook: a value a managed host sent, or
+/// a file or a command read at run time. A result built from one is what `host_named_paths` judges.
 pub(crate) type Tainted = Arc<AtomicBool>;
 
-/// The name `Context` answers with the render's taint sink. Two colons cannot appear in a Jinja
-/// identifier, so no playbook can write it as a variable or shadow it; `lookup('vars', ...)`
-/// reaches it, and hands back an object whose only method marks the render as data.
-pub(crate) const TAINT_KEY: &str = "volant::tainted";
+static ALLOW_BROKEN_CONDITIONALS: AtomicBool = AtomicBool::new(false);
 
-/// Among a render's untrusted names when a host name came from a managed host: listing the
-/// hosts of `hostvars` then taints the render, while reading one host is `untrusted_hosts`' case,
-/// so a nested template of a trusted host still renders. Unwritable for the same reason as
-/// `TAINT_KEY`.
+/// Lets a condition whose result is not a boolean go by its truth, from
+/// `allow_broken_conditionals`.
+pub(crate) fn set_allow_broken_conditionals(on: bool) {
+    ALLOW_BROKEN_CONDITIONALS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+fn allow_broken_conditionals() -> bool {
+    ALLOW_BROKEN_CONDITIONALS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Among a render's `data_lists` when a host name came from a managed host: listing the hosts of
+/// `hostvars` then counts as a read of what that host sent. Two colons cannot appear in a Jinja
+/// identifier, so no playbook can write it as a variable or shadow it.
 pub(crate) const HOSTVARS_KEYS: &str = "volant::hostvars_keys";
 
 /// The name `Context` answers with itself, for `lookup('template')`, which renders a file
 /// against the same variables and the same trust as the render that called it. Unreachable from
-/// a playbook for the same reason as `TAINT_KEY`; through `lookup('vars', ...)` it hands back
+/// a playbook for the same reason as `HOSTVARS_KEYS`; through `lookup('vars', ...)` it hands back
 /// the root context, whose every read goes through `get_value` and taints as a bare read does.
 pub(crate) const CONTEXT_KEY: &str = "volant::context";
 
 /// The global every `~` is compiled to call, see [`vm::route_calls`]. Unwritable in Jinja for the
-/// same reason as `TAINT_KEY`, and `Context` answers nothing for it, so no variable shadows it.
+/// same reason as `HOSTVARS_KEYS`, and `Context` answers nothing for it, so no variable shadows it.
 /// What `route_calls` puts in place of the name in `NAME is vault_encrypted`, before the name.
 pub(crate) const VAULT_NAME: &str = "volant::vault_name:";
 

@@ -147,8 +147,7 @@ async fn controller_side(
 /// undefined name with `Task failed: ` and the render's error; `if` is a valid name; and nothing
 /// but `cacheable` fails with `No key/value pairs provided, at least one is required for this
 /// action to succeed`, without the prefix. A name is data when its value was, or when its own
-/// render read a managed host. A value that still holds a template once rendered is data too,
-/// as for `add_host`: it is text a `raw` block emitted, and no later task renders it again.
+/// render read a managed host.
 ///
 /// Rendered once per item and kept on it, so that every reader - the module itself, the
 /// conditions, the facts written after the task - sees the same names with the same trust: a key
@@ -173,9 +172,7 @@ pub(in crate::executor) fn set_fact_names<'a>(
             names.push((
                 key.clone(),
                 name,
-                tainted
-                    || item.args_untrusted.contains(key)
-                    || crate::vars::holds_template(&item.args[key]),
+                tainted || item.args_untrusted.contains(key),
             ));
         }
         if names.is_empty() {
@@ -209,13 +206,23 @@ pub(super) fn set_fact_data(task: &PlayTask, item: &Item, templar: &Templar) -> 
 
 /// The tags of the values a `set_fact` item sets, by the names it sets: those its arguments
 /// rendered to.
-fn set_fact_tags(item: &Item) -> crate::tags::TagMap {
+fn set_fact_tags(task: &PlayTask, item: &Item) -> crate::tags::TagMap {
     let Some(Ok(names)) = item.set_fact_names.get() else {
         return crate::tags::TagMap::new();
     };
     names
         .iter()
-        .filter_map(|(key, name, _)| Some((name.clone(), item.args_tags.get(key)?.clone())))
+        .filter_map(|(key, name, _)| {
+            let tree = match vaulted_fact(task, item, key) {
+                Some(wrapper) => crate::tags::uniform(
+                    &Value::String(wrapper),
+                    crate::tags::origin_described("set_fact"),
+                    true,
+                )?,
+                None => item.args_tags.get(key)?.clone(),
+            };
+            Some((name.clone(), tree))
+        })
         .collect()
 }
 
@@ -331,7 +338,7 @@ fn local_result(
                 })
                 .collect();
             r.insert("ansible_facts".into(), Value::Object(facts));
-            super::include_vars::put_tags(&mut r, set_fact_tags(item));
+            super::include_vars::put_tags(&mut r, set_fact_tags(task, item));
             r.insert("changed".into(), json!(false));
             r.insert("failed".into(), json!(false));
         }
@@ -363,7 +370,7 @@ fn local_result(
                     .args
                     .get("var")
                     .and_then(Value::as_str)
-                    .is_some_and(|s| crate::yaml::unsafe_text(s).is_some() || literal_only(s));
+                    .is_some_and(literal_only);
                 if written_unsafe || item.args_untrusted.contains("var") {
                     let at = task.value_origins.get("var");
                     let mut refused = TaskResult::failed_with(UNTRUSTED_VAR);
@@ -386,23 +393,20 @@ fn local_result(
                 }
                 crate::vault::begin_failures();
                 let (evaluated, read) =
-                    crate::template::watch_play_hosts(|| templar.evaluate_tainted(var, &item.vars));
+                    crate::template::watch_play_hosts(|| templar.evaluate_tagged(var, &item.vars));
                 if read {
                     crate::playbook::deprecate_play_hosts(task.value_origins.get("var"));
                 }
                 let render = |text: &str| templar.render(text, &item.vars);
-                let evaluated = evaluated.and_then(|(v, tainted)| match crate::vault::unread(&v) {
+                let evaluated = evaluated.and_then(|(v, tree)| match crate::vault::unread(&v) {
                     Some(failed) => Err(crate::template::TemplateError(failed)),
-                    None if tainted => Ok((v, tainted)),
-                    None => undecryptable_in(&v, &render).map_or(Ok((v, tainted)), Err),
+                    None => undecryptable_in(&v, tree.as_ref(), &render).map_or(Ok((v, tree)), Err),
                 });
                 match evaluated {
                     // An item whose template did not render is marked; never one a host wrote.
-                    Ok((mut v, tainted)) => {
+                    Ok((mut v, tree)) => {
                         let mut warned = Vec::new();
-                        if !tainted {
-                            mark_failed(&mut v, None, &render, &mut 0, &mut warned);
-                        }
+                        mark_failed(&mut v, tree.as_ref(), None, &render, &mut 0, &mut warned);
                         if v.as_str() == Some(crate::vars::omit_token()) {
                             v = json!("<<Omit>>");
                             let at = task.value_origins.get("var");

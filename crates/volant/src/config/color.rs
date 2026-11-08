@@ -47,5 +47,12 @@ pub(super) fn read_env(config: &mut Config) -> anyhow::Result<()> {
             &flag,
         )?;
     }
+    if let Ok(flag) = std::env::var("ANSIBLE_ALLOW_BROKEN_CONDITIONALS") {
+        config.allow_broken_conditionals = boolean(
+            "ALLOW_BROKEN_CONDITIONALS",
+            "env: ANSIBLE_ALLOW_BROKEN_CONDITIONALS",
+            &flag,
+        )?;
+    }
     Ok(())
 }

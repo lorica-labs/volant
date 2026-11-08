@@ -105,7 +105,7 @@ impl VarStore {
             fact_cache: None,
             smart: false,
             cache_failure: None,
-            untrusted: inventory.untrusted_vars(),
+            computed: inventory.computed_vars(),
             data_hosts: BTreeSet::new(),
             data_groups: BTreeSet::new(),
             extra,
@@ -123,7 +123,6 @@ impl VarStore {
             views_built: BTreeMap::new(),
             hostvars_with: BTreeMap::new(),
             implicit_controller: None,
-            untrusted_hosts: None,
             shared: None,
             templated_facts: false,
             verbosity: 0,
@@ -290,7 +289,7 @@ impl VarStore {
         }
         self.inventory_moved();
         for (key, value) in data {
-            self.set_untrusted_fact(name, key, value.clone());
+            self.set_host_fact(name, key, value.clone());
         }
         changed
     }
@@ -329,7 +328,6 @@ impl VarStore {
             .extend(hosts.iter().map(ToString::to_string));
         self.data_groups
             .extend(groups.iter().map(ToString::to_string));
-        self.untrusted_hosts = None;
     }
 
     /// `group_by`: `host` joins `group`, which is made a child of each of `parents`. Whether it

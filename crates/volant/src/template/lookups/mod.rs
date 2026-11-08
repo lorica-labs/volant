@@ -108,12 +108,12 @@ pub fn register(env: &mut Environment<'static>, base_dir: PathBuf, bridge: Optio
     env.add_function(super::QUERY_KEY, query);
 }
 
-/// Marks the render as data, see [`super::TaintSink`].
+/// Marks the render as having read what came from outside the playbook.
 pub(super) fn taint(state: &State) {
-    if let Some(sink) = state.lookup(super::TAINT_KEY)
-        && let Some(sink) = sink.downcast_object_ref::<super::TaintSink>()
+    if let Some(root) = state.lookup(super::CONTEXT_KEY)
+        && let Some(ctx) = root.downcast_object_ref::<super::context::Context>()
     {
-        sink.taint();
+        ctx.note_outside_read();
     }
 }
 

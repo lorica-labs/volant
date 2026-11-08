@@ -1,5 +1,5 @@
 ---
-sourceHash: 23af26d0458a
+sourceHash: a31550e4dcf1
 title: Référence du langage de modèles
 description: Les méthodes Python, les règles sur les chaînes, les expressions régulières et les limites du Jinja2 de Volant, avec chaque différence avec ansible-core.
 ---
@@ -173,7 +173,7 @@ C'est une frontière de sécurité. Si vous trouvez un moyen de faire évaluer d
 | valeurs de `set_fact` | variables d'inventaire |
 | `lookup('file')`, `lookup('pipe')`, `lookup('env')`, `lookup('template')` | `vars_files` et `include_vars` |
 
-`!unsafe` marque une valeur du playbook comme donnée. Il est accepté sur une valeur et sur une clé de mapping, dans un play, dans `group_vars`, dans un fichier d'extra-vars et dans un inventaire YAML. Le filtre que le chargeur YAML utilise pour la marque est caché aux playbooks : l'appeler échoue avec `No filter named 'volant_unsafe'`.
+`!unsafe` marque une valeur du playbook comme donnée. Il est accepté sur une valeur et sur une clé de mapping, dans un play, dans `group_vars`, dans un fichier d'extra-vars et dans un inventaire YAML.
 
 ### Ce qui change pour une valeur non fiable
 

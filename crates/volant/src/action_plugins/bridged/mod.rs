@@ -53,9 +53,6 @@ pub(super) struct Bridged {
     name: &'static str,
     modules: &'static [&'static str],
     hostvars: Arc<crate::vars::HostvarsMap>,
-    /// The hosts holding a value a managed host sent, as the task's host and the host the module
-    /// runs on see them.
-    untrusted_hosts: [Arc<crate::vars::UntrustedHosts>; 2],
     asks: Receiver<FromHelper>,
     replies: Option<Sender<Reply>>,
     ready: Arc<Notify>,
@@ -363,10 +360,6 @@ pub(super) fn start(
         name,
         modules,
         hostvars: Arc::clone(&ctx.running_vars.hostvars),
-        untrusted_hosts: [
-            Arc::clone(&ctx.item_vars.untrusted_hosts),
-            Arc::clone(&ctx.running_vars.untrusted_hosts),
-        ],
         asks,
         replies: Some(replies),
         ready,

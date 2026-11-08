@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering;
 
 use serde_json::{Map, Value};
 
-use super::context::{Vars, context_of, is_literal};
+use super::context::{Vars, context_of};
 use super::tagged::{take_result, with_origin};
 use super::{RESOLVING, Tainted, Templar, TemplateError, bridged};
 use crate::tags::{Children, OriginId, TagMap, TagSet, TagTree};
@@ -23,7 +23,7 @@ type OriginOf<'a> = &'a dyn Fn(&str) -> Option<OriginId>;
 /// through.
 #[derive(Clone, Copy)]
 pub(super) struct Tagging {
-    origin: Option<OriginId>,
+    pub(super) origin: Option<OriginId>,
 }
 
 /// `own`'s tags over `children`.
@@ -78,7 +78,7 @@ impl Templar {
             let mut any = false;
             let tagging = origin_of.map(|of| Tagging { origin: of(key) });
             let (rendered, tree) = self
-                .render_value_in(value, &ctx, &tainted, &mut any, false, tagging)
+                .render_value_in(value, &ctx, &tainted, &mut any, tagging)
                 .map_err(|err| {
                     // Measured on ansible-core 2.19.12: a plugin's failure names the value it
                     // was resolving, `Error while resolving value for 'msg': The lookup plugin
@@ -120,7 +120,6 @@ impl Templar {
         ctx: &minijinja::Value,
         tainted: &Tainted,
         any: &mut bool,
-        keep: bool,
         tagging: Option<Tagging>,
     ) -> Result<(Value, Option<TagTree>), TemplateError> {
         let leaf = |trusted| {
@@ -136,7 +135,7 @@ impl Templar {
             Value::String(s) => {
                 take_result(ctx);
                 let out = self.render_in(s, ctx, tainted)?;
-                *any |= tainted.load(Ordering::Relaxed) || (keep && is_literal(ctx));
+                *any |= tainted.load(Ordering::Relaxed);
                 let tree = match tagging {
                     Some(t) if Templar::is_template(s) => with_origin(take_result(ctx), t.origin),
                     _ => leaf(true),
@@ -147,7 +146,7 @@ impl Templar {
                 let mut out = Vec::with_capacity(items.len());
                 let mut kids = Vec::new();
                 for (i, v) in items.iter().enumerate() {
-                    let (item, tree) = self.render_value_in(v, ctx, tainted, any, keep, tagging)?;
+                    let (item, tree) = self.render_value_in(v, ctx, tainted, any, tagging)?;
                     out.push(item);
                     kids.extend(tree.map(|t| (i, t)));
                 }
@@ -160,7 +159,7 @@ impl Templar {
                 let mut out = Map::new();
                 let mut kids = Vec::new();
                 for (k, v) in map {
-                    let (item, tree) = self.render_value_in(v, ctx, tainted, any, keep, tagging)?;
+                    let (item, tree) = self.render_value_in(v, ctx, tainted, any, tagging)?;
                     out.insert(k.clone(), item);
                     kids.extend(tree.map(|t| (k.clone(), t)));
                 }

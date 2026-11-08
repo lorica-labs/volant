@@ -10,6 +10,7 @@ use volant_protocol::modules::{ASSERT, PAUSE};
 use crate::executor::prepare::Item;
 use crate::playbook::PlayTask;
 use crate::preflight::PROMPT_REFUSED;
+use crate::tags::TagTree;
 use crate::template::{Templar, TemplateError};
 
 use super::argspec::{unchanged_failure, unsupported};
@@ -29,35 +30,42 @@ pub(super) fn assert_module(task: &PlayTask, item: &Item, templar: &Templar) -> 
     if let Some(refusal) = unsupported(&task.module, &ASSERT, &["msg"], &item.args) {
         return unchanged_failure(refusal);
     }
-    // A `that` an argument splat gave is already rendered: its strings are conditions, unless a
-    // managed host wrote them.
+    // A `that` an argument splat gave is already rendered: its strings are conditions, as far as
+    // its tags trust them.
     let splatted = task.args.get("that").is_none_or(Value::is_null);
     let Some(that) = (if splatted {
         item.args.get("that")
     } else {
         task.args.get("that")
-    })
-    .filter(|v| !v.is_null()) else {
+    }) else {
         return TaskResult::failed_with("missing required arguments: that");
     };
+    // Measured on ansible-core 2.19.12: a `that` written as nothing is an empty conditional.
+    if that.is_null() {
+        return TaskResult::failed_with(
+            "Task failed: Empty conditional expressions are not allowed.",
+        );
+    }
     let conditions = match that {
-        Value::Array(list) if splatted && item.args_untrusted.contains("that") => {
-            if list.iter().any(Value::is_string) {
-                return TaskResult::failed_with(conditional_error(&TemplateError(
-                    "Encountered untrusted template or expression.".into(),
-                )));
+        Value::String(_) | Value::Array(_) if splatted => {
+            if !strings_trusted(that, item.args_tags.get("that")) {
+                return untrusted_that();
             }
-            list.clone()
+            match that {
+                Value::Array(list) => list.clone(),
+                one => vec![one.clone()],
+            }
         }
         Value::Array(list) => list.clone(),
         Value::String(s) if Templar::is_template(s) => {
-            match templar.render_value_tainted(that, &item.vars) {
-                Ok((Value::Array(list), from_host)) => {
-                    if from_host && list.iter().any(Value::is_string) {
-                        return TaskResult::failed_with(conditional_error(&TemplateError(
-                            crate::template::UNTRUSTED.into(),
-                        )));
+            match templar.render_value_tagged(that, &item.vars) {
+                Ok((rendered @ Value::Array(_), _, tree)) => {
+                    if !strings_trusted(&rendered, tree.as_ref()) {
+                        return untrusted_that();
                     }
+                    let Value::Array(list) = rendered else {
+                        unreachable!("matched as a list")
+                    };
                     list
                 }
                 _ => vec![that.clone()],
@@ -309,4 +317,25 @@ pub(crate) fn utc_timestamp(sep: char) -> String {
         day % 60,
         since.subsec_micros()
     )
+}
+
+/// Whether a `that`, one string or a list of them, is made of strings its tags trust.
+fn strings_trusted(that: &Value, tree: Option<&TagTree>) -> bool {
+    let trusted = |value: &Value, tree: Option<&TagTree>| {
+        !value.is_string() || tree.is_some_and(|tree| crate::tags::is_trusted(tree.own()))
+    };
+    match that {
+        Value::Array(list) => list
+            .iter()
+            .enumerate()
+            .all(|(i, value)| trusted(value, tree.and_then(|tree| tree.index(i)))),
+        one => trusted(one, tree),
+    }
+}
+
+/// The failure of a `that` whose strings its tags do not trust.
+fn untrusted_that() -> TaskResult {
+    TaskResult::failed_with(conditional_error(&TemplateError(
+        crate::template::UNTRUSTED.into(),
+    )))
 }

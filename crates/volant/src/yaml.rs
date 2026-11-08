@@ -21,6 +21,7 @@ pub(crate) use noted::note_value_origins;
 mod quoted;
 mod tagging;
 pub use tagging::tags_of;
+pub(crate) use tagging::unsafe_markers;
 mod walk;
 
 pub use escapes::as_reference;
@@ -338,16 +339,16 @@ pub fn bool_from_str(text: &str) -> Option<bool> {
     PYYAML_FALSE.contains(&text).then_some(false)
 }
 
-/// A string under `!unsafe` is data, never a template. Where it holds template syntax it is
-/// stored as a one-expression template that renders back to its own text through
-/// `volant_unsafe`, which also stops the render from going over the result again. Every string
-/// leaf of a list or mapping is treated the same way; mapping keys are never rendered.
+/// A string under `!unsafe` in a task's arguments or keywords, which carry no tags: where it holds
+/// template syntax it is stored as a one-expression template holding its text as a string literal.
+/// That renders to the text, and a result is never rendered again. Every string leaf of a list or
+/// mapping is treated the same way; mapping keys are never rendered.
 pub(crate) fn unsafe_data(mut value: Value) -> Value {
     let mut open = vec![&mut value];
     while let Some(node) = open.pop() {
         match node {
             Value::String(s) if crate::template::Templar::is_template(s) => {
-                *s = wrap(s, "volant_unsafe");
+                *s = unsafe_string(s);
             }
             Value::Array(items) => open.extend(items.iter_mut()),
             Value::Object(map) => open.extend(map.values_mut()),
@@ -357,33 +358,12 @@ pub(crate) fn unsafe_data(mut value: Value) -> Value {
     value
 }
 
-/// A value as JSON written by ansible-core carries it: a string that is not to be trusted as a
-/// template arrives as `{"__ansible_unsafe": text}` and stays data.
-pub(crate) fn unsafe_markers(value: &Value) -> Value {
-    match value {
-        Value::Object(map) if map.len() == 1 && map.contains_key("__ansible_unsafe") => {
-            match &map["__ansible_unsafe"] {
-                Value::String(text) => Value::String(unsafe_string(text)),
-                _ => Value::Object(
-                    map.iter()
-                        .map(|(k, v)| (k.clone(), unsafe_markers(v)))
-                        .collect(),
-                ),
-            }
-        }
-        Value::Object(map) => Value::Object(
-            map.iter()
-                .map(|(k, v)| (k.clone(), unsafe_markers(v)))
-                .collect(),
-        ),
-        Value::Array(items) => Value::Array(items.iter().map(unsafe_markers).collect()),
-        other => other.clone(),
-    }
-}
-
-/// `text` as data that is never rendered, whatever it holds.
+/// `text` as a template that renders to `text`, whatever it holds.
 pub(crate) fn unsafe_string(text: &str) -> String {
-    wrap(text, "volant_unsafe")
+    let mut out = wrap(text, "");
+    out.truncate(out.len() - " |  }}".len());
+    out.push_str(" }}");
+    out
 }
 
 /// `text` as the one-expression template `{{ "<text>" | <filter> }}`.
@@ -406,15 +386,8 @@ fn wrap(text: &str, filter: &str) -> String {
     lit
 }
 
-/// The text `unsafe_data` wrapped, when `s` is exactly such a wrapper and nothing else. Read
-/// back by hand, never through the templater: `s` may be any string of a variable map.
-pub(crate) fn unsafe_text(s: &str) -> Option<String> {
-    unwrapped(s, "volant_unsafe")
-}
-
 /// What a `!vault` value loads as: its ciphertext in a wrapper that decrypts when the value is
-/// rendered, so a value nothing reads is never decrypted. The result is data, as `!unsafe` is:
-/// measured on ansible-core 2.19.12, `{{ x }}` inside a decrypted value is not rendered.
+/// rendered, so a value nothing reads is never decrypted. The result is data: measured on ansible-core 2.19.12, `{{ x }}` inside a decrypted value is not rendered.
 pub(crate) fn vault_data(ciphertext: &str) -> String {
     wrap(ciphertext, "volant_vault")
 }
@@ -429,7 +402,8 @@ pub(crate) fn binary_text(s: &str) -> Option<String> {
     unwrapped(s, "volant_binary")
 }
 
-/// The ciphertext `vault_data` wrapped, read back by hand like [`unsafe_text`].
+/// The ciphertext `vault_data` wrapped, read back by hand, never through the templater: `s` may be
+/// any string of a variable map.
 pub(crate) fn vault_text(s: &str) -> Option<String> {
     unwrapped(s, "volant_vault")
 }
@@ -461,10 +435,16 @@ fn unwrapped(s: &str, filter: &str) -> Option<String> {
     Some(out)
 }
 
-/// Converts a node to JSON. `!vault` and `!unsafe` load as data, see `vault_data` and
-/// `unsafe_data`.
+/// Converts a node of a task to JSON, which holds no tags: `!vault` and `!unsafe` load as data, see
+/// `vault_data` and `unsafe_data`.
 pub fn to_json(node: &Yaml) -> anyhow::Result<Value> {
-    walk::to_json(node)
+    walk::to_json(node, true)
+}
+
+/// Converts a node of a variables file or section to JSON: a `!unsafe` string is its text, and
+/// its tags are what say it is no template (see [`tags_of`]).
+pub fn to_tagged_json(node: &Yaml) -> anyhow::Result<Value> {
+    walk::to_json(node, false)
 }
 
 mod scalar;

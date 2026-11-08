@@ -19,9 +19,9 @@ use super::env::{chained_attr, fresh_const, mutable_attr, mutable_var};
 use super::pymethods::mutable::{identity, mutable};
 use super::templar::Templar;
 use super::{
-    ADD_KEY, ATTR_KEY, BYTES_ADD_KEY, CONCAT_KEY, CONST_KEY, CONTEXT_KEY, HOSTVARS_KEYS, ITEM_KEY,
-    MACRO_KEY, MATTR_KEY, MITEM_KEY, MKLIST_KEY, MKMAP_KEY, QUERY_KEY, REM_KEY, REMT_KEY,
-    SLICE_KEY, SUB_KEY, TAINT_KEY, Tainted, TemplateError, VAR_KEY,
+    ADD_KEY, ATTR_KEY, BYTES_ADD_KEY, CONCAT_KEY, CONST_KEY, CONTEXT_KEY, ITEM_KEY, MACRO_KEY,
+    MATTR_KEY, MITEM_KEY, MKLIST_KEY, MKMAP_KEY, QUERY_KEY, REM_KEY, REMT_KEY, SLICE_KEY, SUB_KEY,
+    Tainted, TemplateError, VAR_KEY,
 };
 
 /// The name, in the variables an extended loop shares between its items, under which the list of
@@ -80,19 +80,7 @@ impl Object for LoopView {
 }
 
 pub(super) use hostvars::Hostvars;
-use read::Deferred;
-pub(super) use read::take_failure;
-
-#[derive(Debug)]
-pub(crate) struct TaintSink(pub(crate) Tainted);
-
-impl TaintSink {
-    pub(crate) fn taint(&self) {
-        self.0.store(true, Ordering::Relaxed);
-    }
-}
-
-impl Object for TaintSink {}
+pub(super) use read::{forgiving, take_failure};
 
 /// What a template renders against: one host's own variables, and — on the path where a host
 /// runs a task — the whole inventory's view behind `hostvars`.
@@ -112,16 +100,13 @@ pub struct Vars<'a> {
     /// because these used to be written into it last and last is what wins. A name written into
     /// the map later still wins, because `HostVars::insert` takes it out of here first.
     pub shared: Option<&'a Arc<Map<String, Value>>>,
+    /// The names of `shared` that list a name `add_host` or `group_by` took from what a managed
+    /// host sent. The strings of `shared` carry no tags, so the list as a whole answers for them.
+    pub data_lists: Option<&'a Arc<BTreeSet<String>>>,
     /// The host's gathered facts, a layer shared rather than copied into `map` for every task.
     /// Consulted after `shared` and before `map`: whoever builds it leaves out every fact a layer
     /// of `map` outranks, so the facts left answer ahead of the layers below them.
     pub facts: Option<&'a Arc<Map<String, Value>>>,
-    /// Names in `map` whose value came from a managed host. Reading one of them during a render
-    /// makes the result data: see `render_in`.
-    pub untrusted: Option<&'a BTreeSet<String>>,
-    /// Hosts that have at least one such name, for the `hostvars[other]` path. Coarser than the
-    /// reference, which tags each string: reading any name of such a host taints the render.
-    pub untrusted_hosts: Option<&'a crate::vars::UntrustedHosts>,
     /// Variables an item shares with the others of its loop, read after `map`: a name in `map`
     /// answers first. A caller that owns its whole map leaves it empty.
     pub base: Option<&'a Arc<crate::tags::Tagged>>,
@@ -134,9 +119,22 @@ impl<'a> From<&'a Map<String, Value>> for Vars<'a> {
             tags: None,
             hostvars: None,
             shared: None,
+            data_lists: None,
             facts: None,
-            untrusted: None,
-            untrusted_hosts: None,
+            base: None,
+        }
+    }
+}
+
+impl<'a> From<&'a crate::tags::Tagged> for Vars<'a> {
+    fn from(tagged: &'a crate::tags::Tagged) -> Self {
+        Vars {
+            map: tagged,
+            tags: Some(tagged.tags()),
+            hostvars: None,
+            shared: None,
+            data_lists: None,
+            facts: None,
             base: None,
         }
     }
@@ -192,18 +190,9 @@ pub(super) struct Context {
     pub(super) base: Option<Arc<crate::tags::Tagged>>,
     pub(super) hostvars: Option<Arc<crate::vars::HostvarsMap>>,
     pub(super) shared: Option<Arc<Map<String, Value>>>,
+    pub(super) data_lists: Option<Arc<BTreeSet<String>>>,
     pub(super) facts: Option<Arc<Map<String, Value>>>,
-    pub(super) untrusted: BTreeSet<String>,
-    /// Whether the caller tracks which names hold host text: `untrusted` is then complete. Without
-    /// it, a read of the inventory's names cannot be told from a read of host text.
-    pub(super) tracked: bool,
-    pub(super) untrusted_hosts: crate::vars::UntrustedHosts,
     tainted: Tainted,
-    /// Set when a pass left text that must stay as it is: see `Templar::render_in`. Not data:
-    /// nothing is refused because of it.
-    literal: AtomicBool,
-    /// The reads that handed out a template unrendered, to tell a pass whose markers are its own.
-    deferred: Arc<Deferred>,
     memo: Memo,
     /// The mutable form of each plain list or mapping read while one string renders, by the
     /// address of the plain one, which it keeps alive. Emptied before the next string.
@@ -216,8 +205,6 @@ pub(super) struct Context {
     /// Names whose rendered value was built from something a managed host wrote. A read of one is
     /// as much a read of host data as a read of the name it was built from.
     soiled: Mutex<BTreeSet<String>>,
-    /// Whether the text of a variable reads only what the playbook wrote, name by name.
-    author_only: Mutex<HashMap<String, bool>>,
     /// Whether `soiled` holds a name, so that a render that resolved nothing never takes its lock.
     any_soiled: AtomicBool,
     /// Set when `failed` is: the first error a nested render raised that the read cannot carry.
@@ -260,33 +247,11 @@ impl Context {
     }
 }
 
-/// Starts a render over `ctx`: clears the mark of the last one and what it changed in lists and
-/// mappings, and returns the deferred reads so far.
-pub(super) fn begin(ctx: &minijinja::Value) -> usize {
-    set_literal(ctx, false);
+/// Starts a render over `ctx`: forgets what the last one changed in lists and mappings.
+pub(super) fn begin(ctx: &minijinja::Value) {
     if let Some(root) = ctx.downcast_object_ref::<Context>() {
         root.forget_changes();
     }
-    deferred(ctx)
-}
-
-/// Records that the render over `ctx` left text that no further pass may render.
-pub(super) fn set_literal(ctx: &minijinja::Value, on: bool) {
-    if let Some(root) = ctx.downcast_object_ref::<Context>() {
-        root.literal.store(on, Ordering::Relaxed);
-    }
-}
-
-/// How many reads of the renders over `ctx` handed out a template unrendered so far.
-pub(super) fn deferred(ctx: &minijinja::Value) -> usize {
-    ctx.downcast_object_ref::<Context>()
-        .map_or(0, |root| root.deferred.count())
-}
-
-/// Whether the render over `ctx` left such text.
-pub(super) fn is_literal(ctx: &minijinja::Value) -> bool {
-    ctx.downcast_object_ref::<Context>()
-        .is_some_and(|root| root.literal.load(Ordering::Relaxed))
 }
 
 /// Puts the shared list of all the items back into `ansible_loop` and drops the shared entry.
@@ -301,17 +266,23 @@ pub fn complete_loop(all: &mut Map<String, Value>) {
 }
 
 impl Context {
+    /// Marks the render as having read what came from outside the playbook: a managed host's
+    /// text, or a file or a command read at run time.
+    pub(in crate::template) fn note_outside_read(&self) {
+        self.tainted.store(true, Ordering::Relaxed);
+    }
+
     /// The host's own variables as one map: the base shared by the items of a loop, then the
     /// map over it.
-    pub(super) fn flat_vars(&self) -> Map<String, Value> {
-        let mut all = self
-            .base
-            .as_deref()
-            .map(|base| base.as_map().clone())
-            .unwrap_or_default();
-        all.extend(self.vars.iter().map(|(k, v)| (k.clone(), v.clone())));
-        complete_loop(&mut all);
-        all
+    pub(super) fn flat_vars(&self) -> crate::tags::Tagged {
+        let mut all = self.base.as_deref().cloned().unwrap_or_default();
+        for (name, value) in &self.vars {
+            let tree = self.tags.as_ref().and_then(|t| t.get(name)).cloned();
+            all.insert(name.clone(), value.clone(), tree);
+        }
+        let (mut values, tags) = all.into_parts();
+        complete_loop(&mut values);
+        crate::tags::Tagged::new(values, tags)
     }
 }
 
@@ -369,11 +340,6 @@ impl Object for Context {
         if let Some(name) = key.strip_prefix(VAR_KEY) {
             return Some(mutable_var(name.to_string()));
         }
-        if key == TAINT_KEY {
-            return Some(minijinja::Value::from_object(TaintSink(Arc::clone(
-                &self.tainted,
-            ))));
-        }
         if key == CONTEXT_KEY {
             return Some(minijinja::Value::from_dyn_object(Arc::clone(self)));
         }
@@ -381,25 +347,18 @@ impl Object for Context {
         if key == "vars" && !self.vars.contains_key(key) {
             return Some(minijinja::Value::from_object(vars::Vars(Arc::clone(self))));
         }
-        self.deferred.again(key);
         // Before the memo, never after: a second read of the same name is answered from the
         // cache and would otherwise leave the render looking clean.
-        // A `hostvars` the map carries as a plain value lists its hosts on any read, so a host
-        // name that came from a managed host taints every read of it.
-        let untrusted = self.untrusted.contains(key);
-        if untrusted
+        if self.reads_host_text(key)
             || (self.any_soiled.load(Ordering::Relaxed)
                 && self.soiled.lock().expect("template soiled").contains(key))
-            || (key == "hostvars"
-                && self.hostvars.is_none()
-                && self.untrusted.contains(HOSTVARS_KEYS))
         {
             self.tainted.store(true, Ordering::Relaxed);
         }
         if let Some(value) = self.memo.lookup(key) {
             return Some(value);
         }
-        let Some((value, keep)) = self.read(key, untrusted) else {
+        let Some((value, keep)) = self.read(key) else {
             MISSING.with(|m| *m.borrow_mut() = Some(key.to_string()));
             return None;
         };
@@ -444,15 +403,6 @@ impl Object for Context {
 }
 
 pub(super) fn context_of(templar: &Templar, vars: Vars<'_>) -> (minijinja::Value, Tainted) {
-    context_tracking(templar, vars, vars.untrusted.is_some())
-}
-
-/// `context_of` for a caller that supplies `untrusted` itself and says whether it is complete.
-pub(super) fn context_tracking(
-    templar: &Templar,
-    vars: Vars<'_>,
-    tracked: bool,
-) -> (minijinja::Value, Tainted) {
     let tainted: Tainted = Arc::new(AtomicBool::new(false));
     let ctx = minijinja::Value::from_object(Context {
         vars: vars.map.clone(),
@@ -462,20 +412,15 @@ pub(super) fn context_tracking(
         base: vars.base.cloned(),
         hostvars: vars.hostvars.cloned(),
         shared: vars.shared.cloned(),
+        data_lists: vars.data_lists.cloned(),
         facts: vars.facts.cloned(),
-        untrusted: vars.untrusted.cloned().unwrap_or_default(),
-        tracked,
-        untrusted_hosts: vars.untrusted_hosts.cloned().unwrap_or_default(),
         tainted: Arc::clone(&tainted),
-        literal: AtomicBool::new(false),
-        deferred: Arc::new(Deferred::default()),
         memo: Memo::default(),
         mutables: Mutex::default(),
         mutated: AtomicBool::new(false),
         templar: templar.clone(),
         resolving: Mutex::new(Vec::new()),
         soiled: Mutex::new(BTreeSet::new()),
-        author_only: Mutex::new(HashMap::new()),
         any_soiled: AtomicBool::new(false),
         failure: Mutex::new(None),
         undefined_in: Mutex::default(),

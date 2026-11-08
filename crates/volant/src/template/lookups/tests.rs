@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value, json};
 
-use super::super::{Templar, Vars};
-use crate::testing::scratch;
+use super::super::Templar;
+use crate::tags::Tagged;
+use crate::testing::{put_written, scratch};
 
 /// A role laid out the way the reference measured one: `templates/`, `files/`, `tasks/`, and
 /// `ansible_search_path` naming the role, its `tasks/` and the playbook directory, in that
@@ -71,14 +71,11 @@ impl Role {
         self.dir.join("role")
     }
 
-    fn vars(&self) -> Map<String, Value> {
+    fn vars(&self) -> Tagged {
         let role = self.role();
         let search = [role.clone(), role.join("tasks"), self.dir.clone()];
         let search: Vec<String> = search.iter().map(|p| p.display().to_string()).collect();
-        json!({"ansible_search_path": search, "who": "me"})
-            .as_object()
-            .unwrap()
-            .clone()
+        crate::testing::written(&json!({"ansible_search_path": search, "who": "me"}))
     }
 }
 
@@ -94,27 +91,18 @@ fn what_a_template_lookup_rendered_is_never_rendered_again() {
     role.write("role/templates/t.j2", "{{ '{{ 1 + 1 }}' }}");
     let t = templar(&role.dir);
     let mut map = role.vars();
-    map.insert(
-        "via_lookup".into(),
+    put_written(
+        &mut map,
+        "via_lookup",
         json!("{{ lookup('template', 't.j2') }}"),
     );
     // `debug: var: via_lookup` reads the name out of the resolved map.
-    let (resolved, untrusted) = t.resolve_vars_tainted(&map);
+    let resolved = t.resolve_vars(&map);
     assert_eq!(resolved["via_lookup"], json!("{{ 1 + 1 }}"));
-    assert!(untrusted.contains("via_lookup"), "{untrusted:?}");
+    assert!(resolved.is_from_host("via_lookup"));
     // `debug: msg: "{{ via_lookup }}"` renders an argument against it.
-    let vars = Vars {
-        map: &resolved,
-        tags: None,
-        hostvars: None,
-        shared: None,
-        facts: None,
-        untrusted: Some(&untrusted),
-        untrusted_hosts: None,
-        base: None,
-    };
     assert_eq!(
-        t.render("{{ via_lookup }}", vars).unwrap(),
+        t.render("{{ via_lookup }}", &resolved).unwrap(),
         json!("{{ 1 + 1 }}")
     );
     // And an argument that calls the lookup itself, before any variable holds it.
@@ -132,8 +120,8 @@ fn a_template_lookup_under_an_untracked_render_keeps_a_host_name_as_text() {
     role.write("role/templates/t.j2", "{{ x }}");
     let t = templar(&role.dir);
     let mut map = role.vars();
-    map.insert("inventory_hostname".into(), json!("{{ 7 * 7 }}"));
-    map.insert("x".into(), json!("{{ inventory_hostname }}"));
+    map.insert("inventory_hostname".into(), json!("{{ 7 * 7 }}"), None);
+    put_written(&mut map, "x", json!("{{ inventory_hostname }}"));
     assert_eq!(
         t.render_one_pass("{{ lookup('template', 't.j2') }}", &map)
             .unwrap(),
@@ -514,26 +502,19 @@ fn a_template_lookup_reads_a_chained_variable_resolved() {
     role.write("role/templates/chain.j2", "{{ a }}");
     let t = templar(&role.dir);
     let mut map = role.vars();
-    map.insert("a".into(), json!("{{ b }}"));
-    map.insert("b".into(), json!(1));
-    map.insert("via".into(), json!("{{ lookup('template', 'chain.j2') }}"));
-    let (resolved, untrusted) = t.resolve_vars_tainted(&map);
+    put_written(&mut map, "a", json!("{{ b }}"));
+    put_written(&mut map, "b", json!(1));
+    put_written(
+        &mut map,
+        "via",
+        json!("{{ lookup('template', 'chain.j2') }}"),
+    );
+    let resolved = t.resolve_vars(&map);
     assert_eq!(resolved["via"], json!(1));
-    assert!(untrusted.contains("via"), "{untrusted:?}");
 
-    let from_host = BTreeSet::from(["a".to_string()]);
-    let vars = Vars {
-        map: &map,
-        tags: None,
-        hostvars: None,
-        shared: None,
-        facts: None,
-        untrusted: Some(&from_host),
-        untrusted_hosts: None,
-        base: None,
-    };
+    map.insert_from_host("a".into(), json!("{{ b }}"));
     assert_eq!(
-        t.render("{{ lookup('template', 'chain.j2') }}", vars)
+        t.render("{{ lookup('template', 'chain.j2') }}", &map)
             .unwrap(),
         json!("{{ b }}")
     );
@@ -553,8 +534,8 @@ fn a_name_that_cannot_be_resolved_fails_only_when_it_is_read() {
     .write("role/templates/read.j2", "{{ proxy }}");
     let t = templar(&role.dir);
     let mut map = role.vars();
-    map.insert("use_proxy".into(), json!(false));
-    map.insert("proxy".into(), json!("{{ proxy_host }}:3128"));
+    put_written(&mut map, "use_proxy", json!(false));
+    put_written(&mut map, "proxy", json!("{{ proxy_host }}:3128"));
     let r = |name: &str| t.render(&format!("{{{{ lookup('template', '{name}') }}}}"), &map);
     assert_eq!(r("branch.j2").unwrap(), json!("ok"));
     assert_eq!(r("default.j2").unwrap(), json!("none"));
@@ -580,7 +561,7 @@ fn a_template_lookup_sets_the_template_variables() {
         json!(format!("#\n# Ansible managed\n#\nm.j2 {full}\n"))
     );
     let mut map = role.vars();
-    map.insert("ansible_managed".into(), json!("by hand"));
+    put_written(&mut map, "ansible_managed", json!("by hand"));
     assert_eq!(
         t.render("{{ lookup('template', 'm.j2') }}", &map).unwrap(),
         json!(format!("#\n# by hand\n#\nm.j2 {full}\n"))

@@ -11,17 +11,22 @@ use super::unsafe_text::{mark_unsafe, show_unsafe};
 use crate::template::yaml_mapping;
 
 /// Each host's, or each group's, variables as a listing shows them.
-pub type VarsOf<'a> = dyn Fn(&str) -> BTreeMap<String, Value> + 'a;
+pub type VarsOf<'a> = dyn Fn(&str) -> crate::tags::Tagged + 'a;
+
+/// Variables as `ansible-inventory` prints them, in the order given.
+fn shown_map(vars: BTreeMap<String, Value>, tags: &crate::tags::TagMap, listing: bool) -> Value {
+    Value::Object(
+        vars.iter()
+            .map(|(name, value)| (name.clone(), show_unsafe(value, tags.get(name), listing)))
+            .collect(),
+    )
+}
 
 impl Inventory {
     /// One host's variables as `--list` and `--host` print them, or `None` when it has none.
-    fn shown_vars(
-        &self,
-        name: &str,
-        vars_of: &dyn Fn(&str) -> BTreeMap<String, Value>,
-        listing: bool,
-    ) -> Option<Value> {
-        let mut vars = vars_of(name);
+    fn shown_vars(&self, name: &str, vars_of: &VarsOf<'_>, listing: bool) -> Option<Value> {
+        let (vars, tags) = vars_of(name).into_parts();
+        let mut vars: BTreeMap<String, Value> = vars.into_iter().collect();
         // Only `--list` marks the strings a compose computed.
         for ((host, var), computed) in &self.unsafe_vars {
             if listing
@@ -31,15 +36,11 @@ impl Inventory {
                 mark_unsafe(value, computed);
             }
         }
-        (!vars.is_empty()).then(|| show_unsafe(&Value::Object(vars.into_iter().collect()), listing))
+        (!vars.is_empty()).then(|| shown_map(vars, &tags, listing))
     }
 
     /// What `ansible-inventory --host` prints for a host: its variables, `{}` when it has none.
-    pub fn host_dump(
-        &self,
-        name: &str,
-        vars_of: &dyn Fn(&str) -> BTreeMap<String, Value>,
-    ) -> Value {
+    pub fn host_dump(&self, name: &str, vars_of: &VarsOf<'_>) -> Value {
         self.shown_vars(name, vars_of, false)
             .unwrap_or_else(|| Value::Object(serde_json::Map::new()))
     }
@@ -60,16 +61,7 @@ impl Inventory {
     /// in, `all`'s top groups, and each group's own hosts and children. An empty group has no
     /// entry of its own.
     pub fn dump(&self) -> Value {
-        self.dump_with(
-            &|host| {
-                self.host_with_vars(host)
-                    .vars
-                    .into_values()
-                    .into_iter()
-                    .collect()
-            },
-            None,
-        )
+        self.dump_with(&|host| self.host_with_vars(host).vars, None)
     }
 
     /// [`Inventory::dump`] with each host's variables taken from `vars_of`. With `--export`,
@@ -88,9 +80,11 @@ impl Inventory {
                 .dump_with(vars_of, group_vars);
         }
         let shown_group_vars = |name: &str| {
-            let vars = group_vars.map(|of| of(name)).unwrap_or_default();
-            (!vars.is_empty())
-                .then(|| show_unsafe(&Value::Object(vars.into_iter().collect()), true))
+            let (vars, tags) = group_vars
+                .map(|of| of(name))
+                .unwrap_or_default()
+                .into_parts();
+            (!vars.is_empty()).then(|| shown_map(vars.into_iter().collect(), &tags, true))
         };
         let mut out = serde_json::Map::new();
         let hostvars: serde_json::Map<String, Value> = self
@@ -283,14 +277,14 @@ impl Inventory {
     }
 
     /// A group's own variables, as the inventory sources wrote them.
-    pub fn group_vars_of(&self, name: &str) -> serde_json::Map<String, Value> {
+    pub fn tagged_group_vars(&self, name: &str) -> crate::tags::Tagged {
         let Some(group) = self.group(name) else {
-            return serde_json::Map::new();
+            return crate::tags::Tagged::default();
         };
-        let mut vars = group.vars.as_map().clone();
+        let mut vars = group.vars.clone();
         // The reference keeps it among the group's variables, here it has a field of its own.
         if let Some(priority) = group.priority {
-            vars.insert("ansible_group_priority".into(), priority.into());
+            vars.insert("ansible_group_priority".into(), priority.into(), None);
         }
         vars
     }

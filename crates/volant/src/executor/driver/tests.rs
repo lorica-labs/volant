@@ -448,7 +448,7 @@ fn a_fact_still_holding_a_template_makes_every_step_a_boundary() {
     store
         .lock()
         .unwrap()
-        .set_untrusted_fact("h1", "from_host", json!("{{ hostvars }}"));
+        .set_host_fact("h1", "from_host", json!("{{ hostvars }}"));
     assert!(!strict(true, &store), "neither of these renders again");
     store
         .lock()

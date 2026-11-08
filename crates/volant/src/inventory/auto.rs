@@ -106,7 +106,7 @@ pub(super) fn failed(message: String) -> PluginError {
 /// A plugin's config file as JSON, `null` when it is empty: `load_from_file`.
 pub(super) fn load_config(source: &Source) -> Result<Value, PluginError> {
     with_root(source, |root| {
-        yaml::to_json(root).map_err(|e| e.to_string())
+        yaml::to_tagged_json(root).map_err(|e| e.to_string())
     })
 }
 

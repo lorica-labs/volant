@@ -4,6 +4,7 @@
 use serde_json::{Map, Value};
 
 use crate::playbook::PlayTask;
+use crate::tags::TagTree;
 use crate::template::{Templar, TemplateError, UNDEFINED};
 use crate::vars::HostVars;
 
@@ -88,26 +89,31 @@ pub(super) fn loop_options(
     })
 }
 
-/// The list a `loop:` or `with_items:` walks, and whether it came from a managed host.
+/// The items of a loop, each with its tags.
+pub(super) type LoopItems = Vec<(Value, Option<TagTree>)>;
+
+/// The items a `loop:` or `with_items:` walks with their tags, and whether they came from a
+/// managed host.
 pub(super) fn loop_list(
     templar: &Templar,
     task: &PlayTask,
     raw: &Value,
     vars: &HostVars,
-) -> Result<(Vec<Value>, bool), TemplateError> {
+) -> Result<(LoopItems, bool), TemplateError> {
     crate::profile::count(crate::profile::Counter::RenderLoop, 1);
     // A bytes item stays bytes, as the reference's loop item does.
-    let (rendered, tainted) =
-        crate::template::keeping_bytes(|| templar.render_value_tainted(raw, vars))?;
+    let (rendered, tainted, tree) =
+        crate::template::keeping_bytes(|| templar.render_value_tagged(raw, vars))?;
     // A loop over an unknown value goes over the items the recording looped over.
     let recorded = rendered
         .as_str()
         .and_then(crate::template::unknown::reason_in)
         .and_then(|_| crate::shadow::replay::recorded_items(task));
     let list = match (recorded, rendered) {
-        (Some(items), _) | (None, Value::Array(items)) => items,
+        (Some(items), _) => items.into_iter().map(|item| (item, None)).collect(),
+        (None, Value::Array(items)) => with_their_tags(items, tree.as_ref()),
         // `with_items` takes anything that is not a list as a list of one.
-        (None, other) if task.with_items => vec![other],
+        (None, other) if task.with_items => vec![(other, tree)],
         (None, other) => {
             return Err(TemplateError(format!(
                 "Invalid data passed to 'loop', it requires a list, got this instead: {other}"
@@ -121,6 +127,13 @@ pub(super) fn loop_list(
         list
     };
     Ok((list, tainted))
+}
+
+/// `items`, the elements of a list whose tags are `tree`, each with its own.
+fn with_their_tags(items: Vec<Value>, tree: Option<&TagTree>) -> LoopItems {
+    let tree_of = |i| tree.and_then(|tree| tree.index(i)).cloned();
+    let items = items.into_iter().enumerate();
+    items.map(|(i, item)| (item, tree_of(i))).collect()
 }
 
 /// The items of a `with_<lookup>` loop: the terms, rendered, handed to the lookup as its
@@ -142,7 +155,7 @@ pub(super) fn with_lookup_items(
     module: &str,
     raw: &Value,
     vars: &HostVars,
-) -> Result<(Vec<Value>, bool), TemplateError> {
+) -> Result<(LoopItems, bool), TemplateError> {
     let mut tainted = false;
     // A term written as one string is resolved before the lookup sees it (`resolve_to_container`
     // in `_get_loop_items`), so an undefined variable there is an error even for `first_found`;
@@ -190,7 +203,7 @@ pub(super) fn with_lookup_items(
         Value::Array(list) => list,
         one => vec![one],
     };
-    Ok((list, tainted))
+    Ok((list.into_iter().map(|item| (item, None)).collect(), tainted))
 }
 
 /// `err`, a loop whose value is a template that read a missing name, worded as the reference
@@ -261,11 +274,11 @@ pub(super) fn render_terms(
     }))
 }
 
-pub(super) fn flatten_once(list: Vec<Value>) -> Vec<Value> {
+pub(super) fn flatten_once(list: Vec<(Value, Option<TagTree>)>) -> Vec<(Value, Option<TagTree>)> {
     list.into_iter()
-        .flat_map(|v| match v {
-            Value::Array(inner) => inner,
-            other => vec![other],
+        .flat_map(|(item, tree)| match item {
+            Value::Array(inner) => with_their_tags(inner, tree.as_ref()),
+            other => vec![(other, tree)],
         })
         .collect()
 }

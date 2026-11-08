@@ -102,9 +102,7 @@ fn literal(value: &Value, nest: usize) -> Result<String, String> {
         Value::String(text) if crate::yaml::vault_text(text).is_some() => {
             return Err("Object of type 'EncryptedString' is not TOML serializable".into());
         }
-        Value::String(text) => {
-            string(&crate::yaml::unsafe_text(text).unwrap_or_else(|| text.clone()))
-        }
+        Value::String(text) => string(text),
         Value::Array(items) if items.is_empty() => "[]".into(),
         Value::Array(items) => {
             let inner = INDENT.repeat(nest + 1);

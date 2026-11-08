@@ -8,8 +8,9 @@ use std::sync::atomic::Ordering;
 use minijinja::value::{Enumerator, Object};
 use serde_json::{Map, Value};
 
+use super::super::HOSTVARS_KEYS;
 use super::super::templar::Templar;
-use super::{Memo, Tainted, Vars, context_tracking};
+use super::{Memo, Tainted, Vars, context_of};
 use crate::inventory::is_localhost;
 
 /// `hostvars`: a map whose values are converted one host at a time. Iterating it still costs
@@ -22,43 +23,32 @@ pub(in crate::template) struct Hostvars {
     /// answers for the three spellings of the controller whether they are listed or not, and an
     /// iteration shows only the listed ones, as the reference's does.
     pub(super) listed: Option<Arc<Map<String, Value>>>,
-    /// Hosts holding at least one name that came from a managed host. Reading any name of such
-    /// a host taints the render, which is coarser than the reference's per-string tag.
-    pub(super) untrusted_hosts: crate::vars::UntrustedHosts,
-    /// Whether one of the host names came from a managed host: listing them taints the render.
-    pub(super) keys_untrusted: bool,
+    /// Which of those list a name from a managed host, and whether the hosts of this map do.
+    pub(super) data_lists: Option<Arc<BTreeSet<String>>>,
     pub(super) tainted: Tainted,
     pub(super) memo: Memo,
     pub(super) templar: Templar,
-    /// The names of `listed` that hold host text, for the render of another host's variable.
-    pub(super) listed_untrusted: BTreeSet<String>,
 }
 
 impl Object for Hostvars {
     fn get_value(self: &Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
         let key = key.as_str()?;
-        // A host that holds host text, a registered result say, is read as any other, its
-        // templates rendered, with the names that hold such text read as data: measured on
-        // ansible-core 2.19.12, a group's `y: "{{ x }}"` reads `100` through `hostvars` after a
-        // `register`. The read taints the render, which is coarser than the reference's
-        // per-string tag.
-        let data = self.untrusted_hosts.get(key);
-        if data.is_some() {
-            self.tainted.store(true, Ordering::Relaxed);
-        }
         self.memo.get(key, || {
             self.hosts.get(key).map(|entry| {
                 crate::profile::count(crate::profile::Counter::RenderHostvars, 1);
-                let entry =
+                let view =
                     super::read::with_playbook_python(crate::vars::settled(entry).into_owned());
-                let empty = BTreeSet::new();
-                minijinja::Value::from_object(self.view_with(&entry, data.unwrap_or(&empty)))
+                minijinja::Value::from_object(self.view_with(&view, entry))
             })
         })
     }
 
     fn enumerate(self: &Arc<Self>) -> Enumerator {
-        if self.keys_untrusted {
+        if self
+            .data_lists
+            .as_ref()
+            .is_some_and(|d| d.contains(HOSTVARS_KEYS))
+        {
             self.tainted.store(true, Ordering::Relaxed);
         }
         let unlisted: BTreeSet<&str> = match &self.listed {
@@ -87,39 +77,36 @@ impl Object for Hostvars {
 }
 
 impl Hostvars {
-    /// One host's variables as a render of that host reads them, the names of `data` read as data.
-    fn view_with(&self, entry: &Value, data: &BTreeSet<String>) -> HostView {
-        let untrusted: BTreeSet<String> = self.listed_untrusted.union(data).cloned().collect();
+    /// One host's variables as a render of that host reads them.
+    fn view_with(&self, view: &Value, entry: &crate::vars::HostEntry) -> HostView {
         let empty = Map::new();
-        let (ctx, tainted) = context_tracking(
+        let (ctx, tainted) = context_of(
             &self.templar,
             Vars {
-                map: entry.as_object().unwrap_or(&empty),
-                tags: None,
+                map: view.as_object().unwrap_or(&empty),
+                tags: Some(entry.tags()),
                 hostvars: None,
                 shared: self.listed.as_ref(),
+                data_lists: self.data_lists.as_ref(),
                 facts: None,
-                untrusted: Some(&untrusted),
-                untrusted_hosts: None,
                 base: None,
             },
-            true,
         );
         HostView {
             ctx,
             tainted,
             reader: Arc::clone(&self.tainted),
-            written: entry.as_object().cloned().unwrap_or_default(),
+            written: view.as_object().cloned().unwrap_or_default(),
             walked: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
 
-/// `hostvars[name]` for a host that holds no host text: each variable read as a render of that
-/// host would read it, a template in it rendered with that host's own variables and the
-/// inventory's, as ansible-core 2.19.12 renders it. That render has no `hostvars`, as the
-/// reference's has none. A variable that holds no template is handed out as it is, so text the
-/// reader builds around it is never rendered a second time.
+/// `hostvars[name]`: each variable read as a render of that host would read it, a template in it
+/// rendered with that host's own variables and the inventory's, as ansible-core 2.19.12 renders
+/// it. That render has no `hostvars`, as the reference's has none. A variable that holds no
+/// trusted template is handed out as it is, so text the reader builds around it is never rendered
+/// a second time.
 #[derive(Debug)]
 struct HostView {
     ctx: minijinja::Value,

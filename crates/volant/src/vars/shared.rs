@@ -8,6 +8,69 @@ use serde_json::{Map, Value};
 
 use super::{HostvarsMap, Scope, VarStore};
 use crate::inventory::{LOCALHOST_NAMES, is_localhost};
+use crate::tags::{TagMap, TagTree, Tagged};
+
+/// One host's entry in `hostvars`: its variables as one object, which is what most readers want,
+/// and their tags beside it.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct HostEntry {
+    value: Value,
+    tags: Arc<TagMap>,
+}
+
+impl std::ops::Deref for HostEntry {
+    type Target = Value;
+
+    fn deref(&self) -> &Value {
+        &self.value
+    }
+}
+
+impl From<Tagged> for HostEntry {
+    fn from(vars: Tagged) -> Self {
+        let tags = Arc::clone(vars.tags());
+        Self {
+            value: Value::Object(vars.into_values()),
+            tags,
+        }
+    }
+}
+
+impl HostEntry {
+    /// A view with no tags: none of its strings is a template.
+    pub fn untagged(value: Value) -> Self {
+        Self {
+            value,
+            tags: Arc::default(),
+        }
+    }
+
+    pub fn tags(&self) -> &Arc<TagMap> {
+        &self.tags
+    }
+
+    /// Whether every string of the host that holds a template may be rendered as one.
+    pub fn all_templates_trusted(&self) -> bool {
+        fn all(value: &Value, tree: Option<&TagTree>) -> bool {
+            match value {
+                Value::Array(items) => items
+                    .iter()
+                    .enumerate()
+                    .all(|(i, item)| all(item, tree.and_then(|t| t.index(i)))),
+                Value::Object(map) => map
+                    .iter()
+                    .all(|(key, item)| all(item, tree.and_then(|t| t.at(key)))),
+                other => {
+                    !crate::template::holds_template(other)
+                        || crate::template::holds_trusted_template(other, tree)
+                }
+            }
+        }
+        self.value
+            .as_object()
+            .is_none_or(|map| map.iter().all(|(k, v)| all(v, self.tags.get(k))))
+    }
+}
 
 impl VarStore {
     /// The `hostvars` view every host of this run renders against, as one shared map: templates
@@ -112,7 +175,7 @@ impl VarStore {
             let view = match self.controller_alias(spelling) {
                 Some(alias) => map.get(alias).cloned().unwrap_or_default(),
                 None => implicit_view
-                    .get_or_insert_with(|| Arc::new(Value::Object(self.host_view(implicit))))
+                    .get_or_insert_with(|| Arc::new(HostEntry::from(self.host_view(implicit))))
                     .clone(),
             };
             map.insert(spelling.to_string(), view);

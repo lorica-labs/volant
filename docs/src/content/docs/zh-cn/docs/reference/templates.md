@@ -1,5 +1,5 @@
 ---
-sourceHash: 23af26d0458a
+sourceHash: a31550e4dcf1
 title: 模板语言参考
 description: Volant 的 Jinja2 所支持的 Python 方法、字符串规则、正则表达式和限制，以及与 ansible-core 的每一处差异。
 ---
@@ -173,7 +173,7 @@ Volant 会先渲染每个参数，并把结果作为数据发送。Python 不会
 | `set_fact` 的值 | inventory 变量 |
 | `lookup('file')`、`lookup('pipe')`、`lookup('env')`、`lookup('template')` | `vars_files` 和 `include_vars` |
 
-`!unsafe` 把 playbook 的一个值标记为数据。它可用于值和映射的键，可用于 play、`group_vars`、额外变量文件和 YAML inventory。YAML 加载器用于这个标记的过滤器对 playbook 是隐藏的：调用它会失败，并给出 `No filter named 'volant_unsafe'`。
+`!unsafe` 把 playbook 的一个值标记为数据。它可用于值和映射的键，可用于 play、`group_vars`、额外变量文件和 YAML inventory。
 
 ### 不可信值会有什么变化
 

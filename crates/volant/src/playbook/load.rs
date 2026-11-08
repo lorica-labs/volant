@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, anyhow, bail};
 use saphyr::{Scalar, Yaml};
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use crate::bridge::Bridge;
 use crate::keywords::BLOCK_SECTIONS;
@@ -46,12 +46,12 @@ pub fn load_rendering(path: &Path, rendering: &Rendering<'_>) -> anyhow::Result<
 /// What the name of an `import_playbook` is rendered with.
 pub struct Rendering<'a> {
     templar: Templar,
-    vars: &'a Map<String, Value>,
+    vars: &'a crate::tags::Tagged,
 }
 
 impl<'a> Rendering<'a> {
     #[must_use]
-    pub fn new(bridge: Option<Arc<Bridge>>, vars: &'a Map<String, Value>) -> Self {
+    pub fn new(bridge: Option<Arc<Bridge>>, vars: &'a crate::tags::Tagged) -> Self {
         Self {
             templar: Templar::with_bridge(PathBuf::from("."), bridge),
             vars,
@@ -76,7 +76,8 @@ impl Rendering<'_> {
 
 impl Default for Rendering<'static> {
     fn default() -> Self {
-        static NONE: std::sync::LazyLock<Map<String, Value>> = std::sync::LazyLock::new(Map::new);
+        static NONE: std::sync::LazyLock<crate::tags::Tagged> =
+            std::sync::LazyLock::new(crate::tags::Tagged::default);
         Self::new(None, &NONE)
     }
 }
@@ -204,11 +205,12 @@ fn rendered_play(
     if !play.roles.iter().any(|r| Templar::is_template(&r.name)) {
         return Ok(play);
     }
-    let mut vars = play.vars.as_map().clone();
-    vars.extend(rendering.vars.iter().map(|(k, v)| (k.clone(), v.clone())));
+    let mut vars = play.vars.clone();
+    vars.overlay(rendering.vars);
     vars.insert(
         "playbook_dir".into(),
         Value::String(dir.display().to_string()),
+        None,
     );
     for role in play
         .roles
@@ -264,11 +266,12 @@ fn imported_playbook(entry: &Yaml, rendering: &Rendering<'_>) -> anyhow::Result<
     }
     // The entry's own `vars:` under the extra ones: measured, `import_playbook: "{{ test_var }}"`
     // beside `vars: {test_var: other.yml}` imports `other.yml`.
-    let mut vars = match crate::yaml::field(entry, "vars").map(crate::yaml::to_json) {
-        Some(Ok(Value::Object(own))) => own,
-        _ => Map::new(),
+    let written = crate::yaml::field(entry, "vars");
+    let mut vars = match written.map(|node| (node, crate::yaml::to_tagged_json(node))) {
+        Some((node, Ok(Value::Object(own)))) => super::origin::tagged_vars(node, own),
+        _ => crate::tags::Tagged::default(),
     };
-    vars.extend(rendering.vars.clone());
+    vars.overlay(rendering.vars);
     let rendered = rendering
         .templar
         .render(raw, &vars)

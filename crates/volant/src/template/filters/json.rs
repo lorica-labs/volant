@@ -144,6 +144,37 @@ pub(crate) fn python_json(
 }
 
 pub(super) fn from_json(value: Value) -> Result<Value, Error> {
+    parsed_json(&value).map(from_json_value)
+}
+
+/// `from_json` as a playbook calls it, where `profile` may name how to read the tags.
+pub(super) fn from_json_with_profile(
+    state: &minijinja::State,
+    value: Value,
+    kwargs: Kwargs,
+) -> Result<Value, Error> {
+    let profile = kwargs.get::<Option<Value>>("profile")?;
+    kwargs.assert_all_used()?;
+    if profile.is_some_and(|p| p.as_str() == Some("inventory_legacy")) {
+        return from_json_legacy(state, &value);
+    }
+    from_json(value)
+}
+
+/// `from_json(profile="inventory_legacy")`: `{"__ansible_unsafe": text}` is that text, untrusted,
+/// and every other string is trusted when the JSON it came in is.
+fn from_json_legacy(state: &minijinja::State, value: &Value) -> Result<Value, Error> {
+    let parsed = parsed_json(value)?;
+    let set = crate::tags::get(crate::template::tagged::tags_of(state, value));
+    let origin = set
+        .origin
+        .unwrap_or_else(|| crate::tags::origin_described("<from_json>"));
+    let (parsed, tree) = crate::yaml::unsafe_markers(&parsed, origin);
+    let tree = tree.filter(|_| set.trusted);
+    Ok(crate::template::tagged::kept(state, &parsed, tree.as_ref()))
+}
+
+fn parsed_json(value: &Value) -> Result<serde_json::Value, Error> {
     let text = value
         .as_str()
         .ok_or_else(|| invalid("from_json requires a string"))?;
@@ -168,7 +199,7 @@ pub(super) fn from_json(value: Value) -> Result<Value, Error> {
             crate::template::bridged::raise(message)
         })?;
     }
-    Ok(from_json_value(parsed))
+    Ok(parsed)
 }
 
 /// One YAML document read by the engine's own reader; anything that is not a string, `None`

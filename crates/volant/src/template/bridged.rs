@@ -185,18 +185,21 @@ pub(super) fn lookup(
     }
     if needs.all {
         // A plugin that lists the variables gets every one the host has. One that cannot be
-        // sent (an object only Jinja holds) is left out; one that does not render goes as its
-        // template, which the plugin renders when it reads it and fails on as the reference does.
-        let names: Vec<String> = state
-            .lookup(super::CONTEXT_KEY)
-            .and_then(|root| root.try_iter().ok())
+        // sent (an object only Jinja holds) is left out; one that does not render, the variable
+        // that calls this plugin among them, goes as its template, which the plugin renders when
+        // it reads it and fails on as the reference does.
+        let root = state.lookup(super::CONTEXT_KEY).unwrap_or_default();
+        let names: Vec<String> = root
+            .try_iter()
+            .ok()
             .into_iter()
             .flatten()
             .filter_map(|n| n.as_str().map(str::to_string))
             .filter(|n| !n.starts_with("__volant_") && n != "volant_version" && n != "hostvars")
             .collect();
         for key in &names {
-            if read(&mut vars, key).is_ok() && vars.contains_key(key) {
+            let sent = super::context::forgiving(&root, || read(&mut vars, key));
+            if sent.is_ok() && vars.contains_key(key) {
                 continue;
             }
             if let Some(raw) = unrendered(state, key) {
@@ -258,7 +261,7 @@ fn hostvars(state: &State) -> Option<Map<String, serde_json::Value>> {
                     host.clone(),
                     serde_json::json!({
                         "vars": vars,
-                        "trusted": !context.untrusted_hosts.contains_key(host),
+                        "trusted": entry.all_templates_trusted(),
                     }),
                 )
             })
@@ -274,15 +277,9 @@ const UNRENDERED: &str = "__volant_template__";
 fn unrendered(state: &State, key: &str) -> Option<String> {
     let root = state.lookup(super::CONTEXT_KEY)?;
     let context = root.downcast_object_ref::<super::context::Context>()?;
-    if context.untrusted.contains(key) {
-        return None;
-    }
-    let raw = context
-        .vars
-        .get(key)
-        .or_else(|| context.base.as_ref().and_then(|base| base.get(key)))?
-        .as_str()?;
-    super::Templar::is_template(raw).then(|| raw.to_string())
+    let tree = context.tags.as_ref()?.get(key)?;
+    let raw = context.vars.get(key)?;
+    super::holds_trusted_template(raw, Some(tree)).then(|| raw.as_str().map(str::to_string))?
 }
 
 /// The keyword arguments of a call, by name.

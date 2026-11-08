@@ -41,7 +41,6 @@ impl IncludeRequest {
         serde_json::json!({
             "what": &self.what,
             "vars": sorted(&self.vars.values),
-            "untrusted": &self.vars.untrusted,
             "label": &self.label,
             "role": &self.role_id,
             "flags": match &self.target {
@@ -127,7 +126,7 @@ pub(crate) fn expand_include(
         selection: &base.selection,
         exporting: true,
         imported: Vec::new(),
-        static_vars: Map::new(),
+        static_vars: crate::tags::Tagged::default(),
         role_chain: Vec::new(),
         outer_role: None,
         exports: Vec::new(),

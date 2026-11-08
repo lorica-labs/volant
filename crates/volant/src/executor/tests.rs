@@ -38,7 +38,7 @@ fn max_fail_percentage_reads_a_number(
     .plays
     .remove(0);
     let templar = Templar::new(PathBuf::from("."));
-    let vars = Map::from_iter([("pct".to_string(), Value::from(30))]);
+    let vars = crate::testing::written(&serde_json::json!({"pct": 30}));
     let got = max_fail_percentage(&play, &templar, &vars);
     match want {
         Ok(limit) => assert_eq!(got.expect("the keyword reads"), limit),
@@ -89,10 +89,7 @@ fn play_flags_are_rendered_when_the_play_starts(
     .plays
     .remove(0);
     let templar = Templar::new(PathBuf::from("."));
-    let vars = Map::from_iter([
-        ("on".to_string(), Value::Bool(true)),
-        ("off".to_string(), Value::Bool(false)),
-    ]);
+    let vars = crate::testing::written(&serde_json::json!({"on": true, "off": false}));
     let got = play_flags(&play, &templar, &vars);
     match want {
         Ok(flag) => {
@@ -118,7 +115,12 @@ fn a_play_without_templated_flags_renders_none() {
     .expect("the play loads")
     .plays
     .remove(0);
-    let flags = play_flags(&play, &Templar::new(PathBuf::from(".")), &Map::new()).unwrap();
+    let flags = play_flags(
+        &play,
+        &Templar::new(PathBuf::from(".")),
+        &crate::tags::Tagged::default(),
+    )
+    .unwrap();
     assert!(flags.gather_facts.is_none() && flags.force_handlers.is_none());
 }
 

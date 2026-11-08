@@ -138,8 +138,8 @@ impl Inventory {
         Ok(loaded.inventory)
     }
 
-    /// The variables a run must treat as data, by host: the ones a compose computed.
-    pub fn untrusted_vars(&self) -> BTreeMap<String, std::collections::BTreeSet<String>> {
+    /// The variables a compose computed, by host.
+    pub fn computed_vars(&self) -> BTreeMap<String, std::collections::BTreeSet<String>> {
         let mut out: BTreeMap<String, std::collections::BTreeSet<String>> = BTreeMap::new();
         for ((host, var), computed) in &self.unsafe_vars {
             if !computed.is_empty() {

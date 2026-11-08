@@ -207,7 +207,7 @@ impl Run {
         Ok(())
     }
 
-    fn evaluate(&self, expr: &Value, vars: &Map<String, Value>) -> Result<Value, String> {
+    fn evaluate(&self, expr: &Value, vars: &crate::tags::Tagged) -> Result<Value, String> {
         let Value::String(text) = expr else {
             // The expressions come from the config file, so the reference's loader tagged them.
             return Err(format!(
@@ -224,7 +224,7 @@ impl Run {
         &self,
         inv: &mut Inventory,
         host: &str,
-        vars: &Map<String, Value>,
+        vars: &crate::tags::Tagged,
     ) -> Result<(), Failure> {
         for (name, condition) in &self.options.groups {
             let group = safe_group_name(name);
@@ -257,7 +257,7 @@ impl Run {
         &self,
         inv: &mut Inventory,
         host: &str,
-        vars: &Map<String, Value>,
+        vars: &crate::tags::Tagged,
         entry: &Value,
     ) -> Result<(), Failure> {
         let Value::Object(keyed) = entry else {

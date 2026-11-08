@@ -110,3 +110,63 @@ fn an_executable_that_is_not_a_script_names_the_errno() {
     });
     assert!(warned, "{notes:?}");
 }
+
+/// A group rewritten as its sole host gives untrusted variables; a group's own are trusted.
+#[test]
+fn the_variables_of_a_group_rewritten_as_a_host_are_untrusted() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("inv.sh");
+    let body = r#"{"_meta":{"hostvars":{}},"g":{"hosts":[],"vars":{"a":"x","u":{"__ansible_unsafe":"y"}}},"r":{"a":"x"}}"#;
+    std::fs::write(&script, format!("#!/bin/sh\necho '{body}'\n")).unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let loaded = crate::inventory::load_sources(
+        &[Source::new(&script.to_string_lossy())],
+        &PluginConfig::default(),
+    );
+    let trusted = |group: &str| {
+        let vars = loaded.inventory.tagged_group_vars(group);
+        vars.tree("a")
+            .is_some_and(|tree| crate::tags::is_trusted(tree.own()))
+    };
+    assert!(trusted("g"));
+    assert!(!trusted("r"));
+    let vars = loaded.inventory.tagged_group_vars("g");
+    assert_eq!(vars.get("u"), Some(&serde_json::json!("y")));
+    assert!(
+        !vars
+            .tree("u")
+            .is_some_and(|tree| crate::tags::is_trusted(tree.own()))
+    );
+}
+
+/// The decoder's refusals: a profile it has no decoder for, a vault marker that is not text.
+#[rstest]
+#[case::profile(
+    r#"{"_meta":{"profile":"inventory_x"}}"#,
+    "Unknown profile name 'inventory_x'."
+)]
+#[case::vault_at_the_top(r#"{"__ansible_vault":1}"#, "<class 'int'> not <class 'str'>")]
+#[case::vault(
+    r#"{"g":{"vars":{"v":[{"__ansible_vault":1}]}}}"#,
+    "__ansible_vault is <class 'int'> not <class 'str'>"
+)]
+fn the_decoder_refuses_what_the_reference_refuses(#[case] body: &str, #[case] said: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("inv.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh
+echo '{body}'
+"
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let loaded = crate::inventory::load_sources(
+        &[Source::new(&script.to_string_lossy())],
+        &PluginConfig::default(),
+    );
+    let notes = format!("{:?}", loaded.notes);
+    assert!(notes.contains(said), "{notes}");
+}

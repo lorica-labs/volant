@@ -8,6 +8,7 @@ use volant_protocol::TaskResult;
 use volant_protocol::modules::short_name;
 
 use crate::playbook::{Flag, PlayTask};
+use crate::tags::TagTree;
 use crate::template::{RenderedArgs, Templar, TemplateError};
 use crate::vars::HostVars;
 
@@ -333,16 +334,16 @@ fn render_args(
         }
     }
     warn_embedded(task, &raw);
-    let (mut map, mut untrusted, tags) = rendered.map_err(finalizing)?;
+    let (mut map, mut untrusted, mut tags) = rendered.map_err(finalizing)?;
     // The splats lie under the arguments written as such, each over the one before it.
-    let mut splatted: BTreeMap<String, (Value, bool)> = BTreeMap::new();
+    let mut splatted: BTreeMap<String, (Value, bool, Option<TagTree>)> = BTreeMap::new();
     for (template, _, own) in &task.splats {
-        let (value, tainted) = templar
-            .render_value_tainted(&Value::String(template.clone()), vars)
+        let (value, tainted, tree) = templar
+            .render_value_tagged(&Value::String(template.clone()), vars)
             .map_err(|err| splat_failure(task, &super::undefined_name(template, err.0)))?;
         // A plugin that takes raw parameters keeps the action's own value, rendered, as them.
         if *own && crate::action_plugins::takes_raw_params(&task.module) {
-            splatted.insert("_raw_params".into(), (value, tainted));
+            splatted.insert("_raw_params".into(), (value, tainted, tree));
             continue;
         }
         // A splat that is `omit` as a whole is left out, measured.
@@ -359,13 +360,17 @@ fn render_args(
             ));
         };
         for (key, value) in fields {
-            splatted.insert(key, (value, tainted));
+            let tree = tree.as_ref().and_then(|tree| tree.at(&key)).cloned();
+            splatted.insert(key, (value, tainted, tree));
         }
     }
-    for (key, (value, tainted)) in splatted {
+    for (key, (value, tainted, tree)) in splatted {
         if !map.contains_key(&key) {
             if tainted {
                 untrusted.insert(key.clone());
+            }
+            if let Some(tree) = tree {
+                tags.insert(key.clone(), tree);
             }
             map.insert(key, value);
         }

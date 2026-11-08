@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The path of an import, rendered while the play compiles.
 
+use crate::tags::Tagged;
 use anyhow::bail;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use crate::playbook::PlayTask;
 use crate::template::Templar;
 
 use super::builder::Builder;
-use crate::vars::extend;
 
 impl Builder<'_> {
     /// An import's path, rendered when it holds a template. Measured on ansible-core 2.19.12: it
@@ -17,17 +17,13 @@ impl Builder<'_> {
     ///
     /// The statement's own `vars:` are read over those: measured, `import_tasks: "{{ task_var }}"`
     /// beside `vars: {task_var: other.yml}` imports `other.yml`.
-    pub(super) fn import_path(
-        &self,
-        name: &str,
-        own: &Map<String, Value>,
-    ) -> anyhow::Result<String> {
+    pub(super) fn import_path(&self, name: &str, own: &Tagged) -> anyhow::Result<String> {
         if !Templar::is_template(name) {
             return Ok(name.to_string());
         }
         let templar = Templar::new(self.file_dir.clone());
         let mut vars = self.compile_vars();
-        extend(&mut vars, own);
+        vars.extend(own);
         match templar.render(name, &vars) {
             Ok(Value::String(path)) => Ok(path),
             Ok(other) => Ok(other.to_string()),
@@ -97,17 +93,18 @@ impl Builder<'_> {
     /// What a template renders against while the play compiles, before any host: the roles'
     /// `defaults`, the play's `vars:`, the extra variables and `playbook_dir`, the roles' `vars`,
     /// and `role_path`.
-    fn compile_vars(&self) -> Map<String, Value> {
-        let mut vars = Map::new();
+    fn compile_vars(&self) -> Tagged {
+        let mut vars = Tagged::default();
         for role in &self.roles {
-            extend(&mut vars, &role.defaults);
+            vars.extend(&role.defaults);
         }
-        extend(&mut vars, &self.static_vars);
+        vars.extend(&self.static_vars);
         for role in &self.roles {
-            extend(&mut vars, &role.vars);
+            vars.extend(&role.vars);
         }
         if let Some(dir) = &self.role_dir {
-            vars.insert("role_path".into(), Value::String(dir.display().to_string()));
+            let dir = Value::String(dir.display().to_string());
+            vars.insert("role_path".into(), dir, None);
         }
         vars
     }

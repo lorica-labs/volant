@@ -312,10 +312,10 @@ enum Converting<'t, 'a> {
     Unsafe { outermost: bool },
 }
 
-/// Converts a node to JSON. `!vault` and `!unsafe` load as data, see `vault_data` and
-/// `unsafe_data`. A `!unsafe` inside a `!unsafe` wraps nothing more, as wrapping again at each
-/// level doubled every string.
-pub(super) fn to_json(root: &Yaml) -> anyhow::Result<Value> {
+/// Converts a node to JSON. `!vault` loads as data, see `vault_data`, and so does `!unsafe`, see
+/// `unsafe_data`, when `no_tags` says the value will carry no tags to say so. A `!unsafe` inside a
+/// `!unsafe` wraps nothing more, as wrapping again at each level doubled every string.
+pub(super) fn to_json(root: &Yaml, no_tags: bool) -> anyhow::Result<Value> {
     let mut open: Vec<Converting<'_, '_>> = Vec::new();
     let mut unsafe_levels = 0usize;
     let mut next = Some(root);
@@ -382,7 +382,11 @@ pub(super) fn to_json(root: &Yaml) -> anyhow::Result<Value> {
                 Some(Converting::Unsafe { .. }) => {
                     if let Some(Converting::Unsafe { outermost }) = open.pop() {
                         unsafe_levels -= 1;
-                        done = Some(if outermost { unsafe_data(child) } else { child });
+                        done = Some(if outermost && no_tags {
+                            unsafe_data(child)
+                        } else {
+                            child
+                        });
                     }
                     continue;
                 }

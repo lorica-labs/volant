@@ -37,6 +37,7 @@ fn names_come_sorted_as_tag_names_sorts_them() {
         origin: Some(origin_described("<x>")),
         trusted: true,
         source_encrypted: true,
+        from_host: false,
         vaulted: Some(Arc::from("$ANSIBLE_VAULT;1.1;AES256")),
         deprecated: Some(Arc::new(Deprecated {
             msg: "old".into(),

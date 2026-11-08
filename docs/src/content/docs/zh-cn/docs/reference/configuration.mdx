@@ -1,5 +1,5 @@
 ---
-sourceHash: b3d239daaa36
+sourceHash: d050e3999ac7
 title: 配置
 description: Volant 读取的 ansible.cfg 设置和环境变量，按段列出，并附带默认值。
 ---
@@ -80,6 +80,10 @@ Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第
 
 <Option name="deprecation_warnings" id="defaults-deprecation-warnings" default="true" env="ANSIBLE_DEPRECATION_WARNINGS">
   打印 `[DEPRECATION WARNING]` 通知，以及说明如何关闭它们的那一行。设为 `False` 则两者都不打印。
+</Option>
+
+<Option name="allow_broken_conditionals" id="defaults-allow-broken-conditionals" default="false" env="ANSIBLE_ALLOW_BROKEN_CONDITIONALS">
+  结果不是布尔值的条件默认会失败。设为 `True` 时，按结果的真值判断，并打印 `[DEPRECATION WARNING]`。
 </Option>
 
 <Option name="log_path" id="defaults-log-path" default="unset" env="ANSIBLE_LOG_PATH">

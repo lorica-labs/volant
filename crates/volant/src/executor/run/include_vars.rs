@@ -245,7 +245,7 @@ fn merged_over(
         .map(|(key, value)| {
             let merged = match (vars.get(&key), &value) {
                 (Some(old @ Value::Object(old_map)), Value::Object(fresh)) => {
-                    if vars.untrusted.contains(&key) {
+                    if vars.is_from_host(&key) {
                         data.push(key.clone());
                     }
                     let tree = crate::tags::merge(vars.map.tree(&key), tags.get(&key), old, &value);

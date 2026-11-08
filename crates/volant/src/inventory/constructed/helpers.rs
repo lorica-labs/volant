@@ -13,14 +13,15 @@ use crate::inventory::Inventory;
 use crate::playbook::python_repr;
 
 /// The variables a host's expressions see: its groups' and its own, and the magic ones.
-pub(super) fn host_vars(inv: &Inventory, host: &str) -> Map<String, Value> {
-    let mut vars: Map<String, Value> = inv.host_with_vars(host).vars.into_values();
-    vars.insert("inventory_hostname".into(), host.into());
+pub(super) fn host_vars(inv: &Inventory, host: &str) -> crate::tags::Tagged {
+    let mut vars = inv.host_with_vars(host).vars;
+    vars.insert("inventory_hostname".into(), host.into(), None);
     vars.insert(
         "inventory_hostname_short".into(),
         host.split('.').next().unwrap_or(host).into(),
+        None,
     );
-    vars.insert("group_names".into(), inv.group_names_of(host).into());
+    vars.insert("group_names".into(), inv.group_names_of(host).into(), None);
     vars
 }
 
@@ -209,8 +210,8 @@ impl PluginVars {
         &self,
         inv: &Inventory,
         host: &str,
-        mut vars: Map<String, Value>,
-    ) -> Map<String, Value> {
+        mut vars: crate::tags::Tagged,
+    ) -> crate::tags::Tagged {
         if self.dirs.is_empty() {
             return vars;
         }
@@ -219,16 +220,16 @@ impl PluginVars {
         for (group_files, _) in &self.dirs {
             for group in &groups {
                 if let Some(file) = group_files.get(group) {
-                    crate::vars::extend(&mut vars, file);
+                    vars.extend(file);
                 }
             }
         }
         if let Some(own) = inv.host_line_vars(host) {
-            crate::vars::extend(&mut vars, own);
+            vars.extend(own);
         }
         for (_, host_files) in &self.dirs {
             if let Some(file) = host_files.get(host) {
-                crate::vars::extend(&mut vars, file);
+                vars.extend(file);
             }
         }
         vars

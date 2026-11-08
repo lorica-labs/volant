@@ -291,6 +291,23 @@ impl Inventory {
             .collect()
     }
 
+    /// Whether a source put `host` under `all`: among its hosts, below one of the groups it holds,
+    /// or in `ungrouped`, which the reference holds under `all` from the start. Measured on
+    /// ansible-core 2.19.12: until every source is read, only such a host has `all` among its
+    /// groups.
+    pub fn placed_in_all(&self, host: &str) -> bool {
+        let all = self.group("all");
+        let holds = |g: &Group| self.group_hosts(g).iter().any(|h| h == host);
+        all.is_some_and(|g| g.hosts.iter().any(|h| h == host))
+            || std::iter::once("ungrouped")
+                .chain(
+                    all.iter()
+                        .flat_map(|g| g.children.iter().map(String::as_str)),
+                )
+                .filter_map(|name| self.group(name))
+                .any(holds)
+    }
+
     /// Distance from the top: `all` sits at depth 0 and is not an implicit parent of anything,
     /// so every other group nobody lists as a child still sits at depth 1, their children at 2.
     pub(super) fn group_depths(&self) -> HashMap<String, usize> {

@@ -1,0 +1,12 @@
+plugin: constructed
+use_vars_plugins: true
+strict: true
+compose:
+  seen_group: clash_group
+  seen_host: clash_host
+  seen_early: early_note | default('unset')
+  seen_staged: staged_note | default('unset')
+  seen_all: only_all | default('unset')
+keyed_groups:
+  - key: early_tier
+    prefix: tier

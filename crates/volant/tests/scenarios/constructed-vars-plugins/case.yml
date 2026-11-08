@@ -1,0 +1,7 @@
+# A `constructed` source with `use_vars_plugins` runs the vars plugins at the stage `all` on the
+# directories of the sources read before it: the plugin beside the playbook answers before
+# `host_group_vars`, so the files win over it and it wins over the INI's own variables. A plugin
+# whose `stage` is `inventory` does not answer there, and the INI's hosts are not in `all` yet,
+# so `group_vars/all.yml` is not read for them.
+args: [-i, inv/hosts.ini, -i, inv/constructed.yml, play.yml]
+needs: [ansible-core]

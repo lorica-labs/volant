@@ -39,7 +39,7 @@ Une source qu'aucun plugin ne lit est ignorée avec un avertissement, comme dans
 
 ### Sources dynamiques
 
-Un script affiche son inventaire en JSON, dans le format qu'écrit `ansible-inventory --list`. `constructed` et `generator` construisent des groupes et des hôtes à partir de modèles.
+Un script affiche son inventaire en JSON, dans le format qu'écrit `ansible-inventory --list`. `constructed` et `generator` construisent des groupes et des hôtes à partir de modèles. Avec `use_vars_plugins: true`, `constructed` lit aussi ce que les plugins de vars renvoient pour les répertoires des sources lues avant lui : les fichiers `group_vars` et `host_vars`, et tout autre plugin de vars, qui passe par ansible-core. Comme dans ansible-core, un hôte d'un fichier INI n'est pas encore dans `all` à ce moment, donc `group_vars/all.yml` n'atteint pas ses expressions.
 
 Le plugin d'inventaire d'une collection (un fournisseur cloud, par exemple) s'exécute dans ansible-core, via un processus Python que Volant ne démarre que lorsqu'une telle source est présente, voir [le chemin Python préchauffé](/fr/docs/internals/python/).
 

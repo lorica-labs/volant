@@ -384,6 +384,7 @@ fn load(
     let _ = bridge.set_plugin_dirs(dirs.clone());
     let mut plugins = config.inventory_plugins.clone();
     plugins.extra_vars_error = unreadable.map(|u| (u.message.clone(), u.origin.clone()));
+    super::vars_plugins::for_inventory(&mut plugins, &config.vars_plugins, &dirs);
     let loaded = load_sources_with(&sources, &plugins, &|| Arc::clone(&bridge));
     for note in &loaded.notes {
         match note {

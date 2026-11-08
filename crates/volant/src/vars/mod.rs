@@ -18,7 +18,7 @@ mod sources;
 mod store;
 
 pub use crate::tags::Tagged;
-pub use plugins::HostGroupVars;
+pub use plugins::{HostGroupVars, answers_at_all};
 
 pub(crate) use host_vars::PENDING_PYTHON;
 

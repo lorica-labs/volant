@@ -39,7 +39,7 @@ Eine Quelle, die kein Plugin liest, wird wie in Ansible mit einer Warnung übers
 
 ### Dynamische Quellen
 
-Ein Skript gibt sein Inventory als JSON aus, im Format, das `ansible-inventory --list` schreibt. `constructed` und `generator` bauen Gruppen und Hosts aus Templates.
+Ein Skript gibt sein Inventory als JSON aus, im Format, das `ansible-inventory --list` schreibt. `constructed` und `generator` bauen Gruppen und Hosts aus Templates. Mit `use_vars_plugins: true` liest `constructed` auch, was die Vars-Plugins für die Verzeichnisse der vorherigen Quellen liefern: die `group_vars`- und `host_vars`-Dateien und jedes andere Vars-Plugin, das über ansible-core läuft. Wie in ansible-core ist ein Host aus einer INI-Datei zu diesem Zeitpunkt noch nicht in `all`, daher erreicht `group_vars/all.yml` seine Ausdrücke nicht.
 
 Das Inventory-Plugin einer Collection (zum Beispiel für einen Cloud-Anbieter) läuft innerhalb von ansible-core, über einen Python-Prozess, den Volant nur startet, wenn eine solche Quelle vorhanden ist, siehe [den warmen Python-Pfad](/de/docs/internals/python/).
 

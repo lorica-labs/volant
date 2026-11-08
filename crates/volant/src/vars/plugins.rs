@@ -30,6 +30,9 @@ type Entity = (bool, String);
 /// plugin's place, and its variables.
 type Answers = Vec<Vec<(usize, usize, Map<String, Value>)>>;
 
+/// [`Answers`] with each plugin's variables tagged.
+type TaggedAnswers = Vec<Vec<(usize, usize, Tagged)>>;
+
 /// What one root's `group_vars` and `host_vars` hold.
 type Files = (BTreeMap<String, Tagged>, BTreeMap<String, Tagged>);
 
@@ -76,22 +79,7 @@ impl VarsPluginRun {
         basedir: &Path,
         calls: &[(&str, &Path, &[Entity])],
     ) -> anyhow::Result<Answers> {
-        let calls: Vec<Value> = calls
-            .iter()
-            .map(|(stage, path, entities)| {
-                let entities: Vec<Value> = entities
-                    .iter()
-                    .map(|(group, name)| json!([if *group { "group" } else { "host" }, name]))
-                    .collect();
-                json!({"stage": stage, "path": path.to_string_lossy(), "entities": entities})
-            })
-            .collect();
-        let answer = self.bridge.vars_plugins(&json!({
-            "dirs": [],
-            "basedir": basedir.to_string_lossy(),
-            "inventory": inventory.plugin_view(),
-            "calls": calls,
-        }))?;
+        let answer = self.request(inventory, basedir, calls)?;
         // Measured on ansible-core 2.19.12: an `AnsibleError` a plugin raises stops the run with
         // its message and exit code 1, any other exception with the line below and 250.
         if let Some(failed) = answer["failed"].as_str() {
@@ -104,6 +92,36 @@ impl VarsPluginRun {
                 Refusal::at(1, failed)
             });
         }
+        self.read(&answer)
+    }
+
+    /// The helper's answer to `calls`, a plugin's failure in it left to the caller.
+    fn request(
+        &self,
+        inventory: &Inventory,
+        basedir: &Path,
+        calls: &[(&str, &Path, &[Entity])],
+    ) -> Result<Value, BridgeError> {
+        let calls: Vec<Value> = calls
+            .iter()
+            .map(|(stage, path, entities)| {
+                let entities: Vec<Value> = entities
+                    .iter()
+                    .map(|(group, name)| json!([if *group { "group" } else { "host" }, name]))
+                    .collect();
+                json!({"stage": stage, "path": path.to_string_lossy(), "entities": entities})
+            })
+            .collect();
+        self.bridge.vars_plugins(&json!({
+            "dirs": [],
+            "basedir": basedir.to_string_lossy(),
+            "inventory": inventory.plugin_view(),
+            "calls": calls,
+        }))
+    }
+
+    /// The plugins an answer names, kept the first time, and what they answered per call.
+    fn read(&mut self, answer: &Value) -> anyhow::Result<Answers> {
         let shape =
             || BridgeError::Helper("the vars plugins answer has an unexpected shape".into());
         if self.plugins.is_empty() {
@@ -145,6 +163,51 @@ impl VarsPluginRun {
         }
         tagged
     }
+}
+
+/// What the `constructed` inventory plugin's `use_vars_plugins` reads of the plugins the helper of
+/// `bridge` runs: what each answers at the stage `all`, on each of `roots`, for each of
+/// `entities`, and per plugin whether the loader runs it after `host_group_vars`. Per root, each
+/// answer is the entity's place in `entities`, the plugin's place, and its variables.
+///
+/// # Errors
+/// The [`BridgeError`] of a helper that cannot start, or the message of a plugin that raised:
+/// measured on ansible-core 2.19.12, `constructed` words every exception the same way.
+pub fn answers_at_all(
+    bridge: Arc<Bridge>,
+    inventory: &Inventory,
+    roots: &[PathBuf],
+    entities: &[Entity],
+) -> anyhow::Result<(Vec<bool>, TaggedAnswers)> {
+    let mut run = VarsPluginRun {
+        bridge,
+        stage: "all",
+        plugins: Vec::new(),
+        asked: BTreeSet::new(),
+    };
+    let calls: Vec<_> = roots
+        .iter()
+        .map(|root| ("all", root.as_path(), entities))
+        .collect();
+    // The reference's loader keeps the directory it was started in while it reads the inventory.
+    let answer = run.request(inventory, Path::new(""), &calls)?;
+    if let Some(failed) = answer["failed"].as_str() {
+        anyhow::bail!("{failed}");
+    }
+    let answers = run.read(&answer)?;
+    let tagged = answers
+        .into_iter()
+        .map(|answer| {
+            answer
+                .into_iter()
+                .map(|(at, index, vars)| (at, index, run.tagged(index, &vars)))
+                .collect()
+        })
+        .collect();
+    Ok((
+        run.plugins.iter().map(|(_, after)| *after).collect(),
+        tagged,
+    ))
 }
 
 impl Staging {

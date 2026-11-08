@@ -139,9 +139,23 @@ async fn local(module: &str, args: Value) -> TaskResult {
 /// the item carrying them as `prepare` renders them: per argument, with the names whose
 /// render read a managed host set apart.
 async fn local_with(module: &str, args: Value, host_vars: HostVars) -> TaskResult {
+    local_with_vars(module, args, json!({}), host_vars).await
+}
+
+/// [`local_with`] for a task that writes `task_vars` in its own `vars`.
+async fn local_with_vars(
+    module: &str,
+    args: Value,
+    task_vars: Value,
+    host_vars: HostVars,
+) -> TaskResult {
     let templar = Templar::new(PathBuf::from("."));
     let mut written = task(module);
     written.args = vars(args);
+    for (name, value) in vars(task_vars) {
+        let tree = crate::tags::uniform(&value, crate::tags::origin_described("test"), true);
+        written.vars.insert(name, value, tree);
+    }
     let (rendered, untrusted) = templar
         .render_map_tainted(&written.args, &host_vars)
         .expect("the arguments render");
@@ -309,6 +323,22 @@ async fn a_that_reading_a_registered_value_reads_it_as_data() {
             "{that}"
         );
     }
+}
+
+/// Measured on ansible-core 2.19.12: `that: '{{ thats }}'` evaluates the items of the task's
+/// `thats` as written, and an item in braces gives the deprecation, which the result holds.
+#[tokio::test]
+async fn a_that_naming_a_task_list_reads_its_items_as_written() {
+    let mut r = local_with_vars(
+        "assert",
+        json!({"that": "{{ thats }}"}),
+        json!({"thats": ["{{ 1 == 1 }}"]}),
+        hvars(json!({"thats": [true]})),
+    )
+    .await;
+    assert_eq!(r.0["msg"], json!("All assertions passed"));
+    let deprecations = r.0.remove("deprecations").expect("a deprecation");
+    assert_eq!(deprecations.as_array().map(Vec::len), Some(1));
 }
 
 /// `that` is evaluated by the code that evaluates `when`, element by element, from the text the

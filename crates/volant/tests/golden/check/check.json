@@ -50,6 +50,21 @@
       "reasons": []
     },
     {
+      "path": "static-include.yml",
+      "verdict": "refused",
+      "plays": 1,
+      "tasks": 1,
+      "reasons": [
+        {
+          "kind": "unsupported",
+          "code": 1,
+          "message": "task 'Retry an include inside an include': keyword 'retries' is not supported yet on 'include_tasks'",
+          "file": "tasks/bad.yml",
+          "line": 1
+        }
+      ]
+    },
+    {
       "path": "templated.yml",
       "verdict": "unknown",
       "plays": 1,
@@ -58,7 +73,7 @@
         {
           "kind": "unknown",
           "code": null,
-          "message": "include_tasks: what it names is checked when the run reaches it",
+          "message": "include_tasks with a templated file name: checked when the run reaches it",
           "file": "templated.yml",
           "line": 4
         }
@@ -97,8 +112,8 @@
   ],
   "summary": {
     "ready": 2,
-    "refused": 3,
+    "refused": 4,
     "unknown": 2,
-    "skipped_files": 2
+    "skipped_files": 3
   }
 }

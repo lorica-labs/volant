@@ -24,6 +24,8 @@ Quand deux sources définissent la même variable, celle qui est plus bas dans c
 14. Les paramètres de rôle, et les `vars:` d'une instruction d'include dynamique
 15. `--extra-vars`
 
+Un plugin de vars répond pour `all`, pour chaque groupe de l'hôte et pour l'hôte lui-même, et se range avec les fichiers `group_vars` et `host_vars` du même répertoire : ces fichiers sont lus par `host_group_vars`, qui est lui aussi un plugin de vars. Un plugin d'un répertoire `vars_plugins/` passe avant `host_group_vars`, donc les fichiers l'emportent sur lui. Un plugin placé après `host_group_vars` dans `vars_plugins_enabled` passe après et l'emporte. Tous les plugins de vars sauf `host_group_vars` s'exécutent par ansible-core. Avec `run_vars_plugins = start`, les plugins de vars s'exécutent une seule fois, à la lecture de l'inventaire : ce qu'ils renvoient compte comme des variables d'inventaire, et les `group_vars` et `host_vars` du répertoire du playbook ne sont pas lus, comme dans ansible-core.
+
 [Rôles](/fr/docs/playbooks/roles/#variables-de-rôle) explique d'où viennent les trois couches de rôle et en quoi elles diffèrent.
 
 Un fichier de variables qui ne contient que `---` et des commentaires se charge comme un mapping vide, comme dans ansible-core. Un fichier qui contient un scalaire comme `42` reste refusé.

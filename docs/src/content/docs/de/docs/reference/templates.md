@@ -1,5 +1,5 @@
 ---
-sourceHash: 23af26d0458a
+sourceHash: a31550e4dcf1
 title: Referenz der Template-Sprache
 description: Die Python-Methoden, String-Regeln, regulären Ausdrücke und Grenzen des Jinja2 von Volant, mit jedem Unterschied zu ansible-core.
 ---
@@ -173,7 +173,7 @@ Das ist eine Sicherheitsgrenze. Wenn Sie einen Weg finden, wie Host-Daten auf de
 | `set_fact`-Werte | Inventory-Variablen |
 | `lookup('file')`, `lookup('pipe')`, `lookup('env')`, `lookup('template')` | `vars_files` und `include_vars` |
 
-`!unsafe` markiert einen Wert des Playbooks als Daten. Es wird bei einem Wert und bei einem Mapping-Schlüssel akzeptiert, in einem Play, in `group_vars`, in einer Extra-Vars-Datei und in einem YAML-Inventory. Der Filter, den der YAML-Loader für die Markierung verwendet, ist für Playbooks verborgen: Ein Aufruf schlägt mit `No filter named 'volant_unsafe'` fehl.
+`!unsafe` markiert einen Wert des Playbooks als Daten. Es wird bei einem Wert und bei einem Mapping-Schlüssel akzeptiert, in einem Play, in `group_vars`, in einer Extra-Vars-Datei und in einem YAML-Inventory.
 
 ### Was sich für einen nicht vertrauenswürdigen Wert ändert
 

@@ -120,10 +120,12 @@ pub(super) fn mapping(yaml: &Yaml, key: &str, context: &str) -> anyhow::Result<T
     }
     match field(yaml, key) {
         None | Some(Yaml::Value(Scalar::Null)) => Ok(Tagged::default()),
-        Some(v) => match to_json(v).with_context(|| format!("{context}'{key}'"))? {
-            Value::Object(map) => Ok(super::origin::tagged_vars(v, map)),
-            _ => bail!("{context}'{key}' must be a mapping"),
-        },
+        Some(v) => {
+            match crate::yaml::to_tagged_json(v).with_context(|| format!("{context}'{key}'"))? {
+                Value::Object(map) => Ok(super::origin::tagged_vars(v, map)),
+                _ => bail!("{context}'{key}' must be a mapping"),
+            }
+        }
     }
 }
 

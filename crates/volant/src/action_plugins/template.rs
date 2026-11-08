@@ -191,14 +191,14 @@ fn template_vars(
         vars.insert("ansible_managed".into(), Value::from("Ansible managed"));
     }
     if args_untrusted.contains("src") {
-        vars.insert_untrusted("template_path".into(), Value::from(src));
-        vars.insert_untrusted("template_fullpath".into(), Value::from(fullpath));
+        vars.insert_from_host("template_path".into(), Value::from(src));
+        vars.insert_from_host("template_fullpath".into(), Value::from(fullpath));
     } else {
         vars.insert("template_path".into(), Value::from(src));
         vars.insert("template_fullpath".into(), Value::from(fullpath));
     }
     if args_untrusted.contains("dest") {
-        vars.insert_untrusted("template_destpath".into(), Value::from(dest));
+        vars.insert_from_host("template_destpath".into(), Value::from(dest));
     } else {
         vars.insert("template_destpath".into(), Value::from(dest));
     }

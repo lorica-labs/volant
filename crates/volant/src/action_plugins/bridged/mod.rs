@@ -53,9 +53,6 @@ pub(super) struct Bridged {
     name: &'static str,
     modules: &'static [&'static str],
     hostvars: Arc<crate::vars::HostvarsMap>,
-    /// The hosts holding a value a managed host sent, as the task's host and the host the module
-    /// runs on see them.
-    untrusted_hosts: [Arc<crate::vars::UntrustedHosts>; 2],
     asks: Receiver<FromHelper>,
     replies: Option<Sender<Reply>>,
     ready: Arc<Notify>,
@@ -97,6 +94,11 @@ fn play_context_of(ctx: &Context<'_>, running: &Map<String, Value>) -> Value {
     });
     if let Some(key) = &ctx.link.private_key {
         play_context["private_key_file"] = json!(key);
+    }
+    // The run's password, which the helper hands the connection as the `password` keyword, as
+    // `TaskExecutor._set_connection_options` does: the plugin's own variables still win.
+    if let Some(password) = crate::askpass::run_password() {
+        play_context["password"] = json!(password);
     }
     if let Some((method, user)) = &ctx.link.escalation {
         play_context["become"] = json!(true);
@@ -363,10 +365,6 @@ pub(super) fn start(
         name,
         modules,
         hostvars: Arc::clone(&ctx.running_vars.hostvars),
-        untrusted_hosts: [
-            Arc::clone(&ctx.item_vars.untrusted_hosts),
-            Arc::clone(&ctx.running_vars.untrusted_hosts),
-        ],
         asks,
         replies: Some(replies),
         ready,

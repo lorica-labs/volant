@@ -132,7 +132,7 @@ impl Fetch {
             .to_string();
         // A loop variable named `inventory_hostname` whose value came from a host would let it
         // pick which host's directory it writes into. Only the protection refuses it.
-        if limit.is_some() && !flat && ctx.item_vars.untrusted.contains("inventory_hostname") {
+        if limit.is_some() && !flat && ctx.item_vars.is_from_host("inventory_hostname") {
             return Err("the 'inventory_hostname' of this item was named by a managed host, and a controller path a host chose is never written".into());
         }
         // Without `flat` the host's name is a directory under `dest`: `..` or a `/` in it would

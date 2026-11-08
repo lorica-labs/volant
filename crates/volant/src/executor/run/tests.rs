@@ -47,6 +47,7 @@ use crate::preflight::PROMPT_REFUSED;
 use crate::python::ModulePayload;
 use crate::stats::Outcome;
 use crate::template::Templar;
+use crate::testing::from_host_names;
 use crate::testing::{hvars, scratch, task, templar, vars};
 use crate::transport::{ConnectionDefaults, Transport};
 use crate::vars::{HostVars, VarStore};
@@ -138,9 +139,23 @@ async fn local(module: &str, args: Value) -> TaskResult {
 /// the item carrying them as `prepare` renders them: per argument, with the names whose
 /// render read a managed host set apart.
 async fn local_with(module: &str, args: Value, host_vars: HostVars) -> TaskResult {
+    local_with_vars(module, args, json!({}), host_vars).await
+}
+
+/// [`local_with`] for a task that writes `task_vars` in its own `vars`.
+async fn local_with_vars(
+    module: &str,
+    args: Value,
+    task_vars: Value,
+    host_vars: HostVars,
+) -> TaskResult {
     let templar = Templar::new(PathBuf::from("."));
     let mut written = task(module);
     written.args = vars(args);
+    for (name, value) in vars(task_vars) {
+        let tree = crate::tags::uniform(&value, crate::tags::origin_described("test"), true);
+        written.vars.insert(name, value, tree);
+    }
     let (rendered, untrusted) = templar
         .render_map_tainted(&written.args, &host_vars)
         .expect("the arguments render");
@@ -246,6 +261,11 @@ async fn assert_refuses_what_the_reference_refuses() {
     let r = local("assert", json!({})).await;
     assert!(r.failed());
     assert_eq!(r.0["msg"], json!("missing required arguments: that"));
+    let r = local("assert", json!({"that": null})).await;
+    assert_eq!(
+        r.0["msg"],
+        json!("Task failed: Empty conditional expressions are not allowed.")
+    );
     let r = local("assert", json!({"that": "1 == 1", "nosucharg": 1})).await;
     assert!(r.failed());
     assert_eq!(
@@ -275,26 +295,50 @@ async fn assert_refuses_what_the_reference_refuses() {
 /// A host's variables where `r` is a registered result, as `record_registered` leaves it.
 fn with_registered(extra: Value) -> HostVars {
     let mut v = hvars(extra);
-    v.insert_untrusted("r".into(), json!({"rc": 0, "stdout": "1 == 2"}));
+    v.insert_from_host("r".into(), json!({"rc": 0, "stdout": "1 == 2"}));
     v
 }
 
 /// Measured on ansible-core 2.19.12, after `register: r` on `command: echo "1 == 2"`: the three
-/// forms below pass, the first two with the deprecation warning for the braces.
+/// forms below pass, the first two with the deprecation for the braces, which the result holds.
 #[tokio::test]
 async fn a_that_reading_a_registered_value_reads_it_as_data() {
-    for that in [
-        json!("{{ r.rc == 0 }}"),
-        json!(["1 == 1", "{{ r.rc == 0 }}"]),
-        json!("r.stdout == '1 == 2'"),
+    for (that, braces) in [
+        (json!("{{ r.rc == 0 }}"), true),
+        (json!(["1 == 1", "{{ r.rc == 0 }}"]), true),
+        (json!("r.stdout == '1 == 2'"), false),
     ] {
-        let r = local_with("assert", json!({"that": that}), with_registered(json!({}))).await;
+        let mut r = local_with("assert", json!({"that": that}), with_registered(json!({}))).await;
+        let deprecations = r.0.remove("deprecations");
+        assert_eq!(
+            deprecations.is_some_and(|d| d[0]["msg"]
+                .as_str()
+                .is_some_and(|m| m.contains("templating delimiters"))),
+            braces,
+            "{that}"
+        );
         assert_eq!(
             Value::Object(r.0),
             json!({"_ansible_verbose_always": true, "changed": false, "msg": "All assertions passed"}),
             "{that}"
         );
     }
+}
+
+/// Measured on ansible-core 2.19.12: `that: '{{ thats }}'` evaluates the items of the task's
+/// `thats` as written, and an item in braces gives the deprecation, which the result holds.
+#[tokio::test]
+async fn a_that_naming_a_task_list_reads_its_items_as_written() {
+    let mut r = local_with_vars(
+        "assert",
+        json!({"that": "{{ thats }}"}),
+        json!({"thats": ["{{ 1 == 1 }}"]}),
+        hvars(json!({"thats": [true]})),
+    )
+    .await;
+    assert_eq!(r.0["msg"], json!("All assertions passed"));
+    let deprecations = r.0.remove("deprecations").expect("a deprecation");
+    assert_eq!(deprecations.as_array().map(Vec::len), Some(1));
 }
 
 /// `that` is evaluated by the code that evaluates `when`, element by element, from the text the
@@ -328,13 +372,18 @@ async fn a_that_is_evaluated_the_way_when_is() {
 /// each element a condition, and the one that fails is reported as the list held it.
 #[tokio::test]
 async fn a_that_naming_a_list_is_that_list() {
-    let host_vars = hvars(json!({"good": ["1 == 1", "2 == 2"], "bad": ["1 == 1", "1 == 2"]}));
+    let host_vars = HostVars {
+        map: crate::testing::written(
+            &json!({"good": ["1 == 1", "2 == 2"], "bad": ["1 == 1", "1 == 2"]}),
+        ),
+        ..HostVars::default()
+    };
     let r = local_with("assert", json!({"that": "{{ good }}"}), host_vars.clone()).await;
     assert!(!r.failed(), "{:?}", r.0);
     let r = local_with("assert", json!({"that": "{{ bad }}"}), host_vars).await;
     assert_eq!(r.0["assertion"], json!("1 == 2"), "{:?}", r.0);
     let mut host_vars = HostVars::default();
-    host_vars.insert_untrusted("remote".into(), json!(["1 == 1"]));
+    host_vars.insert_from_host("remote".into(), json!(["1 == 1"]));
     let r = local_with("assert", json!({"that": "{{ remote }}"}), host_vars).await;
     assert_eq!(
         r.0["msg"],
@@ -344,6 +393,22 @@ async fn a_that_naming_a_list_is_that_list() {
     );
 }
 
+/// Measured on ansible-core 2.19.12: `ALLOW_BROKEN_CONDITIONALS` takes a result that is not a
+/// boolean for its truth.
+#[test]
+fn a_broken_conditional_is_refused_unless_the_setting_allows_it() {
+    let templar = Templar::new(PathBuf::from("."));
+    let vars = hvars(json!({}));
+    assert!(templar.condition("'broken'", &vars).is_err());
+    crate::template::set_allow_broken_conditionals(true);
+    let allowed = (
+        templar.condition("'broken'", &vars),
+        templar.condition("''", &vars),
+    );
+    crate::template::set_allow_broken_conditionals(false);
+    assert_eq!(allowed, (Ok(true), Ok(false)));
+}
+
 /// A set_fact renders its keys and checks the names; a key that renders anew keeps its value data.
 #[tokio::test]
 #[expect(clippy::too_many_lines)]
@@ -351,7 +416,7 @@ async fn a_set_fact_renders_its_keys_checks_the_names_and_keeps_values_data() {
     {
         let host = || {
             let mut v = hvars(json!({"n": "dyn"}));
-            v.insert_untrusted("h".into(), json!("from_host"));
+            v.insert_from_host("h".into(), json!("from_host"));
             v
         };
         let r = local_with("set_fact", json!({"k_{{ n }}": 1, "if": 2}), host()).await;
@@ -453,15 +518,12 @@ async fn a_set_fact_renders_its_keys_checks_the_names_and_keeps_values_data() {
             &[(None, result.clone())],
             &templar,
         );
-        assert!(
-            store
-                .untrusted_of("h1", &crate::vars::Scope::default())
-                .contains("t_1")
-        );
+        let read = from_host_names(&mut store, "h1", &crate::vars::Scope::default());
+        assert!(read.contains("t_1"));
         let mut judged = t.clone();
         judged.failed_when = vec!["false".into()];
         let vars = condition_vars(&judged, &item, &result, &templar);
-        assert!(vars.untrusted.contains("t_1"));
+        assert!(vars.is_from_host("t_1"));
         assert_eq!(
             std::fs::read_to_string(&counter).unwrap().lines().count(),
             1,
@@ -2518,7 +2580,7 @@ async fn a_dnf_task_runs_the_backend_it_names_or_fails_in_the_reference_s_words(
                 store.for_host("h1", &scope)["ansible_facts"]["pkg_mgr"],
                 json!(answer)
             );
-            assert!(store.untrusted_of("h1", &scope).contains("ansible_facts"));
+            assert!(from_host_names(&mut store, "h1", &scope).contains("ansible_facts"));
         }
 
         // An empty `use_backend`, as `"{{ backend | default('') }}"` renders, asks the host
@@ -4183,11 +4245,8 @@ fn a_python_module_result_is_untrusted_and_never_rendered() {
     {
         let mut store = one_host_store();
         registered(&mut store, json!({"changed": false}));
-        assert!(
-            store
-                .untrusted_of("h1", &crate::vars::Scope::default())
-                .contains("probe")
-        );
+        let read = from_host_names(&mut store, "h1", &crate::vars::Scope::default());
+        assert!(read.contains("probe"));
     }
     #[cfg(unix)]
     {
@@ -4197,11 +4256,9 @@ fn a_python_module_result_is_untrusted_and_never_rendered() {
         let templar = Templar::new(PathBuf::from("."));
         let render = |store: &mut VarStore| {
             let vars = HostVars {
-                map: crate::tags::Tagged::from(
-                    store.for_host("h1", &crate::vars::Scope::default()),
-                ),
-                untrusted: store.untrusted_of("h1", &crate::vars::Scope::default()),
-                untrusted_hosts: store.untrusted_hosts(),
+                map: store
+                    .layered_for_host("h1", &crate::vars::Scope::default())
+                    .map,
                 ..HostVars::default()
             };
             templar.render("{{ probe.msg }}", crate::template::Vars::from(&vars))
@@ -4225,12 +4282,10 @@ fn a_python_module_result_is_untrusted_and_never_rendered() {
         let author = dir.join("author-marker");
         let _ = std::fs::remove_file(&author);
         let mut store = one_host_store();
-        store.set_fact(
-            "h1",
-            "probe",
-            json!({"msg": format!("{{{{ lookup('pipe', 'touch {}') }}}}", author.display())}),
-            None,
-        );
+        let probe =
+            json!({"msg": format!("{{{{ lookup('pipe', 'touch {}') }}}}", author.display())});
+        let tree = crate::testing::written_tree(&probe);
+        store.set_fact("h1", "probe", probe, tree);
         render(&mut store).expect("an author-side template renders");
         assert!(author.exists(), "the lookup itself does nothing here");
     }
@@ -4244,8 +4299,6 @@ fn gathered_facts_are_untrusted_and_land_under_both_names() {
     let render = |store: &mut VarStore, text: &str| {
         let vars = HostVars {
             map: crate::tags::Tagged::from(store.for_host("h1", &crate::vars::Scope::default())),
-            untrusted: store.untrusted_of("h1", &crate::vars::Scope::default()),
-            untrusted_hosts: store.untrusted_hosts(),
             ..HostVars::default()
         };
         templar
@@ -4299,9 +4352,7 @@ fn gathered_facts_are_untrusted_and_land_under_both_names() {
     );
     for name in ["ansible_hostname", "ansible_facts"] {
         assert!(
-            store
-                .untrusted_of("h1", &crate::vars::Scope::default())
-                .contains(name),
+            from_host_names(&mut store, "h1", &crate::vars::Scope::default()).contains(name),
             "{name} carries a managed host's own words"
         );
     }
@@ -4477,8 +4528,6 @@ fn a_gathered_fact_is_data_and_moves_nothing_it_should_not() {
         let templar = Templar::new(PathBuf::from("."));
         let vars = HostVars {
             map: crate::tags::Tagged::from(store.for_host("h1", &crate::vars::Scope::default())),
-            untrusted: store.untrusted_of("h1", &crate::vars::Scope::default()),
-            untrusted_hosts: store.untrusted_hosts(),
             ..HostVars::default()
         };
         assert_eq!(
@@ -5722,19 +5771,18 @@ fn a_name_from_a_hosts_text_is_data_whatever_it_holds() {
             "h1",
             &mut case.results,
         );
-        let hosts = store.untrusted_hosts();
         for (_, r) in &case.results {
             let Some(name) = r.0.get("add_host").and_then(|a| a["host_name"].as_str()) else {
                 continue;
             };
             assert_eq!(
-                hosts.contains_key(name),
+                crate::testing::host_name_is_data(&mut store, name),
                 case.host == Some(name),
                 "{} host {name}",
                 case.module
             );
         }
-        let data = store.untrusted_of("h1", &scope);
+        let data = from_host_names(&mut store, "h1", &scope);
         assert_eq!(
             data.contains("groups"),
             case.host.is_some() || case.group.is_some(),
@@ -5831,8 +5879,9 @@ async fn an_include_vars_merge_keeps_the_trust_of_both_sides() {
         let templar = Templar::new(PathBuf::from("."));
         let mut host_vars = HostVars::default();
         for name in ["r", "h"] {
-            host_vars.map.insert(name.into(), host_dict.clone(), None);
-            host_vars.untrusted.insert(name.into());
+            host_vars
+                .map
+                .insert_from_host(name.into(), host_dict.clone());
         }
         host_vars.map.insert("plain".into(), json!({"a": 1}), None);
         let mut written = task("include_vars");
@@ -5876,7 +5925,7 @@ async fn an_include_vars_merge_keeps_the_trust_of_both_sides() {
             &[(None, result.clone())],
             &templar,
         );
-        let untrusted = store.untrusted_of("h1", &crate::vars::Scope::default());
+        let untrusted = from_host_names(&mut store, "h1", &crate::vars::Scope::default());
         for name in ["r", "h"] {
             assert_eq!(
                 untrusted.contains(name),

@@ -64,7 +64,6 @@ static RUN_SECRETS: RwLock<Option<Arc<Secrets>>> = RwLock::new(None);
 pub fn install(secrets: Secrets) {
     *RUN_SECRETS.write().expect("secrets lock") = Some(Arc::new(secrets));
     REVEALED.lock().expect("revealed lock").clear();
-    NAMES.lock().expect("names lock").clear();
 }
 
 type Revealed = HashMap<String, Result<String, String>>;
@@ -112,44 +111,6 @@ pub fn sentence(reason: &str) -> String {
 
 /// How the reference opens the failure of a vaulted value it cannot read.
 pub const UNDECRYPTABLE: &str = "Attempt to use undecryptable variable: ";
-
-/// The variables of each host that hold a `!vault` value, for `NAME is vault_encrypted`: the
-/// reference tags the value, so the answer differs from one host to the next.
-static NAMES: LazyLock<Mutex<HashMap<String, Vaulted>>> = LazyLock::new(Mutex::default);
-
-/// One host's vaulted variables: each name, and its value as the store keeps it.
-type Vaulted = Vec<(String, String)>;
-
-/// Records which variables of `host` hold a `!vault` value, and the value each holds as the
-/// store keeps it, in place of what was recorded for it before: the variables just resolved are
-/// the ones a test reads next.
-pub fn set_names(host: &str, names: Vaulted) {
-    let mut all = NAMES.lock().expect("names lock");
-    if names.is_empty() {
-        all.remove(host);
-    } else {
-        all.insert(host.to_string(), names);
-    }
-}
-
-pub fn is_name(host: &str, name: &str) -> bool {
-    NAMES
-        .lock()
-        .expect("names lock")
-        .get(host)
-        .is_some_and(|names| names.iter().any(|(n, _)| n == name))
-}
-
-/// The `!vault` value `host`'s variable `name` holds, as the store keeps it.
-pub fn vaulted_value(host: &str, name: &str) -> Option<String> {
-    NAMES
-        .lock()
-        .expect("names lock")
-        .get(host)?
-        .iter()
-        .find(|(n, _)| n == name)
-        .map(|(_, value)| value.clone())
-}
 
 /// Where each `!vault` value of the files this run loaded is written, by its ciphertext.
 static WRITTEN_AT: LazyLock<Mutex<HashMap<String, Origin>>> = LazyLock::new(Mutex::default);

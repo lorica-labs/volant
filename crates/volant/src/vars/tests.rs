@@ -5,7 +5,9 @@ use super::facts::restricted_fact;
 use super::load::extend;
 use super::*;
 use crate::template::Vars;
-use crate::testing::{scratch, write};
+use crate::testing::{
+    from_host_names, hosts_with_host_values, scratch, write, written, written_tree,
+};
 use serde_json::json;
 
 fn tree() -> tempfile::TempDir {
@@ -230,7 +232,7 @@ fn facts_and_role_layers_rank_as_the_reference_ranks_them() {
             json!("from-set-fact"),
             "a later setup keeps a set_fact"
         );
-        let untrusted = store.untrusted_of("h1", &sc);
+        let untrusted = from_host_names(&mut store, "h1", &sc);
         assert!(
             untrusted.contains("ansible_inv"),
             "the fact that answers is untrusted"
@@ -437,7 +439,7 @@ fn the_run_s_tag_lists_decide_the_kubeconfig_block() {
     };
     assert_eq!(holds(&mut store), (false, json!(["all"]), json!([])));
 
-    store.set_untrusted_fact("h1", "ansible_run_tags", json!(["kubeconfig"]));
+    store.set_host_fact("h1", "ansible_run_tags", json!(["kubeconfig"]));
     assert_eq!(holds(&mut store), (false, json!(["all"]), json!([])));
 
     store.set_tags(&["kubeconfig".to_string()], &[]);
@@ -551,16 +553,16 @@ fn the_controller_s_text_is_data_under_every_spelling(
     );
     let inv = Inventory::load(&dir.join("inventory/hosts.ini")).unwrap();
     let mut store = VarStore::new(&inv, None, &dir.join("play"), Tagged::from(Map::new())).unwrap();
-    store.set_untrusted_fact(ran_as, "r", json!({"stdout": "text"}));
-    let held = store.untrusted_hosts();
+    store.set_host_fact(ran_as, "r", json!({"stdout": "text"}));
+    let held = hosts_with_host_values(&mut store, ran_as);
     for spelling in crate::inventory::LOCALHOST_NAMES {
         assert_eq!(
-            held.contains_key(spelling),
+            held.contains(spelling),
             all_spellings,
             "{spelling} after a register under {ran_as}: {held:?}"
         );
     }
-    assert!(held.contains_key(ran_as));
+    assert!(held.contains(ran_as));
 }
 
 /// A fact the controller gathers shows in every spelling that stands for it.
@@ -711,7 +713,7 @@ impl Rng {
             }
             1 => store.set_fact(host, &self.name(), self.value(2), None),
             2 => store.set_included(host, &self.name(), self.value(2), None, false),
-            _ => store.set_untrusted_fact(host, &self.name(), self.value(2)),
+            _ => store.set_host_fact(host, &self.name(), self.value(2)),
         }
     }
 }
@@ -838,7 +840,7 @@ fn a_write_or_a_leaving_host_rebuilds_only_its_own_entries() {
             (Some(1), Some(1))
         );
 
-        store.set_untrusted_fact("h1", "r", json!({"rc": 0}));
+        store.set_host_fact("h1", "r", json!({"rc": 0}));
         let second = store.hostvars_shared("h2");
         assert_eq!(second["h1"]["r"], json!({"rc": 0}), "the write is seen");
         assert_eq!(
@@ -874,86 +876,62 @@ fn a_write_or_a_leaving_host_rebuilds_only_its_own_entries() {
 
 /// Every layer keeps its trust through the layered view: gathered and untrusted names stay text.
 #[test]
-#[expect(clippy::too_many_lines)]
 fn every_layer_keeps_its_trust_through_the_layered_view() {
-    let inventory = Inventory::parse_ini("h1 i=\"{{ 1 + 1 }}\"\n").unwrap();
+    let tmp = scratch();
+    let hosts = write(tmp.path(), "hosts.ini", "h1 i=\"{{ 1 + 1 }}\"\n");
+    let inventory = Inventory::load(&hosts).unwrap();
     let payload = json!("{{ 1 + 1 }}");
-    let one = |name: &str| -> Map<String, Value> {
-        [(name.to_string(), payload.clone())].into_iter().collect()
-    };
-    let extra = one("e");
-    let mut store = VarStore::new(&inventory, None, Path::new("."), Tagged::from(extra)).unwrap();
+    let one = |name: &str| written(&json!({name: payload}));
+    let mut store = VarStore::new(&inventory, None, Path::new("."), one("e")).unwrap();
     store.gather_facts(
         "h1",
         json!({"g": "{{ 1 + 1 }}", "gp": "{{ 1 + 1 }}", "groups": "{{ 1 + 1 }}"})
             .as_object()
             .unwrap(),
     );
-    store.set_fact("h1", "sf", payload.clone(), None);
-    store.set_untrusted_fact("h1", "su", payload.clone());
+    store.set_fact("h1", "sf", payload.clone(), written_tree(&payload));
+    store.set_host_fact("h1", "su", payload.clone());
     let mut play_vars = one("p");
-    play_vars.insert("gp".into(), json!("author"));
-    play_vars.insert("built".into(), json!("{{ g }}"));
+    crate::testing::put_written(&mut play_vars, "gp", json!("author"));
+    crate::testing::put_written(&mut play_vars, "built", json!("{{ g }}"));
     let scope = Scope {
-        play_vars: Tagged::from(play_vars),
-        vars_files: Arc::new(VarsFiles::new(&[Arc::new(Tagged::from(one("f")))])),
-        task_vars: Tagged::from(one("t")),
-        role_defaults: Tagged::from(one("d")),
-        role_vars: Tagged::from(one("rv")),
-        role_params: Tagged::from(one("rp")),
+        play_vars,
+        vars_files: Arc::new(VarsFiles::new(&[Arc::new(one("f"))])),
+        task_vars: one("t"),
+        role_defaults: one("d"),
+        role_vars: one("rv"),
+        role_params: one("rp"),
         ..scope(&["h1"])
     };
     let templar = Templar::new(PathBuf::from("."));
-    let untrusted = store.untrusted_of("h1", &scope);
-    let untrusted_hosts = store.untrusted_hosts();
     let hostvars = store.hostvars_shared("h1");
-    let read = |map: &Map<String, Value>,
-                shared: &Arc<Map<String, Value>>,
-                facts: &Arc<Map<String, Value>>| {
-        let (resolved, soiled) = templar.resolve_vars_tainted(Vars {
-            map,
-            tags: None,
-            hostvars: Some(&hostvars),
-            shared: Some(shared),
-            facts: Some(facts),
-            untrusted: Some(&untrusted),
-            untrusted_hosts: Some(&untrusted_hosts),
-            base: None,
-        });
-        let names = [
-            "d", "i", "g", "gp", "p", "f", "rv", "t", "sf", "su", "rp", "e", "built", "groups",
-        ];
-        let answers: Vec<_> = names
-            .iter()
-            .map(|name| {
-                let text = format!("{{{{ {name} }}}}");
-                templar
-                    .render(
-                        &text,
-                        Vars {
-                            map: &resolved,
-                            tags: None,
-                            hostvars: Some(&hostvars),
-                            shared: Some(shared),
-                            facts: Some(facts),
-                            untrusted: Some(&soiled),
-                            untrusted_hosts: Some(&untrusted_hosts),
-                            base: None,
-                        },
-                    )
-                    .unwrap()
-            })
-            .collect();
-        (answers, soiled)
-    };
-    let merged = store.for_host("h1", &scope);
-    let inventory_wide = store.shared_values(&scope);
     let layers = store.layered_for_host("h1", &scope);
-    let (answers, soiled) = read(&layers.map, &layers.shared, &layers.facts);
-    assert_eq!(
-        (answers.clone(), soiled.clone()),
-        read(&merged, &inventory_wide, &Arc::default())
-    );
+    let vars = Vars {
+        map: &layers.map,
+        tags: Some(layers.map.tags()),
+        hostvars: Some(&hostvars),
+        shared: Some(&layers.shared),
+        data_lists: Some(&layers.data_lists),
+        facts: Some(&layers.facts),
+        base: None,
+    };
+    let resolved = templar.resolve_vars(vars);
+    let names = [
+        "d", "i", "g", "gp", "p", "f", "rv", "t", "sf", "su", "rp", "e", "built", "groups",
+    ];
+    let answers: Vec<_> = names
+        .iter()
+        .map(|name| {
+            let read = Vars {
+                map: &resolved,
+                tags: Some(resolved.tags()),
+                ..vars
+            };
+            templar.render(&format!("{{{{ {name} }}}}"), read).unwrap()
+        })
+        .collect();
+    let soiled = |name: &str| resolved.is_from_host(name) || layers.facts.contains_key(name);
+    let inventory_wide = &layers.shared;
     let two = json!(2);
     assert_eq!(
         answers,
@@ -977,12 +955,9 @@ fn every_layer_keeps_its_trust_through_the_layered_view() {
     );
     assert_eq!(answers[13], json!({"all": ["h1"], "ungrouped": ["h1"]}));
     for name in ["g", "su", "built"] {
-        assert!(soiled.contains(name), "{name} is data");
+        assert!(soiled(name), "{name} is data");
     }
-    assert!(
-        !soiled.contains("gp"),
-        "the author's value over a fact is not"
-    );
+    assert!(!soiled("gp"), "the author's value over a fact is not");
 }
 
 /// A gathered fact reaches a template lookup, with the same text as through the merged map.
@@ -1001,25 +976,17 @@ fn a_gathered_fact_reaches_a_template_lookup() {
     );
     let play = scope(&["h1"]);
     let templar = Templar::new(dir.to_path_buf());
-    let untrusted = store.untrusted_of("h1", &play);
     let layers = store.layered_for_host("h1", &play);
-    let merged = store.for_host("h1", &play);
+    let merged = Tagged::from(store.for_host("h1", &play));
     let inventory_wide = store.shared_values(&play);
-    let render = |map: &Map<String, Value>, facts: &Arc<Map<String, Value>>| {
+    let render = |map: &Tagged, facts: &Arc<Map<String, Value>>| {
+        let vars = Vars {
+            shared: Some(&inventory_wide),
+            facts: Some(facts),
+            ..Vars::from(map)
+        };
         templar
-            .render(
-                "{{ lookup('template', 't.j2') }}",
-                Vars {
-                    map,
-                    tags: None,
-                    hostvars: None,
-                    shared: Some(&inventory_wide),
-                    facts: Some(facts),
-                    untrusted: Some(&untrusted),
-                    untrusted_hosts: None,
-                    base: None,
-                },
-            )
+            .render("{{ lookup('template', 't.j2') }}", vars)
             .unwrap()
     };
     let got = render(&layers.map, &layers.facts);
@@ -1249,8 +1216,8 @@ h1
     assert_eq!(seen["note"], "{{ lookup('pipe','id') }}");
     assert_eq!(seen["plain"], "x");
     assert_eq!(seen["ansible_host"], "10.0.0.9");
-    assert!(store.untrusted_of("n1", &scope(&["n1"])).contains("note"));
-    assert!(!store.untrusted_of("n1", &scope(&["n1"])).contains("plain"));
+    let read = from_host_names(&mut store, "n1", &scope(&["n1"]));
+    assert!(read.contains("note") && !read.contains("plain"));
 }
 
 const EVIL: &str = "{{ lookup('pipe','id') }}";
@@ -1398,7 +1365,7 @@ fn an_add_host_name_that_holds_a_template_is_data_wherever_it_is_read() {
             all_play_hosts: strings(row.whole).into(),
             ..Scope::default()
         };
-        let data = store.untrusted_of(row.reader, &at);
+        let data = from_host_names(&mut store, row.reader, &at);
         let got: Vec<&str> = LISTS.into_iter().filter(|n| data.contains(*n)).collect();
         assert_eq!(
             got, row.tainted,
@@ -1406,7 +1373,7 @@ fn an_add_host_name_that_holds_a_template_is_data_wherever_it_is_read() {
             row.name, row.groups, row.reader
         );
         assert_eq!(
-            store.untrusted_hosts().contains_key(row.name),
+            crate::testing::host_name_is_data(&mut store, row.name),
             row.host_is_data,
             "{:?} as a host that holds a template",
             row.name
@@ -1425,7 +1392,7 @@ fn a_group_by_name_that_holds_a_template_is_data_wherever_it_is_read() {
         let mut store = VarStore::new(&inv, None, tmp.path(), Tagged::from(Map::new())).unwrap();
         let parents: Vec<String> = parents.iter().map(ToString::to_string).collect();
         store.add_to_group("h1", group, &parents);
-        let data = store.untrusted_of("h1", &scope(&["h1"]));
+        let data = from_host_names(&mut store, "h1", &scope(&["h1"]));
         let holds = group == evil || parents.iter().any(|p| p == evil);
         assert_eq!(
             data.contains("groups"),
@@ -1452,12 +1419,12 @@ fn an_inventory_name_that_holds_template_syntax_is_data() {
     // `hostvars['{{x}}']` is.
     type Data = (bool, bool, bool, bool);
     let reads = |store: &mut VarStore| -> Data {
-        let data = store.untrusted_of("h1", &scope(&["h1"]));
+        let data = from_host_names(store, "h1", &scope(&["h1"]));
         (
             data.contains("groups"),
             data.contains("group_names"),
             data.contains(crate::template::HOSTVARS_KEYS),
-            store.untrusted_hosts().contains_key("{{x}}"),
+            crate::testing::host_name_is_data(store, "{{x}}"),
         )
     };
     let rows: [(&str, &str, &str, Data); 4] = [
@@ -1607,21 +1574,34 @@ fn a_role_default_loses_to_the_controller_python_of_the_implicit_localhost() {
     assert_eq!(v["ansible_python_interpreter"], json!("/ctl/python3"));
 }
 
+/// A host's entry is trusted when every template it holds is, and a mark needs a value to mark.
+#[test]
+fn a_host_entry_is_trusted_only_when_each_of_its_templates_is() {
+    let body = json!({"a": "{{ x }}", "b": ["{{ y }}"], "c": 1});
+    assert!(HostEntry::from(written(&body)).all_templates_trusted());
+    assert!(!HostEntry::untagged(body).all_templates_trusted());
+    assert!(HostEntry::untagged(json!({"a": ["plain"]})).all_templates_trusted());
+    let mut vars = written(&json!({"a": "{{ x }}", "b": "{{ y }}"}));
+    vars.mark_from_host("a");
+    vars.mark_from_host("absent");
+    assert!(vars.is_from_host("a") && !vars.is_from_host("b"));
+    assert!(!vars.contains_key("absent") && !vars.is_from_host("absent"));
+}
+
 /// The variables the items of a loop share leave the templates in the map, keep the text of a
 /// managed host as data, and still answer every read the whole map did.
 #[test]
 fn the_variables_items_share_keep_templates_apart_and_stay_readable() {
     let mut vars = HostVars::default();
     vars.map.insert("plain".into(), json!(1), None);
-    vars.map.insert("built".into(), json!("{{ item }}"), None);
+    crate::testing::put_written(&mut vars.map, "built", json!("{{ item }}"));
     vars.map
-        .insert("printed".into(), json!("{{ 7 * 6 }}"), None);
-    vars.untrusted.insert("printed".into());
+        .insert_from_host("printed".into(), json!("{{ 7 * 6 }}"));
     let mut vars = vars.shared_by_items();
     assert!(vars.map.contains_key("built") && vars.map.len() == 1);
     assert_eq!(vars.get("plain"), Some(&json!(1)));
     assert_eq!(vars.get("printed"), Some(&json!("{{ 7 * 6 }}")));
-    assert!(vars.untrusted.contains("printed"));
+    assert!(vars.is_from_host("printed"));
     assert_eq!(vars.own_variables().len(), 3);
     // A write lands over the shared value and leaves the share alone.
     vars.insert("plain".into(), json!(2));
@@ -1635,12 +1615,12 @@ fn the_variables_items_share_keep_templates_apart_and_stay_readable() {
     // A template left in the map that reads the host's text from the share renders it as data
     // once the item is bound, and is data itself from then on.
     vars.insert("item".into(), json!("a"));
-    vars.insert("echo".into(), json!("{{ printed }}-{{ item }}"));
-    let (map, untrusted) = templar.resolve_vars_tainted(&vars);
-    assert_eq!(map["built"], json!("a"));
-    assert!(untrusted.contains("echo") && !untrusted.contains("built"));
-    vars.map = Tagged::from(map);
-    vars.untrusted = untrusted;
+    let echo = json!("{{ printed }}-{{ item }}");
+    let tree = written_tree(&echo);
+    vars.insert_tagged("echo".into(), echo, tree);
+    vars.map = templar.resolve_vars(&vars);
+    assert_eq!(vars.map["built"], json!("a"));
+    assert!(vars.is_from_host("echo") && !vars.is_from_host("built"));
     assert_eq!(
         templar.render("{{ echo }}", &vars).unwrap(),
         json!("{{ 7 * 6 }}-a")
@@ -1878,4 +1858,23 @@ fn the_store_of_an_inventory_grows_linearly_with_its_hosts() {
         linear,
         "500 hosts took {small:?} and 4,000 took {large:?}: more than linear"
     );
+}
+
+/// The values of a whole-file-encrypted vars file are trusted and carry `SourceWasEncrypted`.
+#[test]
+fn the_values_of_an_encrypted_vars_file_are_trusted_and_marked_encrypted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("v.yml");
+    crate::vault::install(crate::vault::Secrets::new(vec![b"pw".to_vec()]));
+    let text = crate::vault::encrypt(
+        b"a: '{{ x }}'
+",
+        b"pw",
+        None,
+    )
+    .unwrap();
+    std::fs::write(&path, text).unwrap();
+    let loaded = load_vars_file(&path).unwrap();
+    let set = crate::tags::get(loaded.tree("a").unwrap().own());
+    assert!(set.trusted && set.source_encrypted);
 }

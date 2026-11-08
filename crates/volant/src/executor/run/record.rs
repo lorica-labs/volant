@@ -338,7 +338,7 @@ pub(in crate::executor) fn record_local_facts(
                     let tree = tags.get(key).cloned();
                     vars.set_included(host, key, value.clone(), tree, data.contains(key));
                 } else if data.contains(key) {
-                    vars.set_untrusted_fact(host, key, value.clone());
+                    vars.set_registered(host, key, value.clone(), tags.get(key).cloned());
                 } else {
                     vars.set_fact(host, key, value.clone(), tags.get(key).cloned());
                 }

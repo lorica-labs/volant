@@ -46,6 +46,10 @@ pub struct TagSet {
     /// `VaultedValue`: the ciphertext the value was decrypted from.
     pub vaulted: Option<Arc<str>>,
     pub deprecated: Option<Arc<Deprecated>>,
+    /// The value came from a managed host: `host_named_paths` refuses a path built from one. Trust
+    /// cannot say this, as a string a playbook builds from its own values is untrusted too. It has
+    /// no counterpart in ansible-core, so no tag name shows it.
+    pub from_host: bool,
 }
 
 /// The `Deprecated` tag a module puts on a value it returns.
@@ -172,6 +176,9 @@ pub fn intern(set: TagSet) -> TagSetId {
     if let Some(&id) = tables().set_ids.get(&set) {
         return TagSetId(id);
     }
+    if set.deprecated.is_some() {
+        ANY_DEPRECATED.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     let mut tables = tables_mut();
     if let Some(&id) = tables.set_ids.get(&set) {
         return TagSetId(id);
@@ -180,6 +187,51 @@ pub fn intern(set: TagSet) -> TagSetId {
     tables.sets.push(set.clone());
     tables.set_ids.insert(set, id);
     TagSetId(id)
+}
+
+/// Set once a set with `Deprecated` is interned: until then no render looks for one.
+static ANY_DEPRECATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether this process has interned a set with `Deprecated`.
+pub fn any_deprecated() -> bool {
+    ANY_DEPRECATED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Whether the set `id` names holds `TrustedAsTemplate`.
+pub fn is_trusted(id: TagSetId) -> bool {
+    tables().sets[id.0 as usize].trusted
+}
+
+/// The tags of the text a `!vault` value decrypts to: those of the encrypted value, without
+/// trust, and `VaultedValue`.
+pub fn vaulted(id: TagSetId, ciphertext: &str) -> TagSetId {
+    let mut set = get(id);
+    set.trusted = false;
+    set.vaulted = Some(Arc::from(ciphertext));
+    intern(set)
+}
+
+/// Whether the set `id` names says its value came from a managed host.
+pub fn is_from_host(id: TagSetId) -> bool {
+    tables().sets[id.0 as usize].from_host
+}
+
+/// The tree of a value a managed host sent, over the tags it already carries.
+pub fn from_host(tree: Option<TagTree>) -> TagTree {
+    match tree {
+        Some(TagTree::Leaf(id)) => TagTree::Leaf(with_host_mark(id)),
+        Some(TagTree::Node(id, children)) => TagTree::Node(with_host_mark(id), children),
+        None => TagTree::Leaf(with_host_mark(TagSetId::NONE)),
+    }
+}
+
+fn with_host_mark(id: TagSetId) -> TagSetId {
+    if is_from_host(id) {
+        return id;
+    }
+    let mut set = get(id);
+    set.from_host = true;
+    intern(set)
 }
 
 /// Whether `id` names a set this process interned: one read back from JSON may not.

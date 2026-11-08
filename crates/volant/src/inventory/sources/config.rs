@@ -22,6 +22,12 @@ pub struct PluginConfig {
     /// Why `-e` cannot be read, as a message and its `Origin:`: the reference's plugins read
     /// `-e` before their source, so each one that takes a source fails with it.
     pub extra_vars_error: Option<(String, Option<String>)>,
+    /// Whether `host_group_vars` runs at the stage `all`, the one `constructed` runs the vars
+    /// plugins at for `use_vars_plugins`.
+    pub host_group_vars_at_all: bool,
+    /// Whether the run loads vars plugins besides `host_group_vars`, which `constructed` then asks
+    /// the Python helper for.
+    pub other_vars_plugins: bool,
 }
 
 impl Default for PluginConfig {
@@ -39,6 +45,8 @@ impl Default for PluginConfig {
             script_stderr: true,
             extra_vars_error: None,
             export: false,
+            host_group_vars_at_all: true,
+            other_vars_plugins: false,
         }
     }
 }

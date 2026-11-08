@@ -7,14 +7,16 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value};
 
 mod helpers;
+mod plugin_vars;
 
 use super::auto::{failed, load_config};
 use super::yaml::{Dialect, add_child_checked, falsy};
 use super::{Inventory, InventoryPlugin, ParseCx, PluginError, Source};
 use crate::playbook::python_repr;
 use crate::template::Templar;
-use helpers::{PluginVars, add_group, host_vars, is_blank, is_original, safe_group_name, set_var};
+use helpers::{add_group, host_vars, is_blank, is_original, safe_group_name, set_var};
 pub(in crate::inventory) use helpers::{invalid_chars_report, py_str, reason};
+use plugin_vars::PluginVars;
 
 pub(super) struct Constructed;
 
@@ -41,7 +43,8 @@ impl InventoryPlugin for Constructed {
             .parent()
             .map_or_else(PathBuf::new, Path::to_path_buf);
         let plugin_vars = if options.use_vars_plugins {
-            PluginVars::read(into, source).map_err(|e| failed(format!("{e:#}")))?
+            PluginVars::read(into, cx)
+                .map_err(|e| Failure::Parser(format!("{e:#}")).into_error(path))?
         } else {
             PluginVars::default()
         };
@@ -207,7 +210,7 @@ impl Run {
         Ok(())
     }
 
-    fn evaluate(&self, expr: &Value, vars: &Map<String, Value>) -> Result<Value, String> {
+    fn evaluate(&self, expr: &Value, vars: &crate::tags::Tagged) -> Result<Value, String> {
         let Value::String(text) = expr else {
             // The expressions come from the config file, so the reference's loader tagged them.
             return Err(format!(
@@ -224,7 +227,7 @@ impl Run {
         &self,
         inv: &mut Inventory,
         host: &str,
-        vars: &Map<String, Value>,
+        vars: &crate::tags::Tagged,
     ) -> Result<(), Failure> {
         for (name, condition) in &self.options.groups {
             let group = safe_group_name(name);
@@ -257,7 +260,7 @@ impl Run {
         &self,
         inv: &mut Inventory,
         host: &str,
-        vars: &Map<String, Value>,
+        vars: &crate::tags::Tagged,
         entry: &Value,
     ) -> Result<(), Failure> {
         let Value::Object(keyed) = entry else {

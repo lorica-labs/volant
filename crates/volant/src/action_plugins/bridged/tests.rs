@@ -187,7 +187,6 @@ fn a_ping_that_lost_its_link_is_retried_over_a_new_one() {
         name: "wait_for_connection",
         modules: &["ping"],
         hostvars: Arc::default(),
-        untrusted_hosts: Default::default(),
         asks,
         replies: Some(replies),
         ready: Arc::new(Notify::new()),
@@ -236,7 +235,6 @@ fn a_command_that_must_not_escalate_runs_as_the_connection_user(
         name: "script",
         modules: &[],
         hostvars: Arc::default(),
-        untrusted_hosts: Default::default(),
         asks,
         replies: Some(replies),
         ready: Arc::new(Notify::new()),
@@ -362,7 +360,6 @@ fn a_wrapped_module_starts_as_a_job(
         name: "gather_facts",
         modules: &["setup"],
         hostvars: Arc::default(),
-        untrusted_hosts: Default::default(),
         asks,
         replies: Some(replies),
         ready: Arc::new(Notify::new()),
@@ -404,15 +401,14 @@ fn another_host_s_variables_say_whether_they_render(#[case] host: &str, #[case] 
     let (_, asks) = channel();
     let (replies, _) = channel();
     let entry = json!({"v": "{{ w }}"});
-    let hostvars = ["h2", "h3", "h4"].map(|h| (h.to_string(), Arc::new(entry.clone())));
+    let trusted = crate::vars::HostEntry::from(crate::testing::written(&entry));
+    let data = crate::vars::HostEntry::untagged(entry);
+    let hostvars = [("h2", trusted), ("h3", data.clone()), ("h4", data)]
+        .map(|(h, entry)| (h.to_string(), Arc::new(entry)));
     let mut plugin = Bridged {
         name: "probe",
         modules: &[],
         hostvars: Arc::new(hostvars.into_iter().collect()),
-        untrusted_hosts: [
-            Arc::new([("h3".to_string(), ["v".to_string()].into())].into()),
-            Arc::new([("h4".to_string(), ["v".to_string()].into())].into()),
-        ],
         asks,
         replies: Some(replies),
         ready: Arc::new(Notify::new()),

@@ -88,7 +88,7 @@ Les handlers s'exécutent dans l'ordre où ils sont définis, pas dans l'ordre o
 
 Une tâche ne notifie que lorsqu'elle signale `changed`. Pour une boucle, c'est le résultat global qui décide : un seul élément modifié suffit. Une fois un flush exécuté, les notifications sont effacées : un handler ne s'exécute donc pas de nouveau au flush suivant, sauf si quelque chose le notifie encore.
 
-Une liste `handlers:` peut contenir un `import_tasks`, dans un play ou dans un rôle. Les handlers du fichier qu'il nomme prennent sa place, avec ses mots-clés, et sont notifiés par leur nom et par `listen`. Le fichier est cherché à côté du fichier qui contient l'instruction, puis dans le répertoire du playbook.
+Une liste `handlers:` peut contenir un `import_tasks`, dans un play ou dans un rôle. Les handlers du fichier qu'il nomme prennent sa place, avec ses mots-clés, et sont notifiés par leur nom et par `listen`. Le fichier est cherché à côté du fichier qui contient l'instruction. Dans un rôle, il est ensuite cherché dans le `tasks/` du rôle, dans le répertoire du rôle lui-même et dans le `handlers/` du playbook. Le répertoire du playbook vient en dernier.
 
 Un handler peut aussi être un `include_tasks`. Notifié, il inclut son fichier au moment du flush : `included:` s'affiche sous sa bannière `RUNNING HANDLER`, puis les tâches du fichier s'exécutent comme handlers pour les hôtes qui l'ont notifié. Le handler d'un rôle cherche son fichier dans le répertoire `tasks/` du rôle, comme une tâche du rôle, et ses tâches trouvent les templates et les fichiers du rôle. Un `include_role` écrit comme handler arrête l'exécution avant que rien ne tourne, avec le code de sortie 4, comme dans Ansible.
 

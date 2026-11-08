@@ -85,6 +85,10 @@ A file that exists but cannot be read is skipped, and the run continues with the
   Print the `[DEPRECATION WARNING]` notices and the line that tells how to stop them. Set to `False` to print neither.
 </Option>
 
+<Option name="allow_broken_conditionals" id="defaults-allow-broken-conditionals" default="false" env="ANSIBLE_ALLOW_BROKEN_CONDITIONALS">
+  A condition whose result is not a boolean fails by default. Set to `True`, it goes by the truth of its result and prints a `[DEPRECATION WARNING]`.
+</Option>
+
 <Option name="log_path" id="defaults-log-path" default="unset" env="ANSIBLE_LOG_PATH">
   A file every line the run displays is appended to, one record each as Ansible writes it: `2026-10-30 18:34:18,430 p=<pid> u=<user> n=ansible INFO| TASK [...] ***`, `WARNING` for a `[WARNING]` and `ERROR` for an `[ERROR]`.
 </Option>

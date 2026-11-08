@@ -9,9 +9,11 @@ use serde_json::{Map, Value};
 
 use super::PENDING_PYTHON;
 use super::facts::no_facts;
-use super::load::{extend, extend_except};
-use super::{Added, HostFacts, HostSources, Scope, VarStore};
-use crate::inventory::{LOCALHOST_NAMES, is_localhost};
+use super::is_data_name;
+#[cfg(test)]
+use super::load::extend;
+use super::load::extend_except;
+use super::{Added, HostEntry, HostFacts, HostSources, Scope, VarStore};
 use crate::tags::Tagged;
 use crate::template::HOSTVARS_KEYS;
 
@@ -24,121 +26,53 @@ pub struct Layers {
     pub shared: Arc<Map<String, Value>>,
     /// The gathered facts that answer.
     pub facts: Arc<Map<String, Value>>,
+    /// Which of `shared` list a name from a managed host.
+    pub data_lists: Arc<BTreeSet<String>>,
     /// The `vars_files` values no render changes, read after `map`: `VarsFiles::plain`.
     pub files: Arc<Tagged>,
 }
 
 impl VarStore {
-    /// The names of `host`'s merged view that came from a managed host: the `set_fact` layer's
-    /// untrusted names, and every gathered one that no layer above it overrides. A play variable
-    /// that shadows a gathered name answers with the author's value, and a template in it renders.
-    pub fn untrusted_of(&self, host: &str, scope: &Scope) -> BTreeSet<String> {
-        let mut names = self.untrusted.get(host).cloned().unwrap_or_default();
-        self.data_names_read_by(host, scope, &mut names);
-        let Some(gathered) = self.gathered.get(host) else {
-            return names;
-        };
-        let above = [
-            Some(&scope.play_vars),
-            Some(&scope.role_vars),
-            Some(&scope.task_vars),
-            self.included.get(host).map(|layer| &**layer),
-            self.facts.get(host).map(|layer| &**layer),
-            Some(&scope.role_params),
-            Some(&self.extra),
-        ];
-        for name in gathered.keys() {
-            let shadowed = above.iter().flatten().any(|m| m.contains_key(name))
-                || scope.vars_files.contains_key(name);
-            if !shadowed {
-                names.insert(name.clone());
-            }
-        }
-        names
-    }
-
-    /// The names `host` reads that now carry a host name or a group name `add_host` or
-    /// `group_by` took from data: `groups`, the host lists of the play, `group_names`, the two
-    /// `inventory_hostname` names, and the list of `hostvars`' hosts. The read as a whole is
-    /// data, where the reference tags each string. A read of one host through `hostvars[name]`
-    /// is the case of `untrusted_hosts`, so a nested template of any other host still renders.
-    fn data_names_read_by(&self, host: &str, scope: &Scope, names: &mut BTreeSet<String>) {
+    /// The lists of `shared_values` that now carry a host name or a group name `add_host` or
+    /// `group_by` took from data, and the list of `hostvars`' hosts. The read as a whole is data,
+    /// where the reference tags each string.
+    fn data_lists(&self, scope: &Scope) -> Arc<BTreeSet<String>> {
         if self.data_hosts.is_empty() && self.data_groups.is_empty() {
-            return;
+            return Arc::default();
         }
         let listed = |hosts: &[String]| hosts.iter().any(|h| self.data_hosts.contains(h));
         let all_hosts = self.play_hosts_all(scope);
         let reads = [
             ("groups", true),
             (HOSTVARS_KEYS, !self.data_hosts.is_empty()),
-            ("inventory_hostname", self.data_hosts.contains(host)),
-            ("inventory_hostname_short", self.data_hosts.contains(host)),
-            (
-                "group_names",
-                self.group_names
-                    .get(host)
-                    .is_some_and(|g| g.iter().any(|n| self.data_groups.contains(n))),
-            ),
             ("ansible_play_hosts", listed(&scope.play_hosts)),
             ("ansible_play_hosts_all", listed(&all_hosts)),
             ("ansible_play_batch", listed(&scope.batch_hosts)),
             ("play_hosts", listed(&scope.batch_hosts)),
         ];
-        names.extend(
+        Arc::new(
             reads
                 .into_iter()
                 .filter(|(_, data)| *data)
-                .map(|(name, _)| name.to_string()),
-        );
+                .map(|(name, _)| name.to_string())
+                .collect(),
+        )
     }
 
-    /// Hosts holding at least one untrusted name, for the `hostvars[other]` path. Read once per
-    /// host and per task, under the store's lock, so it is kept rather than rebuilt: the set is
-    /// the size of the inventory and every rebuild allocated a string per host inside the
-    /// critical section. A spelling of the controller is in the set when any spelling is. Dropped
-    /// by `forget_hostvars`, which every write to the facts calls.
-    pub fn untrusted_hosts(&mut self) -> Arc<super::UntrustedHosts> {
-        if let Some(hosts) = &self.untrusted_hosts {
-            return Arc::clone(hosts);
+    /// The magic variables of `host` that carry a name a managed host sent.
+    fn data_magic(&self, host: &str) -> Vec<&'static str> {
+        let mut names = Vec::new();
+        if self.data_hosts.contains(host) {
+            names.extend(super::HOST_NAMES);
         }
-        let mut hosts = super::UntrustedHosts::new();
-        for (host, names) in self.untrusted.iter().filter(|(_, names)| !names.is_empty()) {
-            hosts
-                .entry(host.clone())
-                .or_default()
-                .extend(names.iter().cloned());
+        let in_data_group = self
+            .group_names
+            .get(host)
+            .is_some_and(|g| g.iter().any(|n| self.data_groups.contains(n)));
+        if in_data_group {
+            names.push("group_names");
         }
-        // The facts a host gathered are its own text, every one of them.
-        for (host, facts) in &self.gathered {
-            let names = hosts.entry(host.clone()).or_default();
-            names.extend(facts.keys().cloned());
-            names.insert("ansible_facts".into());
-        }
-        // A host named by data is a host whose name is data.
-        for host in &self.data_hosts {
-            hosts
-                .entry(host.clone())
-                .or_default()
-                .extend(super::HOST_NAMES.map(String::from));
-        }
-        // The three spellings of the controller read one host through `hostvars`, so what one of
-        // them holds, the others hold.
-        let controller: BTreeSet<String> = hosts
-            .iter()
-            .filter(|(host, _)| is_localhost(host))
-            .flat_map(|(_, names)| names.iter().cloned())
-            .collect();
-        if !controller.is_empty() {
-            for name in LOCALHOST_NAMES {
-                hosts
-                    .entry(name.to_string())
-                    .or_default()
-                    .extend(controller.iter().cloned());
-            }
-        }
-        let hosts = Arc::new(hosts);
-        self.untrusted_hosts = Some(Arc::clone(&hosts));
-        hosts
+        names
     }
 
     /// Whether `host` is outside the inventory the run started from: a name nothing declared, or a
@@ -212,8 +146,7 @@ impl VarStore {
     /// merged, they are not copied at all when nothing outranks them, and once per change of
     /// what outranks them otherwise.
     ///
-    /// Trust does not move with them. `untrusted_of` still names every gathered name that
-    /// answers, and a template reads that set before it looks a name up anywhere.
+    /// A read of this layer is a read of what the host sent, whatever a layer below held.
     pub fn layered_for_host(&mut self, host: &str, scope: &Scope) -> Layers {
         self.host_sources(host, scope).layer(scope)
     }
@@ -246,8 +179,10 @@ impl VarStore {
             included: self.included.get(host).cloned(),
             facts: self.facts.get(host).cloned(),
             extra: self.extra.clone(),
+            data_magic: self.data_magic(host),
             magic,
             answering,
+            data_lists: self.data_lists(scope),
             shared,
             gathered: self.facts_for(host, shadowed),
         }
@@ -290,9 +225,9 @@ impl VarStore {
     /// inventory variable of that name - with `n=2` set on every host of the inventory it still
     /// stops the run with `Error processing keyword 'serial': 'n' is undefined`. The play is cut
     /// into batches before any host is chosen, so there is no host whose value it could take.
-    pub fn play_scope(&self, play_vars: &Map<String, Value>) -> Map<String, Value> {
+    pub fn play_scope(&self, play_vars: &Tagged) -> Tagged {
         let mut vars = play_vars.clone();
-        extend(&mut vars, &self.extra);
+        vars.extend(&self.extra);
         vars
     }
 
@@ -319,9 +254,9 @@ impl VarStore {
         } else if self.is_implicit_localhost(host) {
             // Measured on ansible-core 2.19.12: the implicit `localhost` is in no group, and it
             // still reads the inventory's `all` variables, those of every source.
-            let mut all = self.dynamic.group_vars_of("all");
+            let mut all = self.dynamic.tagged_group_vars("all");
             all.remove("ansible_group_priority");
-            vars.extend_untagged(&all);
+            vars.extend(&all);
         }
         for files in &self.group_files {
             if let Some(all) = files.get("all") {
@@ -340,6 +275,10 @@ impl VarStore {
         // Inventory host vars must beat `group_vars/<group>` files: re-apply them on top.
         if let Some(host_only) = self.host_line_vars.get(host) {
             vars.extend(host_only);
+        }
+        // What a `compose` computed read the host's variables, and stays data.
+        for name in self.computed.get(host).into_iter().flatten() {
+            vars.mark_from_host(name);
         }
         // A name the inventory never carried is an implicit `localhost`, which connects locally.
         // The reference sets it on the host object, that is at the inventory host var layer, and
@@ -381,25 +320,40 @@ impl VarStore {
     /// What other hosts see of one host: inventory sources, its facts, then extra vars, and its
     /// own identity. The reference carries `inventory_hostname` inside `hostvars[x]`, so a task
     /// naming another host can ask who that host is.
-    pub(super) fn host_view(&self, host: &str) -> Map<String, Value> {
-        let mut base = self.host_base_in(host, true).into_values();
+    pub(super) fn host_view(&self, host: &str) -> Tagged {
+        let mut base = self.host_base_in(host, true);
         match self.gathered.get(host) {
-            Some(gathered) => extend(&mut base, gathered),
-            None => extend(&mut base, no_facts()),
+            Some(gathered) => {
+                for (name, value) in &**gathered {
+                    base.insert_from_host(name.clone(), value.clone());
+                }
+            }
+            None => base.extend_untagged(no_facts()),
         }
         if let Some(included) = self.included.get(host) {
-            extend(&mut base, included);
+            base.extend(included);
         }
         if let Some(facts) = self.facts.get(host) {
-            extend(&mut base, facts);
+            base.extend(facts);
         }
-        extend(&mut base, &self.extra);
+        base.extend(&self.extra);
         // The host's magic variables as well, measured on ansible-core 2.19.12: `hostvars[x]`
         // carries `group_names`, `inventory_dir`, `playbook_dir` and the run's options, an
         // `add_host` host's too. Not `omit`, which only a task's own variables hold.
         let mut magic = self.magic(host);
         magic.remove("omit");
-        base.extend(magic);
+        base.extend_untagged(&magic);
+        let made = self.added.iter().any(|change| {
+            matches!(change, Added::Host(name, _) | Added::Member(name, _) if name == host)
+        });
+        if made || is_data_name(host) {
+            super::HOST_NAMES
+                .iter()
+                .for_each(|n| base.mark_from_host(n));
+        }
+        for name in self.data_magic(host) {
+            base.mark_from_host(name);
+        }
         base
     }
 
@@ -410,7 +364,6 @@ impl VarStore {
         self.hostvars = None;
         self.stale.clear();
         self.hostvars_with.clear();
-        self.untrusted_hosts = None;
     }
 
     /// What a write to one host's facts leaves behind: that host's `hostvars` entry is out of
@@ -419,15 +372,14 @@ impl VarStore {
     pub(super) fn forget_host(&mut self, host: &str) {
         self.stale.insert(host.to_string());
         self.hostvars_with.clear();
-        self.untrusted_hosts = None;
     }
 
     /// `host_view`, counted for the test that proves only the written host's entry is rebuilt.
-    pub(super) fn view_value(&mut self, host: &str) -> Value {
+    pub(super) fn view_value(&mut self, host: &str) -> HostEntry {
         #[cfg(test)]
         {
             *self.views_built.entry(host.to_string()).or_default() += 1;
         }
-        Value::Object(self.host_view(host))
+        HostEntry::from(self.host_view(host))
     }
 }

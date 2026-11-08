@@ -191,7 +191,7 @@ pub(crate) fn compile(
     search: &RoleSearch,
     selection: &TagSelection,
 ) -> anyhow::Result<Compiled> {
-    compile_with(play, search, selection, &Map::new())
+    compile_with(play, search, selection, &crate::tags::Tagged::default())
 }
 
 /// A play's sections flattened into one numbered list, as `compile` does, with the run's extra
@@ -201,13 +201,14 @@ pub(crate) fn compile_with(
     play: &Play,
     search: &RoleSearch,
     selection: &TagSelection,
-    extra: &Map<String, Value>,
+    extra: &crate::tags::Tagged,
 ) -> anyhow::Result<Compiled> {
-    let mut static_vars = play.vars.as_map().clone();
-    static_vars.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
+    let mut static_vars = play.vars.clone();
+    static_vars.overlay(extra);
     static_vars.insert(
         "playbook_dir".into(),
         Value::String(play.dir.display().to_string()),
+        None,
     );
     let mut builder = Builder {
         static_vars,

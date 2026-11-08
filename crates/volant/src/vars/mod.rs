@@ -10,6 +10,7 @@ mod listed;
 mod load;
 mod magic;
 mod play_view;
+mod plugins;
 mod refresh;
 pub(crate) mod reserved;
 mod shared;
@@ -17,6 +18,7 @@ mod sources;
 mod store;
 
 pub use crate::tags::Tagged;
+pub use plugins::{HostGroupVars, answers_at_all};
 
 pub(crate) use host_vars::PENDING_PYTHON;
 
@@ -24,20 +26,16 @@ pub(crate) use host_vars::PENDING_PYTHON;
 /// changed gets a new entry while a render still holding the previous map keeps it whole, and
 /// that copy is one pointer per host rather than every host's variables: measured on a thousand
 /// local hosts, copying the views themselves on each `set_fact` cost 11 s of a 15 s run.
-pub type HostvarsMap = indexmap::IndexMap<String, Arc<Value>>;
-
-/// The hosts holding a name that came from a managed host, each with those names: what a read
-/// of `hostvars[host]` takes as data.
-pub type UntrustedHosts = BTreeMap<String, BTreeSet<String>>;
+pub type HostvarsMap = indexmap::IndexMap<String, Arc<HostEntry>>;
 
 /// The two names that carry a host's own name, data when the name came from data.
 const HOST_NAMES: [&str; 2] = ["inventory_hostname", "inventory_hostname_short"];
 
-/// A plain map of host views as a [`HostvarsMap`].
+/// A plain map of host views as a [`HostvarsMap`], with no tags.
 #[cfg(test)]
 pub fn hostvars_map(map: Map<String, Value>) -> HostvarsMap {
     map.into_iter()
-        .map(|(host, view)| (host, Arc::new(view)))
+        .map(|(host, view)| (host, Arc::new(HostEntry::untagged(view))))
         .collect()
 }
 pub use host_vars::{HostSettings, HostVars, host_setting, omit_token, settled, settled_all};
@@ -49,9 +47,9 @@ pub use load::{
     VaultFile, include_vars_paths, load_play_vars_file, load_vars_file, parse_extra_vars,
     read_vars_document, set_hash_merge,
 };
-pub(crate) use load::{extend, hash_merge, load_vars_dir, merge_hash};
+pub(crate) use load::{hash_merge, load_vars_dir, merge_hash};
 pub use magic::ansible_version;
-pub(crate) use play_view::PlayView;
+pub use shared::HostEntry;
 pub use sources::HostSources;
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -191,9 +189,9 @@ pub struct VarStore {
     smart: bool,
     /// A cache file that could not be read, reported when the first play starts.
     cache_failure: Option<crate::fact_cache::CacheFailure>,
-    /// Of the `set_fact` layer's facts, the names that came from a managed host rather than
-    /// from the playbook.
-    untrusted: BTreeMap<String, BTreeSet<String>>,
+    /// The variables of a host that an inventory plugin's `compose` computed: what the reference
+    /// leaves untrusted, by host.
+    computed: BTreeMap<String, BTreeSet<String>>,
     /// The host names and group names that are data: a name of the inventory or one `add_host`
     /// and `group_by` made that holds `{`, and a name those two took from an argument that read
     /// a managed host's value. Reading one of them back
@@ -239,7 +237,6 @@ pub struct VarStore {
     implicit_controller: Option<String>,
     /// The hosts that hold at least one untrusted name, built on demand and dropped by the same
     /// rule as `hostvars`: every write that can change it already goes through `set_fact`.
-    untrusted_hosts: Option<Arc<UntrustedHosts>>,
     /// The inventory-wide values, with the three host lists they were built from. `groups` only
     /// moves when `meta: refresh_inventory` reads the inventory again, but the lists come from the coordinator's last published progress and
     /// move whenever a host drops out, so the map is good for one triple and no longer.
@@ -276,6 +273,8 @@ pub struct VarStore {
     inventory_changed: bool,
     /// What `set_stats` collected, printed after the recap when the run asks for it.
     custom_stats: CustomStats,
+    /// The vars plugins and their stages, when they change what the store reads.
+    vars_plugins: Option<Box<plugins::Staging>>,
 }
 
 /// One change a play made to the inventory.

@@ -138,11 +138,14 @@ pub(super) fn prepare(
         }
         Some(raw) => Some(loop_list(templar, task, raw, &base)),
     };
+    let mut trees = Vec::new();
     let elements: Vec<Option<Value>> = match listed {
         None => vec![None],
         Some(Ok((list, tainted))) => {
             items_from_host = tainted;
-            list.into_iter().map(Some).collect()
+            let (items, item_trees) = list.into_iter().map(|(v, t)| (Some(v), t)).unzip();
+            trees = item_trees;
+            items
         }
         Some(Err(e)) if e.is_undefined() => {
             loop_error = Some(match &task.loop_items {
@@ -184,11 +187,13 @@ pub(super) fn prepare(
             .as_ref()
             .map_or_else(|| base.clone(), |c| c.vars(&base));
         if let Some(el) = &element {
-            if items_from_host {
-                vars.insert_untrusted(options.loop_var.clone(), el.clone());
+            let tree = trees[index].clone();
+            let tree = if items_from_host {
+                Some(crate::tags::from_host(tree))
             } else {
-                vars.insert(options.loop_var.clone(), el.clone());
-            }
+                tree
+            };
+            vars.insert_tagged(options.loop_var.clone(), el.clone(), tree);
             vars.insert(
                 "ansible_loop_var".into(),
                 Value::String(options.loop_var.clone()),
@@ -215,7 +220,7 @@ pub(super) fn prepare(
                 // Its items are the loop's, so they are as much a managed host's as the
                 // loop variable is.
                 if items_from_host {
-                    vars.insert_untrusted("ansible_loop".into(), Value::Object(ansible_loop));
+                    vars.insert_from_host("ansible_loop".into(), Value::Object(ansible_loop));
                 } else {
                     vars.insert("ansible_loop".into(), Value::Object(ansible_loop));
                 }
@@ -223,8 +228,7 @@ pub(super) fn prepare(
             // Variables naming the loop variable could not resolve before it was bound. One of
             // them may be built from the item, so this pass widens the set the same way.
             crate::profile::count(crate::profile::Counter::RenderVars, 1);
-            let (resolved, untrusted) = templar.resolve_vars_tainted(&vars);
-            vars.set_resolved(resolved, untrusted);
+            vars.map = templar.resolve_vars(&vars);
         }
         let (label, label_error, label_raised) =
             raises(label_for(task, element.as_ref(), &vars, templar))?;

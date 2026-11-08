@@ -1,5 +1,5 @@
 ---
-sourceHash: 23af26d0458a
+sourceHash: a31550e4dcf1
 title: Referencia del lenguaje de plantillas
 description: Los métodos de Python, las reglas de cadenas, las expresiones regulares y los límites del Jinja2 de Volant, con todas las diferencias con ansible-core.
 ---
@@ -173,7 +173,7 @@ Esto es una frontera de seguridad. Si encuentras una forma de que los datos de u
 | valores de `set_fact` | variables del inventario |
 | `lookup('file')`, `lookup('pipe')`, `lookup('env')`, `lookup('template')` | `vars_files` e `include_vars` |
 
-`!unsafe` marca como datos un valor del playbook. Se acepta en un valor y en una clave de diccionario, en un play, en `group_vars`, en un archivo de extra-vars y en un inventario YAML. El filtro que usa el cargador de YAML para la marca está oculto a los playbooks: llamarlo falla con `No filter named 'volant_unsafe'`.
+`!unsafe` marca como datos un valor del playbook. Se acepta en un valor y en una clave de diccionario, en un play, en `group_vars`, en un archivo de extra-vars y en un inventario YAML.
 
 ### Qué cambia con un valor no fiable
 

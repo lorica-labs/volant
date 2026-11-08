@@ -6,7 +6,7 @@ use anyhow::{Context, bail};
 use saphyr::{Scalar, Yaml};
 use serde_json::Value;
 
-use crate::yaml::{field, to_json};
+use crate::yaml::field;
 
 use super::fields::{conditions, tags};
 use super::model::Play;
@@ -69,10 +69,12 @@ impl Import {
         refuse_template("when", &when)?;
         let mut vars = match field(entry, "vars") {
             None | Some(Yaml::Value(Scalar::Null)) => crate::tags::Tagged::default(),
-            Some(node @ Yaml::Mapping(_)) => match to_json(node).context("'vars'")? {
-                Value::Object(map) => super::origin::tagged_vars(node, map),
-                _ => crate::tags::Tagged::default(),
-            },
+            Some(node @ Yaml::Mapping(_)) => {
+                match crate::yaml::to_tagged_json(node).context("'vars'")? {
+                    Value::Object(map) => super::origin::tagged_vars(node, map),
+                    _ => crate::tags::Tagged::default(),
+                }
+            }
             Some(_) => bail!("Vars in a PlaybookInclude must be specified as a dictionary."),
         };
         let names = match field(entry, "tags") {

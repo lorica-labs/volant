@@ -43,12 +43,9 @@ pub(in crate::executor) fn carry_on(
     let Some(item) = items.get_mut(ii).filter(|item| item.deferred) else {
         return;
     };
-    for (name, template) in &carry.rebuilt {
-        item.vars.insert(name.clone(), template.clone());
-    }
+    carry.lay_rebuilt(&mut item.vars);
     carry.lay_over(&mut item.vars);
-    let (resolved, untrusted) = templar.resolve_vars_tainted(&item.vars);
-    item.vars.set_resolved(resolved, untrusted);
+    item.vars.map = templar.resolve_vars(&item.vars);
 }
 
 /// What the items before the current one set, for one host.
@@ -64,7 +61,7 @@ pub(in crate::executor) struct Carry {
     reach: BTreeSet<String>,
     /// The templates, as the host wrote them, of the variables in `reach` that are not carried
     /// names. An item renders them again and takes every other variable as it resolved.
-    rebuilt: Map<String, Value>,
+    rebuilt: crate::tags::Tagged,
 }
 
 impl Carry {
@@ -74,7 +71,7 @@ impl Carry {
             facts: Map::new(),
             data: BTreeSet::new(),
             reach: BTreeSet::new(),
-            rebuilt: Map::new(),
+            rebuilt: crate::tags::Tagged::default(),
         }
     }
 
@@ -85,19 +82,24 @@ impl Carry {
     pub(super) fn vars(&self, base: &HostVars) -> HostVars {
         let mut vars = base.clone();
         if !self.facts.is_empty() {
-            for (name, template) in &self.rebuilt {
-                vars.insert(name.clone(), template.clone());
-            }
+            self.lay_rebuilt(&mut vars);
             self.lay_over(&mut vars);
         }
         vars
+    }
+
+    fn lay_rebuilt(&self, vars: &mut HostVars) {
+        for (name, template) in &self.rebuilt {
+            let tree = self.rebuilt.tree(name).cloned();
+            vars.insert_tagged(name.clone(), template.clone(), tree);
+        }
     }
 
     /// Lays the carried facts over `vars`, each with the trust it was set with.
     pub(super) fn lay_over(&self, vars: &mut HostVars) {
         for (name, value) in &self.facts {
             if self.data.contains(name) {
-                vars.insert_untrusted(name.clone(), value.clone());
+                vars.insert_from_host(name.clone(), value.clone());
             } else {
                 vars.insert(name.clone(), value.clone());
             }
@@ -107,13 +109,14 @@ impl Carry {
     /// Adds to `reach` every variable that reads a name already in it, until none is left.
     fn follow(&mut self) {
         loop {
-            // A name that came from a managed host is data: no render touches it.
-            let found: Vec<(String, Value)> = self
-                .merged
-                .map
+            // Only a trusted template renders again.
+            let map = &self.merged.map;
+            let found: Vec<(String, Value)> = map
                 .iter()
                 .filter(|(key, _)| !self.reach.contains(*key))
-                .filter(|(key, _)| !self.merged.untrusted.contains(*key))
+                .filter(|(key, value)| {
+                    crate::template::holds_trusted_template(value, map.tree(key))
+                })
                 .filter(|(_, value)| self.reach.iter().any(|name| mentions(value, name)))
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect();
@@ -122,7 +125,8 @@ impl Carry {
             }
             for (key, value) in found {
                 self.reach.insert(key.clone());
-                self.rebuilt.insert(key, value);
+                let tree = self.merged.map.tree(&key).cloned();
+                self.rebuilt.insert(key, value, tree);
             }
         }
     }
@@ -188,13 +192,13 @@ mod tests {
 
     /// An item starts from the host's resolved variables, and only the variables built from a
     /// carried name go back to their templates: the others are not copied from the unresolved map.
+    use crate::testing::put_written;
+
     #[test]
     fn the_variables_an_item_renders_again_are_the_ones_built_from_a_carried_name() {
         let mut merged = HostVars::default();
-        merged.map.insert("built".into(), json!("{{ x }}"), None);
-        merged
-            .map
-            .insert("other".into(), json!("{{ 1 + 1 }}"), None);
+        put_written(&mut merged.map, "built", json!("{{ x }}"));
+        put_written(&mut merged.map, "other", json!("{{ 1 + 1 }}"));
         let mut base = HostVars::default();
         base.map.insert("built".into(), json!("old"), None);
         base.map.insert("other".into(), json!(2), None);
@@ -212,11 +216,9 @@ mod tests {
     #[test]
     fn a_variable_two_hops_from_a_carried_name_is_followed() {
         let mut merged = HostVars::default();
-        merged.map.insert("e".into(), json!("{{ [x] }}"), None);
-        merged
-            .map
-            .insert("ee".into(), json!("{{ e | length }}"), None);
-        merged.map.insert("other".into(), json!("{{ y }}"), None);
+        put_written(&mut merged.map, "e", json!("{{ [x] }}"));
+        put_written(&mut merged.map, "ee", json!("{{ e | length }}"));
+        put_written(&mut merged.map, "other", json!("{{ y }}"));
         let mut carry = Carry::new(merged);
         carry.reach.insert("x".into());
         carry.follow();

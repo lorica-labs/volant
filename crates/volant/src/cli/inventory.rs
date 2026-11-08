@@ -16,6 +16,7 @@ use crate::config::Config;
 use crate::inventory::{GraphItem, Inventory, Note, VarsOf, load_sources_with, toml_dumps};
 use crate::render::Renderer;
 use crate::stats::error_code;
+use crate::tags::Tagged;
 use crate::template::{inventory_yaml, yaml_mapping, yaml_node};
 use crate::vars::{ListedOrigin, VarStore};
 
@@ -142,19 +143,19 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
     crate::vault::install(secrets);
     let base = std::env::current_dir()?;
     let unreadable = extra::unreadable(&args.extra_vars, &base);
-    let loaded = match load(args, &config, unreadable.as_ref(), &mut out) {
-        Ok(inventory) => inventory,
+    let (loaded, bridge, dirs) = match load(args, &config, unreadable.as_ref(), &mut out) {
+        Ok(loaded) => loaded,
         Err(code) => return Ok(code),
     };
     let extra = crate::vars::parse_extra_vars(&args.extra_vars, &base)?;
     // The reference reads `group_vars` and `host_vars` beside each source and in the directory
     // it was started from.
-    let store = VarStore::with_sources(
-        &loaded,
-        &inventory_sources(&args.inventory, &config),
-        &base,
-        extra,
-    )?;
+    let sources = inventory_sources(&args.inventory, &config);
+    let mut store = VarStore::with_sources(&loaded, &sources, &base, extra)?;
+    let plugins = &config.vars_plugins;
+    super::vars_plugins::load_at(&mut store, plugins, &dirs, &bridge, &sources, "all")?;
+    // With what the vars plugins answered at the inventory stage.
+    let loaded = store.inventory().clone();
     // `[inventory] export` makes `--export` the default, which the flag cannot then turn off.
     let export = args.export || config.inventory_plugins.export;
     if let Some(group) = &args.graph {
@@ -168,14 +169,13 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
     }
     let layering = loaded.layering();
     // In the order the reference merges them, which TOML keeps and JSON and YAML sort.
-    let ordered = |host: &str| -> serde_json::Map<String, Value> {
+    let ordered = |host: &str| -> Tagged {
         written(if export {
             store.exported_vars(host)
         } else {
             store.listed_vars_ordered(host, &layering.var_names(host))
         })
     };
-    let vars_of = |host: &str| -> BTreeMap<String, Value> { ordered(host).into_iter().collect() };
     let toml = args.toml && !args.yaml;
     let text = if let Some(name) = &args.host {
         // The reference leaves `--limit` out of `--host`.
@@ -199,10 +199,10 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
                 Err(code) => return Ok(code),
             }
         } else {
-            host_text(args, &loaded, &host.name, &vars_of)?
+            host_text(args, &loaded, &host.name, &ordered)?
         }
     } else {
-        match list_text(args, &loaded, &store, export, &vars_of, &ordered, &mut out)? {
+        match list_text(args, &loaded, &store, export, &ordered, &mut out)? {
             Ok(text) => text,
             Err(code) => return Ok(code),
         }
@@ -223,8 +223,7 @@ fn list_text(
     loaded: &Inventory,
     store: &VarStore,
     export: bool,
-    vars_of: &VarsOf<'_>,
-    ordered: &dyn Fn(&str) -> serde_json::Map<String, Value>,
+    ordered: &VarsOf<'_>,
     out: &mut Renderer,
 ) -> anyhow::Result<Result<String, i32>> {
     let limited;
@@ -254,37 +253,39 @@ fn list_text(
         },
         None => loaded,
     };
-    let group_vars = |name: &str| -> BTreeMap<String, Value> {
-        written(store.listed_group_vars(name, &shown.group_vars_of(name).into_iter().collect()))
-            .into_iter()
-            .collect()
+    let group_vars = |name: &str| -> Tagged {
+        written(store.listed_group_vars(name, &shown.tagged_group_vars(name)))
     };
     if args.toml && !args.yaml {
         let mut groups = |name: &str| {
             if export {
-                written(
-                    store.listed_group_vars(name, &shown.group_vars_of(name).into_iter().collect()),
-                )
+                group_vars(name).into_values()
             } else {
                 serde_json::Map::new()
             }
         };
-        let mut hosts = ordered;
+        let mut hosts = |host: &str| ordered(host).into_values();
         return Ok(toml_text(&shown.toml_document(&mut hosts, &mut groups)));
     }
     Ok(Ok(if args.yaml {
-        inventory_yaml(&yaml_list(shown, store, export, vars_of, &group_vars))
+        inventory_yaml(&yaml_list(shown, store, export, ordered, &group_vars))
     } else {
         let group_vars: &VarsOf<'_> = &group_vars;
-        to_json(&shown.dump_with(vars_of, export.then_some(group_vars)))?
+        to_json(&shown.dump_with(ordered, export.then_some(group_vars)))?
     }))
 }
 
 /// `vars` with their strings as the sources hold them, before loading doubled the backslashes of
 /// their template literals: see `yaml::written_strings`.
-fn written(mut vars: serde_json::Map<String, Value>) -> serde_json::Map<String, Value> {
-    vars.values_mut().for_each(crate::yaml::written_strings);
-    vars
+fn written(vars: Tagged) -> Tagged {
+    let (mut values, tags) = vars.into_parts();
+    values.values_mut().for_each(crate::yaml::written_strings);
+    Tagged::new(values, tags)
+}
+
+/// `vars` sorted by name, as JSON and YAML print them.
+fn sorted_vars(vars: Tagged) -> BTreeMap<String, Value> {
+    vars.into_values().into_iter().collect()
 }
 
 /// What `--host` prints as JSON or YAML.
@@ -296,7 +297,7 @@ fn host_text(
 ) -> anyhow::Result<String> {
     if args.yaml {
         Ok(inventory_yaml(&yaml_node(&Value::Object(
-            vars_of(host).into_iter().collect(),
+            sorted_vars(vars_of(host)).into_iter().collect(),
         ))))
     } else {
         to_json(&loaded.host_dump(host, vars_of))
@@ -329,7 +330,7 @@ fn yaml_list(
     let mut shared: HashMap<(ListedOrigin, String, String), minijinja::Value> = HashMap::new();
     let layering = inventory.layering();
     let mut host_vars = |host: &str| {
-        yaml_mapping(vars_of(host).into_iter().map(|(name, value)| {
+        yaml_mapping(sorted_vars(vars_of(host)).into_iter().map(|(name, value)| {
             let key = if export {
                 None
             } else {
@@ -353,7 +354,7 @@ fn yaml_list(
     };
     let mut groups = |name: &str| {
         let vars = if export {
-            group_vars(name)
+            sorted_vars(group_vars(name))
         } else {
             BTreeMap::new()
         };
@@ -363,23 +364,27 @@ fn yaml_list(
 }
 
 /// The inventory every `-i` names, else the configuration's, else the reference's default; what
-/// is said while reading goes to the terminal as `ansible-playbook` says it. `Err` carries the
-/// exit code, with the message already printed.
+/// is said while reading goes to the terminal as `ansible-playbook` says it. With it, the bridge
+/// that read it and the plugin directories `--playbook-dir` adds. `Err` carries the exit code,
+/// with the message already printed.
 fn load(
     args: &InventoryArgs,
     config: &Config,
     unreadable: Option<&extra::Unreadable>,
     out: &mut Renderer,
-) -> Result<Inventory, i32> {
+) -> Result<(Inventory, Arc<Bridge>, Vec<PathBuf>), i32> {
     let sources = inventory_sources(&args.inventory, config);
     let bridge = Bridge::late();
     let playbook_dir = super::args::playbook_dir(args.playbook_dir.as_deref());
-    if let Some(dir) = playbook_dir.and_then(|dir| std::path::absolute(dir).ok()) {
-        // Nothing can refuse them: no helper is running yet.
-        let _ = bridge.set_plugin_dirs(vec![dir]);
-    }
+    let dirs: Vec<PathBuf> = playbook_dir
+        .and_then(|dir| std::path::absolute(dir).ok())
+        .into_iter()
+        .collect();
+    // Nothing can refuse them: no helper is running yet.
+    let _ = bridge.set_plugin_dirs(dirs.clone());
     let mut plugins = config.inventory_plugins.clone();
     plugins.extra_vars_error = unreadable.map(|u| (u.message.clone(), u.origin.clone()));
+    super::vars_plugins::for_inventory(&mut plugins, &config.vars_plugins, &dirs);
     let loaded = load_sources_with(&sources, &plugins, &|| Arc::clone(&bridge));
     for note in &loaded.notes {
         match note {
@@ -405,7 +410,7 @@ fn load(
     for warning in loaded.inventory.resolve("all").warnings {
         out.warning(&warning, false);
     }
-    Ok(loaded.inventory)
+    Ok((loaded.inventory, bridge, dirs))
 }
 
 /// The inventory narrowed to the hosts `pattern` matches, groups kept. A pattern nothing matches

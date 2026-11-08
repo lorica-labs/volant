@@ -45,26 +45,35 @@ impl Builder<'_> {
                 .or_else(|| handler.task.args.get("_raw_params"))
                 .and_then(Value::as_str)
                 .ok_or_else(|| anyhow::anyhow!("'import_tasks' takes a file name"))?;
-            // Beside the file that wrote it, then in the role's directory, then in the playbook's:
-            // measured, a role's `handlers/main.yml` importing `tasks/handlers.yml` reads the
-            // role's, and importing `handlers.yml` reads the playbook's when the role has none.
+            // `path_dwim_relative(role_path, 'handlers', name)` of ansible-core 2.19.12: beside
+            // the file that wrote it, then the role's `tasks/`, then the role's own directory,
+            // the way an `import_tasks` of a task file searches; then the playbook's `handlers/`
+            // and the playbook's directory. Measured: RHEL9-CIS's `handlers/main.yml` imports
+            // `remount_tmp.yml` from `tasks/`, a role's `handlers/main.yml` importing
+            // `tasks/handlers.yml` reads the role's, and importing `handlers.yml` reads the
+            // playbook's when the role has none. A file found nowhere is named in the
+            // playbook's directory, the last place searched.
             let role_dir = role.and(self.origin().role_dir.clone());
-            let path = [Some(dir), role_dir.as_deref(), self.search.playbook_dir()]
-                .into_iter()
-                .flatten()
-                .map(|dir| dir.join(name))
-                .find(|path| path.is_file())
-                .unwrap_or_else(|| dir.join(name));
-            if !path.is_file() {
+            let playbook = self.search.playbook_dir();
+            let path = std::iter::once(super::beside_or_in_role(dir, role_dir.as_deref(), name))
+                .chain(
+                    role_dir
+                        .as_ref()
+                        .and(playbook)
+                        .map(|p| p.join("handlers").join(name)),
+                )
+                .chain(playbook.map(|p| p.join(name)))
+                .find(|path| path.is_file());
+            let Some(path) = path else {
+                let p = playbook.unwrap_or(dir).join(name);
                 return Err(Refusal::at(
                     1,
                     format!(
-                        "Unable to retrieve file contents.
-Could not find or access '{}' on the Ansible Controller.",
-                        path.display()
+                        "Unable to retrieve file contents.\nCould not find or access '{p}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option: [Errno 2] No such file or directory: '{p}'",
+                        p = p.display()
                     ),
                 ));
-            }
+            };
             self.depth += 1;
             if self.depth > DEPTH {
                 return Err(Refusal::at(1, RECURSION));

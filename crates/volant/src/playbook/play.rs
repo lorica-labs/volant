@@ -89,7 +89,7 @@ pub(super) fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
     super::origin::warn_reserved_keys(field(yaml, "vars"));
     let vars = match field(yaml, "vars") {
         None | Some(Yaml::Value(Scalar::Null)) => crate::tags::Tagged::default(),
-        Some(v) => match to_json(v).context("'vars'")? {
+        Some(v) => match crate::yaml::to_tagged_json(v).context("'vars'")? {
             Value::Object(map) => super::origin::tagged_vars(v, map),
             _ => bail!("'vars' must be a mapping"),
         },
@@ -376,7 +376,7 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
         // one against; anything else is a parameter for the role itself.
         if block_keyword(key).is_none() {
             let tree = super::origin::tree_of(value);
-            params.insert(key.to_string(), to_json(value)?, tree);
+            params.insert(key.to_string(), crate::yaml::to_tagged_json(value)?, tree);
         }
     }
     let context = format!("role '{name}': ");

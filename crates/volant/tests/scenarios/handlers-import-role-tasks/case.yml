@@ -1,0 +1,3 @@
+# An import_tasks in a role's handlers list finds a file the role keeps in tasks/, as
+# RHEL9-CIS's handlers/main.yml does with tasks/remount_tmp.yml.
+args: [-i, inv.ini, play.yml]

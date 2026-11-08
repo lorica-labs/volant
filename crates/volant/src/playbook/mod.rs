@@ -21,7 +21,7 @@ pub use keywords::{BECOME_METHODS, Flag, META, is_meta};
 pub(crate) use keywords::{
     deprecate_conditional_template, deprecate_play_hosts, deprecation_header, names_no_action,
     possibly_all_template, print_deprecation, print_deprecation_line, python_repr,
-    set_deprecation_warnings, stray_raw_params,
+    set_deprecation_warnings, stray_raw_params, take_shown_deprecations,
 };
 pub use load::{Rendering, load, load_rendering, parse};
 pub(crate) use load::{

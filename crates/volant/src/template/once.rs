@@ -42,13 +42,6 @@ impl Templar {
         false
     }
 
-    /// Whether `text` holds `{{` or `{%`: a rendered result that does is rendered again. `{#` is
-    /// left out on purpose: a result that holds one is text an expression made (`{{ '{#' }}`),
-    /// and the reference does not render it again.
-    pub(super) fn holds_expression(text: &str) -> bool {
-        text.contains("{{") || text.contains("{%")
-    }
-
     /// Whether `text` holds a statement block or a comment, the two tags that print nothing and so
     /// can leave a result with one node (or none) where the text around them is not a node.
     fn has_statement(text: &str) -> bool {

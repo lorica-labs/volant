@@ -38,7 +38,7 @@ A source that no plugin reads is skipped with a warning, as in Ansible. `-vvv` p
 
 ### Dynamic sources
 
-A script prints its inventory as JSON, in the format `ansible-inventory --list` writes. `constructed` and `generator` build groups and hosts from templates.
+A script prints its inventory as JSON, in the format `ansible-inventory --list` writes. `constructed` and `generator` build groups and hosts from templates. With `use_vars_plugins: true`, `constructed` also reads what the vars plugins return for the directories of the sources before it: the `group_vars` and `host_vars` files, and any other vars plugin, which runs through ansible-core. As in ansible-core, a host from an INI file is not in `all` yet at that point, so `group_vars/all.yml` does not reach its expressions.
 
 A collection's inventory plugin (a cloud provider, for instance) runs inside ansible-core, through a Python process that Volant starts only when such a source is present, see [the warm Python path](/docs/internals/python/).
 

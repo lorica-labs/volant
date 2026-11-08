@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use rstest::rstest;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use super::include::{include_options, include_role_entry};
 use super::*;
@@ -72,10 +72,15 @@ fn cut(serial: Option<Value>, hosts: usize) -> anyhow::Result<Vec<usize>> {
         })
         .collect();
     let templar = Templar::new(PathBuf::from("."));
-    Ok(batches(&hosts, serial.as_ref(), &templar, &Map::new())?
-        .iter()
-        .map(Vec::len)
-        .collect())
+    Ok(batches(
+        &hosts,
+        serial.as_ref(),
+        &templar,
+        &crate::tags::Tagged::default(),
+    )?
+    .iter()
+    .map(Vec::len)
+    .collect())
 }
 
 /// Every shape of `serial` measured on ansible-core 2.19.12 over three hosts, cut the same way
@@ -128,7 +133,7 @@ fn a_templated_serial_is_rendered_first() {
         })
         .collect();
     let templar = Templar::new(PathBuf::from("."));
-    let vars: Map<String, Value> = json!({ "n": 2 }).as_object().cloned().unwrap();
+    let vars = crate::testing::written(&json!({ "n": 2 }));
     let sizes: Vec<usize> = batches(&hosts, Some(&json!("{{ n }}")), &templar, &vars)
         .unwrap()
         .iter()
@@ -137,7 +142,13 @@ fn a_templated_serial_is_rendered_first() {
     assert_eq!(sizes, vec![2, 1]);
     let err = format!(
         "{:#}",
-        batches(&hosts, Some(&json!("{{ n }}")), &templar, &Map::new()).unwrap_err()
+        batches(
+            &hosts,
+            Some(&json!("{{ n }}")),
+            &templar,
+            &crate::tags::Tagged::default()
+        )
+        .unwrap_err()
     );
     assert!(err.contains("Error processing keyword 'serial'"), "{err}");
 }

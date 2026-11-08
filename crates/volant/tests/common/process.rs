@@ -5,7 +5,7 @@
 use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
-/// Runs `command` in a process group of its own, `stdin` written to it when given, and returns its
+/// Runs `command` in a session and process group of its own, `stdin` written to it when given, and returns its
 /// output, or kills the whole group and panics with the stdout so far at `deadline`. The group,
 /// because the agents and modules a run starts hold the same pipes; the output is read while
 /// waiting, since a child whose output outgrows the pipe blocks until someone does.
@@ -21,10 +21,19 @@ pub fn run_within_seen(
     stdin: Option<&[u8]>,
     seen: impl FnOnce(u32),
 ) -> Output {
+    // A session of its own, which is a process group of its own too, and no controlling terminal:
+    // a hidden prompt reads the terminal before stdin, as `getpass` does, and would otherwise wait
+    // for the developer running the suite.
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt as _;
-        command.process_group(0);
+        // SAFETY: only `setsid`, which is async-signal-safe, runs between fork and exec.
+        unsafe {
+            command.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
     }
     if stdin.is_some() {
         command.stdin(Stdio::piped());

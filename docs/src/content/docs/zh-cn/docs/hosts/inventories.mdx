@@ -39,7 +39,7 @@ Volant 读取 inventory 的方式与 ansible-core 相同：可以有一个或多
 
 ### 动态来源
 
-脚本以 JSON 格式打印它的 inventory，格式与 `ansible-inventory --list` 的输出相同。`constructed` 和 `generator` 根据模板构建组和主机。
+脚本以 JSON 格式打印它的 inventory，格式与 `ansible-inventory --list` 的输出相同。`constructed` 和 `generator` 根据模板构建组和主机。设置 `use_vars_plugins: true` 后，`constructed` 还会读取 vars 插件为它之前各来源所在目录返回的内容：`group_vars` 和 `host_vars` 文件，以及其他任何 vars 插件，后者通过 ansible-core 运行。与 ansible-core 一样，此时 INI 文件中的主机还不属于 `all`，因此 `group_vars/all.yml` 不会进入它的表达式。
 
 collection 的 inventory 插件（例如云服务商的插件）在 ansible-core 内部运行，通过一个 Python 进程完成，Volant 只在出现这类来源时才启动该进程，见[预热的 Python 路径](/zh-cn/docs/internals/python/)。
 

@@ -67,7 +67,7 @@ pub(in crate::template) fn tagged(
     let context = ctx.downcast_object_ref::<Context>();
     let written = |root: Option<String>| {
         root.is_some_and(|name| {
-            !MAGIC.contains(&name.as_str()) && !context.is_some_and(|c| c.untrusted.contains(&name))
+            !MAGIC.contains(&name.as_str()) && !context.is_some_and(|c| c.reads_host_text(&name))
         })
     };
     let name = |given: &str, root: Option<String>| {

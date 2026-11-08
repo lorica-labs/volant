@@ -68,6 +68,39 @@ impl Inventory {
         }
     }
 
+    /// The groups, each with its own hosts and child groups, and the hosts: what the helper
+    /// rebuilds the inventory from to run the vars plugins.
+    pub fn plugin_view(&self) -> Value {
+        let groups: Vec<Value> = self
+            .groups
+            .iter()
+            .map(|g| serde_json::json!({"name": g.name, "hosts": g.hosts, "children": g.children}))
+            .collect();
+        let hosts: Vec<&str> = self.hosts.iter().map(|h| h.name.as_str()).collect();
+        serde_json::json!({"groups": groups, "hosts": hosts})
+    }
+
+    /// Lays `vars` over what the inventory gives a group, or a host, as the reference merges what
+    /// a vars plugin answers at the inventory stage. `all` is there even when no source wrote it.
+    pub fn merge_vars(&mut self, group: bool, name: &str, vars: &crate::tags::Tagged) {
+        let target = if group && name == "all" {
+            Some(&mut self.group_mut("all").vars)
+        } else if group {
+            self.groups
+                .iter_mut()
+                .find(|g| g.name == name)
+                .map(|g| &mut g.vars)
+        } else {
+            self.hosts
+                .iter_mut()
+                .find(|h| h.name == name)
+                .map(|h| &mut h.vars)
+        };
+        if let Some(target) = target {
+            target.extend(vars);
+        }
+    }
+
     pub(super) fn group_mut(&mut self, name: &str) -> &mut Group {
         if let Some(pos) = self.groups.iter().position(|g| g.name == name) {
             return &mut self.groups[pos];
@@ -256,6 +289,23 @@ impl Inventory {
             .filter(|g| g.name != "all")
             .map(|g| g.name.clone())
             .collect()
+    }
+
+    /// Whether a source put `host` under `all`: among its hosts, below one of the groups it holds,
+    /// or in `ungrouped`, which the reference holds under `all` from the start. Measured on
+    /// ansible-core 2.19.12: until every source is read, only such a host has `all` among its
+    /// groups.
+    pub fn placed_in_all(&self, host: &str) -> bool {
+        let all = self.group("all");
+        let holds = |g: &Group| self.group_hosts(g).iter().any(|h| h == host);
+        all.is_some_and(|g| g.hosts.iter().any(|h| h == host))
+            || std::iter::once("ungrouped")
+                .chain(
+                    all.iter()
+                        .flat_map(|g| g.children.iter().map(String::as_str)),
+                )
+                .filter_map(|name| self.group(name))
+                .any(holds)
     }
 
     /// Distance from the top: `all` sits at depth 0 and is not an implicit parent of anything,

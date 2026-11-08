@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [debug] *******************************************************************\nok: [h1] => (item=clash_group_all) => {\n    \"msg\": \"clash_group_all=inventory group_vars\"\n}\nok: [h1] => (item=clash_group_g) => {\n    \"msg\": \"clash_group_g=early\"\n}\nok: [h1] => (item=clash_host_h1) => {\n    \"msg\": \"clash_host_h1=early\"\n}\nok: [h1] => (item=early_all) => {\n    \"msg\": \"early_all=early\"\n}\nok: [h1] => (item=early_g) => {\n    \"msg\": \"early_g=early\"\n}\nok: [h1] => (item=early_h1) => {\n    \"msg\": \"early_h1=early\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

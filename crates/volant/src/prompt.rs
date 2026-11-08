@@ -9,6 +9,7 @@ use serde_json::{Map, Value};
 
 use crate::executor::as_bool_value;
 use crate::playbook::{Origin, Play};
+use crate::tags::Tagged;
 use crate::template::Templar;
 
 /// How one prompt is put to the operator: the text, and whether what is typed stays hidden.
@@ -26,11 +27,11 @@ pub(crate) type Ask<'a> = &'a mut dyn FnMut(&str, bool) -> anyhow::Result<String
 pub(crate) fn answers(
     play: &Play,
     templar: &Templar,
-    vars: &Map<String, Value>,
+    vars: &Tagged,
     extra: &Map<String, Value>,
     mut ask: Option<Ask<'_>>,
     warned: &mut bool,
-) -> anyhow::Result<Vec<(String, Value)>> {
+) -> anyhow::Result<Vec<(String, Value, bool)>> {
     if play.vars_prompt.is_empty() {
         return Ok(Vec::new());
     }
@@ -83,14 +84,7 @@ pub(crate) fn answers(
         }
         let value = Value::String(text);
         // The reference marks what it asked for as safe to template unless `unsafe` says not.
-        out.push((
-            entry.name,
-            if entry.unsafe_text {
-                crate::yaml::unsafe_data(value)
-            } else {
-                value
-            },
-        ));
+        out.push((entry.name, value, !entry.unsafe_text));
     }
     Ok(out)
 }
@@ -104,7 +98,7 @@ pub(crate) fn answers(
 pub(crate) fn prompted<'a>(
     play: &'a Play,
     templar: &Templar,
-    vars: &Map<String, Value>,
+    vars: &Tagged,
     extra: &Map<String, Value>,
     warned: &mut bool,
 ) -> anyhow::Result<std::borrow::Cow<'a, Play>> {
@@ -119,8 +113,10 @@ pub(crate) fn prompted<'a>(
         None
     };
     let mut play = play.clone();
-    for (name, value) in answers(&play, templar, vars, extra, ask, warned)? {
-        play.vars.insert(name, value, None);
+    let origin = crate::tags::origin_described("vars_prompt");
+    for (name, value, trusted) in answers(&play, templar, vars, extra, ask, warned)? {
+        let tree = crate::tags::uniform(&value, origin, trusted);
+        play.vars.insert(name, value, tree);
     }
     Ok(std::borrow::Cow::Owned(play))
 }
@@ -129,7 +125,7 @@ pub(crate) fn prompted<'a>(
 fn render_once(
     templar: &Templar,
     value: &Value,
-    vars: &Map<String, Value>,
+    vars: &Tagged,
 ) -> Result<Value, crate::template::TemplateError> {
     Ok(match value {
         Value::String(text) => templar.render_one_pass(text, vars)?,
@@ -260,10 +256,7 @@ fn hash(
     salt_size: Option<i64>,
 ) -> anyhow::Result<String> {
     let vars = Map::from_iter([
-        (
-            "secret".to_string(),
-            crate::yaml::unsafe_data(Value::String(text.to_string())),
-        ),
+        ("secret".to_string(), Value::String(text.to_string())),
         ("algorithm".to_string(), Value::from(algorithm)),
         ("salt".to_string(), salt.map_or(Value::Null, Value::from)),
         (
@@ -284,8 +277,10 @@ fn hash(
 }
 
 /// Reads one line from the terminal with the echo off, the prompt written to the terminal as
-/// `getpass` does (stderr where there is none) so that a redirected stdout still carries only the
-/// run's own output, and the line break after the answer with it. `None` when nothing was read.
+/// `getpass` does (stdin and stderr where there is none) so that a redirected stdout still carries
+/// only the run's own output, and the line break after the answer with it. `None` when nothing was
+/// read. The terminal is read even when stdin is not it, as `getpass` reads it: `sshpass` answers
+/// on the terminal it gives the run, and leaves stdin as it was.
 /// The stderr written to is the inherited descriptor: reopening `/dev/stderr` by name would
 /// truncate a file it is redirected to.
 ///
@@ -296,18 +291,18 @@ fn hash(
 /// Ctrl-\ is a key an operator reaches for at a prompt that seems stuck, and it would otherwise
 /// kill the shell with the echo still off, leaving a terminal that types nothing back. Doing
 /// this from Rust would need a `Drop` that a signal never runs, and a terminal left with the
-/// echo off is a poor parting gift. Where stdin is not a terminal, `stty` fails, its complaint
-/// is dropped and the line is read as it comes.
+/// echo off is a poor parting gift. With no terminal and a stdin that is not one either, `stty`
+/// fails, its complaint is dropped and the line is read as it comes.
 #[cfg(unix)]
 pub(crate) fn hidden_line(prompt: &str) -> anyhow::Result<Option<Vec<u8>>> {
     use std::process::Stdio;
-    const READ_LINE: &str = "trap 'stty echo 2>/dev/null' EXIT INT QUIT TERM HUP\n\
-         stty -echo 2>/dev/null\n\
-         if ( : >/dev/tty ) 2>/dev/null; then exec 3>/dev/tty; else exec 3>&2; fi\n\
-         printf %s \"$1\" >&3\n\
-         IFS= read -r password\n\
+    const READ_LINE: &str = "trap 'stty echo 2>/dev/null <&3' EXIT INT QUIT TERM HUP\n\
+         if ( : <>/dev/tty ) 2>/dev/null; then exec 3<>/dev/tty 4>&3; else exec 3<&0 4>&2; fi\n\
+         stty -echo 2>/dev/null <&3\n\
+         printf %s \"$1\" >&4\n\
+         IFS= read -r password <&3\n\
          status=$?\n\
-         printf '\\n' >&3\n\
+         printf '\\n' >&4\n\
          [ $status = 0 ] || exit 1\n\
          printf %s \"$password\"\n";
     // The shell prints the prompt itself, once the echo is off: a person (or a test) answering

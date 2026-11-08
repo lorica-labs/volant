@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -432,8 +432,7 @@ fn a_templated_ignore_errors_is_rendered_per_item_and_in_includes() {
         let mut values = Map::new();
         values.insert("item".into(), json!(false));
         step.include_params = Some(Arc::new(IncludeParams {
-            values,
-            untrusted: BTreeSet::new(),
+            values: values.into(),
         }));
         step.task.loop_items = Some(json!([true]));
         assert_eq!(verdicts(&step, &store), [Some(true)]);
@@ -453,8 +452,7 @@ fn a_templated_ignore_errors_is_rendered_per_item_and_in_includes() {
         let mut values = Map::new();
         values.insert("lenient".into(), json!(true));
         step.include_params = Some(Arc::new(IncludeParams {
-            values,
-            untrusted: BTreeSet::new(),
+            values: values.into(),
         }));
         assert_eq!(verdicts(&step, &store), [Some(true)]);
     }
@@ -523,11 +521,10 @@ fn the_role_path_and_search_path_are_the_engine_s_own() {
         let play = PathBuf::from("/srv/play");
         let role = play.join("roles/probe");
         let store = store_at(&play);
-        store.lock().unwrap().set_untrusted_fact(
-            "h1",
-            "ansible_search_path",
-            json!(["/from/a/host"]),
-        );
+        store
+            .lock()
+            .unwrap()
+            .set_host_fact("h1", "ansible_search_path", json!(["/from/a/host"]));
         let in_role = step_of(
             task("command"),
             Origin {
@@ -548,8 +545,8 @@ fn the_role_path_and_search_path_are_the_engine_s_own() {
                 "/srv/play"
             ])
         );
-        assert!(!vars.untrusted.contains("ansible_search_path"));
-        assert!(!vars.untrusted.contains("role_path"));
+        assert!(!vars.is_from_host("ansible_search_path"));
+        assert!(!vars.is_from_host("role_path"));
 
         let in_play = step_of(
             task("command"),
@@ -601,7 +598,7 @@ fn the_role_path_and_search_path_are_the_engine_s_own() {
             json!("/srv/play/roles/probe"),
             "a template reads the engine's value too"
         );
-        assert!(!vars.untrusted.contains("role_path"));
+        assert!(!vars.is_from_host("role_path"));
     }
 }
 
@@ -616,10 +613,10 @@ fn a_tasks_own_vars_resolve_with_the_role_s_search_path_already_in_place() {
 
     let store = store_at(&play);
     let mut t = task("command");
-    t.vars.insert(
-        "via_lookup".into(),
+    crate::testing::put_written(
+        &mut t.vars,
+        "via_lookup",
         json!("{{ lookup('template', 't.j2') }}"),
-        None,
     );
     let step = step_of(
         t,
@@ -650,11 +647,7 @@ fn a_tasks_own_vars_resolve_with_the_role_s_search_path_already_in_place() {
     };
     let vars = &items[0].vars;
     assert_eq!(vars.map["via_lookup"], json!("{{ 1 + 1 }}"));
-    assert!(
-        vars.untrusted.contains("via_lookup"),
-        "{:?}",
-        vars.untrusted
-    );
+    assert!(vars.is_from_host("via_lookup"));
 }
 
 fn plan() -> PlayPlan {
@@ -952,8 +945,8 @@ fn labels_show_strings_bare_and_the_rest_as_python_does() {
 #[test]
 fn with_items_flattens_one_level_only() {
     assert_eq!(
-        flatten_once(vec![json!([1, [2]]), json!(3)]),
-        vec![json!(1), json!([2]), json!(3)]
+        flatten_once(vec![(json!([1, [2]]), None), (json!(3), None)]),
+        vec![(json!(1), None), (json!([2]), None), (json!(3), None)]
     );
 }
 
@@ -1022,10 +1015,7 @@ fn bound(step: &Step, store: &Mutex<VarStore>) -> Result<Vec<(Value, bool)>, Tem
         .iter()
         .map(|item| {
             let var = &step.task.loop_var;
-            (
-                item.vars.map[var].clone(),
-                item.vars.untrusted.contains(var),
-            )
+            (item.vars.map[var].clone(), item.vars.is_from_host(var))
         })
         .collect())
 }
@@ -1128,18 +1118,17 @@ fn an_include_over_with_first_found_skips_undefined_terms_and_keeps_the_host_s_c
     let items = prepared(&step, &store).unwrap();
     assert_eq!(items.len(), 1);
     assert_eq!(items[0].vars.map["item"], json!(default));
-    assert!(!items[0].vars.untrusted.contains("item"));
+    assert!(!items[0].vars.is_from_host("item"));
     assert!(items[0].skipped.is_some(), "the task's `when` skips it");
 
     store
         .lock()
         .unwrap()
-        .set_untrusted_fact("h1", "ansible_distribution", json!("Ubuntu"));
-    store.lock().unwrap().set_untrusted_fact(
-        "h1",
-        "ansible_distribution_major_version",
-        json!("24"),
-    );
+        .set_host_fact("h1", "ansible_distribution", json!("Ubuntu"));
+    store
+        .lock()
+        .unwrap()
+        .set_host_fact("h1", "ansible_distribution_major_version", json!("24"));
     assert_eq!(bound(&step, &store).unwrap(), [(json!(ubuntu), true)]);
 }
 

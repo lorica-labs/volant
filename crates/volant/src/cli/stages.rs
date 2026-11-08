@@ -5,8 +5,6 @@
 
 use std::path::PathBuf;
 
-use serde_json::{Map, Value};
-
 use crate::compile::{self, Compiled, TagSelection};
 use crate::config::Config;
 use crate::playbook::{self, Play, Playbook};
@@ -21,7 +19,7 @@ pub(super) fn compile_all(
     playbooks: &[Playbook],
     config: &Config,
     selection: &TagSelection,
-    extra: &Map<String, Value>,
+    extra: &crate::tags::Tagged,
 ) -> anyhow::Result<Vec<Vec<Compiled>>> {
     let mut compiled = Vec::new();
     for pb in playbooks {
@@ -117,7 +115,7 @@ mod tests {
             &playbooks,
             &Config::default(),
             &TagSelection::default(),
-            &Map::new(),
+            &crate::tags::Tagged::default(),
         )
         .unwrap_err();
         let (code, message) = refusal(&err);
@@ -139,7 +137,7 @@ mod tests {
             &playbooks,
             &Config::default(),
             &TagSelection::default(),
-            &Map::new(),
+            &crate::tags::Tagged::default(),
         )
         .unwrap();
         check_compiled(&playbooks, &compiled, |_| false).unwrap();

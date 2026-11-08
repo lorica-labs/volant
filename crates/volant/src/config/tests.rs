@@ -1072,3 +1072,57 @@ fn json_indent_is_read_from_the_environment() {
         unsafe { std::env::remove_var(name) };
     }
 }
+
+/// `host_group_vars` runs at a stage as `_plugin_should_run` of ansible-core 2.19.12 decides: its
+/// own `stage` first, else `run_vars_plugins`, and never once `vars_plugins_enabled` leaves it out.
+#[rstest::rstest]
+#[case::demand("", [false, true, true])]
+#[case::start("run_vars_plugins = start\n", [true, false, true])]
+#[case::own_stage(
+    "run_vars_plugins = start\n[vars_host_group_vars]\nstage = task\n",
+    [false, true, false]
+)]
+#[case::own_all("[vars_host_group_vars]\nstage = all\n", [true, true, true])]
+#[case::disabled("vars_plugins_enabled = acme.demo.late\n", [false, false, false])]
+fn host_group_vars_runs_at_the_stages_its_settings_give(
+    #[case] text: &str,
+    #[case] runs: [bool; 3],
+) {
+    let c = cfg(&format!("[defaults]\n{text}"), ".");
+    let got = ["inventory", "task", "all"].map(|stage| c.vars_plugins.host_group_vars_runs(stage));
+    assert_eq!(got, runs);
+}
+
+/// What may load besides `host_group_vars`: any other enabled name, then the Python files of the
+/// configured directories and of each playbook's `vars_plugins/`, with no `_` name among them.
+#[test]
+fn the_vars_plugins_found_are_other_names_and_python_files() {
+    let root = tempfile::tempdir().unwrap();
+    let configured = root.path().join("configured");
+    let playbook = root.path().join("playbook");
+    std::fs::create_dir_all(&configured).unwrap();
+    std::fs::create_dir_all(playbook.join("vars_plugins")).unwrap();
+    for file in ["one.py", "notes.txt", "__init__.py"] {
+        std::fs::write(configured.join(file), "").unwrap();
+    }
+    std::fs::write(playbook.join("vars_plugins/two.py"), "").unwrap();
+    let plugins = VarsPlugins {
+        dirs: vec![configured.clone()],
+        enabled: vec!["host_group_vars".into(), "acme.demo.late".into()],
+        ..VarsPlugins::default()
+    };
+    let found = plugins.found(std::slice::from_ref(&playbook));
+    let files = [
+        configured.join("one.py"),
+        playbook.join("vars_plugins/two.py"),
+    ];
+    let expected: Vec<String> = std::iter::once("acme.demo.late".to_string())
+        .chain(files.iter().map(|f| f.display().to_string()))
+        .collect();
+    assert_eq!(found, expected);
+    let none = VarsPlugins {
+        dirs: Vec::new(),
+        ..VarsPlugins::default()
+    };
+    assert!(none.found(&[]).is_empty(), "the default loads nothing else");
+}

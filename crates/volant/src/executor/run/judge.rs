@@ -158,7 +158,7 @@ pub(in crate::executor) fn break_after(
     lay_returned_facts(&mut vars, task, item, result, templar, false);
     if let Some(name) = &task.register {
         // What the host returned: data, never templated again.
-        vars.insert_untrusted(name.clone(), Value::Object(result.0.clone()));
+        vars.insert_from_host(name.clone(), Value::Object(result.0.clone()));
     }
     for condition in &task.break_when {
         crate::profile::count(crate::profile::Counter::RenderWhen, 1);
@@ -230,9 +230,9 @@ pub(super) fn condition_vars(
         task.delegate_to.as_deref().is_some_and(|to| !to.is_empty()) && task.delegates_facts();
     lay_returned_facts(&mut vars, task, item, result, templar, delegated);
     if let Some(reg) = &task.register {
-        vars.insert_untrusted(reg.clone(), Value::Object(result.0.clone()));
+        vars.insert_from_host(reg.clone(), Value::Object(result.0.clone()));
     }
-    vars.insert_untrusted("result".into(), Value::Object(result.0.clone()));
+    vars.insert_from_host("result".into(), Value::Object(result.0.clone()));
     vars
 }
 
@@ -255,11 +255,12 @@ fn lay_returned_facts(
         // The trust `record_local_facts` gives the same names once they are written.
         name @ ("set_fact" | "include_vars") => {
             let data = set_fact_data(task, item, templar);
+            let tags = super::include_vars::result_tags(result);
             for (key, value) in facts {
                 if name == "set_fact" && data.contains(key) {
-                    vars.insert_untrusted(key.clone(), value.clone());
+                    vars.insert_from_host(key.clone(), value.clone());
                 } else {
-                    vars.insert(key.clone(), value.clone());
+                    vars.insert_tagged(key.clone(), value.clone(), tags.get(key).cloned());
                 }
             }
         }

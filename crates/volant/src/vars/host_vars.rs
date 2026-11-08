@@ -20,13 +20,11 @@ pub struct HostVars {
     pub hostvars: Arc<crate::vars::HostvarsMap>,
     /// `groups` and the play's host lists, shared for the same reason and in the same way.
     pub shared: Arc<Map<String, Value>>,
+    /// Which of `shared` list a name from a managed host.
+    pub data_lists: Arc<BTreeSet<String>>,
     /// The host's gathered facts that answer, shared with the store rather than copied: read
     /// after `shared` and before `map`. See `VarStore::layered_for_host`.
     pub facts: Arc<Map<String, Value>>,
-    /// Names in `map` that came from a managed host, for this host and this task.
-    pub untrusted: BTreeSet<String>,
-    /// Hosts holding at least one such name, with those names, for the `hostvars[other]` path.
-    pub untrusted_hosts: Arc<crate::vars::UntrustedHosts>,
     /// The variables the items of a loop share, read after `map` and never written: see
     /// [`HostVars::shared_by_items`]. Empty for a map that stands alone.
     pub base: Arc<crate::tags::Tagged>,
@@ -69,13 +67,22 @@ pub fn settled_all(hostvars: &crate::vars::HostvarsMap) -> Map<String, Value> {
 
 impl HostVars {
     /// `insert`, for a name whose value came from a managed host: a `register`, `result`, a loop
-    /// item built from one. The name is data from here on and is never rendered again.
-    pub fn insert_untrusted(&mut self, key: String, value: Value) -> Option<Value> {
-        // After, not before, for the reason `VarStore::set_untrusted_fact` gives: `insert`
-        // clears the name.
-        let previous = self.insert(key.clone(), value);
-        self.untrusted.insert(key);
-        previous
+    /// item built from one.
+    pub fn insert_from_host(&mut self, key: String, value: Value) -> Option<Value> {
+        self.insert_tagged(key, value, Some(crate::tags::from_host(None)))
+    }
+
+    /// The tags of the value `key` reads in the layers that hold them.
+    pub fn tree(&self, key: &str) -> Option<&crate::tags::TagTree> {
+        self.map.tree(key).or_else(|| self.base.tree(key))
+    }
+
+    /// Whether the value `key` reads came from a managed host.
+    pub fn is_from_host(&self, key: &str) -> bool {
+        self.facts.contains_key(key)
+            || self
+                .tree(key)
+                .is_some_and(|tree| crate::tags::is_from_host(tree.own()))
     }
 
     /// Writes a name into the host's own map once the map is built - a loop variable, a
@@ -85,9 +92,16 @@ impl HostVars {
     /// own value gets to answer.
     /// The map is left alone when there is no collision, so the ordinary write costs nothing.
     pub fn insert(&mut self, key: String, value: Value) -> Option<Value> {
-        // The name gets its trust back, the way `VarStore::set_fact` gives it back: this write
-        // is author content whatever the name held before.
-        self.untrusted.remove(&key);
+        self.insert_tagged(key, value, None)
+    }
+
+    /// [`HostVars::insert`], with the tags of the value.
+    pub fn insert_tagged(
+        &mut self,
+        key: String,
+        value: Value,
+        tree: Option<crate::tags::TagTree>,
+    ) -> Option<Value> {
         if self.shared.contains_key(&key) {
             let mut shared = Map::clone(&self.shared);
             shared.remove(&key);
@@ -98,7 +112,7 @@ impl HostVars {
             facts.shift_remove(&key);
             self.facts = Arc::new(facts);
         }
-        self.map.insert(key, value, None)
+        self.map.insert(key, value, tree)
     }
 
     /// Lays the `ansible_facts` a module just returned over these variables, as ansible-core's
@@ -117,9 +131,9 @@ impl HostVars {
             .cloned()
             .unwrap_or_default();
         namespace.insert("ansible_facts".into(), Value::Object(namespaced));
-        self.insert_untrusted("ansible_facts".into(), Value::Object(namespace));
+        self.insert_from_host("ansible_facts".into(), Value::Object(namespace));
         for (key, value) in flat {
-            self.insert_untrusted(key, value);
+            self.insert_from_host(key, value);
         }
     }
 
@@ -164,32 +178,17 @@ impl HostVars {
     /// The invariant the readers rely on: **`base` never holds a trusted value that contains a
     /// template.** What a render could still change stays in `map`, which is read first and is
     /// the layer that is resolved again for each item. What goes to `base` is a value with no
-    /// template in it, or a name that came from a managed host: that is data, and no render
-    /// touches it, whatever text it holds. A reader that treats a name missing from `map` as
-    /// holding nothing to render (the reads of the template context, and the design of the open
-    /// change that renders a variable when another template reads it) is right only while this
-    /// holds. Keep it when `base` gains an entry.
-    /// `resolved`, what a resolution of these variables returned, in place of `map`, with the
-    /// tags of each name whose value held no template: what a render produced is a template
-    /// result, which is not the value the tags were written for.
-    pub fn set_resolved(&mut self, resolved: Map<String, Value>, untrusted: BTreeSet<String>) {
-        let rendered: Vec<String> = self
-            .map
-            .iter()
-            .filter(|(_, value)| crate::template::holds_template(value))
-            .map(|(name, _)| name.clone())
-            .collect();
-        self.map.replace_values(resolved, &rendered);
-        self.untrusted = untrusted;
-    }
-
+    /// trusted template in it: no render touches it, whatever text it holds. A reader that treats
+    /// a name missing from `map` as holding nothing to render (the reads of the template context,
+    /// and the design of the open change that renders a variable when another template reads it)
+    /// is right only while this holds. Keep it when `base` gains an entry.
     pub fn shared_by_items(mut self) -> Self {
         let mut base = crate::tags::Tagged::clone(&self.base);
         let mut kept = crate::tags::Tagged::default();
         let (map, mut tags) = std::mem::take(&mut self.map).into_parts();
         for (name, value) in map {
             let tree = tags.swap_remove(&name);
-            if self.untrusted.contains(&name) || !crate::template::holds_template(&value) {
+            if !crate::template::holds_trusted_template(&value, tree.as_ref()) {
                 base.insert(name, value, tree);
             } else {
                 kept.insert(name, value, tree);
@@ -208,9 +207,8 @@ impl<'a> From<&'a HostVars> for Vars<'a> {
             tags: Some(vars.map.tags()),
             hostvars: Some(&vars.hostvars),
             shared: Some(&vars.shared),
+            data_lists: Some(&vars.data_lists),
             facts: Some(&vars.facts),
-            untrusted: Some(&vars.untrusted),
-            untrusted_hosts: Some(&vars.untrusted_hosts),
             base: Some(&vars.base),
         }
     }

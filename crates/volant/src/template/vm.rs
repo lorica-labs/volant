@@ -14,10 +14,12 @@ use minijinja::syntax::SyntaxConfig;
 use minijinja::{AutoEscape, ErrorKind};
 use serde_json::Value;
 
+mod closure;
 mod embedded;
 mod expression;
 mod literals;
 mod syntax;
+mod unary;
 pub(super) use syntax::{as_expression, as_template, jinja as jinja_syntax};
 
 pub(super) use embedded::inline_conditional;
@@ -25,7 +27,6 @@ pub(crate) use embedded::{HELP as EMBEDDED_HELP, WARNING as EMBEDDED_WARNING, em
 pub(super) use expression::single_expression;
 
 use super::bridged;
-use super::context::set_literal;
 use super::env::{container_repr, holds_undefined};
 use super::pymethods::format::{holds_tuple, repr, to_str};
 use super::templar::Templar;
@@ -36,18 +37,21 @@ mod rewrite;
 use rewrite::mutates;
 pub(super) use rewrite::route_calls;
 
-/// Replaces every `!unsafe` wrapper inside `value` by its text, and every `!vault` wrapper that
-/// decrypts by what it holds; whether there was one. A vault wrapper that does not decrypt stays
-/// as it is, and raises when something renders it.
-pub(super) fn unwrap_unsafe(value: &mut Value) -> bool {
+/// Whether a part of `value` is a string `tree` trusts as a template and that holds one: what a
+/// read renders. With no tree there is nothing to trust.
+pub(crate) fn holds_trusted_template(value: &Value, tree: Option<&crate::tags::TagTree>) -> bool {
+    let Some(tree) = tree else {
+        return false;
+    };
     match value {
-        Value::String(s) => {
-            let text = crate::yaml::unsafe_text(s)
-                .or_else(|| crate::yaml::vault_text(s).and_then(|c| crate::vault::reveal(&c).ok()));
-            text.map(|t| *s = t).is_some()
-        }
-        Value::Array(items) => items.iter_mut().fold(false, |a, v| unwrap_unsafe(v) | a),
-        Value::Object(map) => map.values_mut().fold(false, |a, v| unwrap_unsafe(v) | a),
+        Value::String(_) => crate::tags::is_trusted(tree.own()) && holds_template(value),
+        Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .any(|(i, item)| holds_trusted_template(item, tree.index(i))),
+        Value::Object(map) => map
+            .iter()
+            .any(|(key, item)| holds_trusted_template(item, tree.at(key))),
         _ => false,
     }
 }
@@ -236,7 +240,9 @@ pub(super) fn render_counted(
     syntax_config: SyntaxConfig,
 ) -> Result<(String, Emitted), minijinja::Error> {
     let inlined = embedded::inline_lookup_terms(source, false, syntax_config.clone());
-    let unfolded = literals::unfold_comparisons(&inlined, false, syntax_config.clone());
+    let signed = unary::without_unary_plus(&inlined, false, syntax_config.clone());
+    let enclosed = closure::with_includes_enclosed(&signed, syntax_config.clone());
+    let unfolded = literals::unfold_comparisons(&enclosed, false, syntax_config.clone());
     let config = TemplateConfig {
         syntax_config,
         // Never by file name: measured on ansible-core 2.19.12, `index.html.j2` holding
@@ -275,7 +281,7 @@ pub(super) fn render_counted(
     Ok((out, emitted))
 }
 
-/// The filters the loader writes into the text of `!unsafe` and `!vault` values. A template that
+/// The filters the loader writes into the text of `!vault` and `!!binary` values. A template that
 /// calls one is refused the way the reference refuses an unknown filter, unless `source` is
 /// exactly the loader's wrapper. A playbook can still spell the wrapper itself; that is the
 /// ceiling of a name check on text.
@@ -284,8 +290,7 @@ fn internal_filter<'a, 's: 'a>(
     source: Option<&str>,
 ) -> Result<(), minijinja::Error> {
     let wrapper = source.is_some_and(|s| {
-        crate::yaml::unsafe_text(s)
-            .or_else(|| crate::yaml::vault_text(s))
+        crate::yaml::vault_text(s)
             .or_else(|| crate::yaml::binary_text(s))
             .is_some()
     });
@@ -345,7 +350,8 @@ pub(super) fn eval_expr(
 ) -> Result<minijinja::Value, minijinja::Error> {
     crate::profile::count(crate::profile::Counter::Compile, 1);
     let inlined = embedded::inline_lookup_terms(expr, true, SyntaxConfig::default());
-    let unfolded = literals::unfold_comparisons(&inlined, true, SyntaxConfig::default());
+    let signed = unary::without_unary_plus(&inlined, true, SyntaxConfig::default());
+    let unfolded = literals::unfold_comparisons(&signed, true, SyntaxConfig::default());
     let ast = no_panic(|| parse_expr(&unfolded))?;
     let mut codegen = CodeGenerator::new("<expression>", &unfolded);
     codegen.compile_expr(&ast);
@@ -428,48 +434,4 @@ fn zero_division(err: &minijinja::Error) -> Option<&'static str> {
         (true, false) => "integer division or modulo by zero",
         (true, true) => "float floor division by zero",
     })
-}
-
-/// Notes that a pass left text that must stay as it is, when the result still holds a template
-/// marker and the marker is the text's own:
-///
-/// - no read of the pass handed out a template that was not rendered, so no stored template can
-///   be in the result: the text wrote the marker itself, with a `raw` block or in a string such as
-///   `'{{'`, or built it from names and text that hold none (`'{{ ' ~ name ~ ' }}'`, `replace`);
-/// - or `source` has a `raw` block. `source` is the author's text on the `first` pass. On a
-///   later pass it is a variable's value, and a result that still has a `raw` block is a chain
-///   not read to its end.
-///
-/// The reference renders a result once, so such text is literal. Neither a later pass nor a later
-/// read of the variable that holds it renders it again: see `render_value_tainted`.
-pub(super) fn keep_literal(
-    source: &str,
-    result: &Value,
-    ctx: &minijinja::Value,
-    first: bool,
-    none_deferred: bool,
-) {
-    if !holds_template(result) {
-        return;
-    }
-    let raw =
-        opens_raw(source) && (first || !matches!(result, Value::String(text) if opens_raw(text)));
-    if none_deferred || raw {
-        set_literal(ctx, true);
-    }
-}
-
-/// Whether `text` holds a `{% raw %}` tag, with or without whitespace control.
-fn opens_raw(text: &str) -> bool {
-    let mut rest = text;
-    while let Some(at) = rest.find("{%") {
-        rest = &rest[at + 2..];
-        let tag = rest.trim_start_matches(['-', '+']).trim_start();
-        if let Some(after) = tag.strip_prefix("raw")
-            && after.starts_with(|c: char| c.is_whitespace() || matches!(c, '-' | '+' | '%'))
-        {
-            return true;
-        }
-    }
-    false
 }

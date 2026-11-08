@@ -170,14 +170,14 @@ impl Bridged {
                     Pending::RemoveTmp(path),
                 ))
             }
-            // The helper renders a variable when the plugin reads it, so it is told whether the
-            // host holds anything a managed host sent: such a host's variables are only data.
+            // The helper renders a variable when the plugin reads it, so it is told whether every
+            // template of the host is one a render may take: if not, its variables are only data.
             Ask::HostVar { host } => Err(Reply::Value(self.hostvars.get(&host).map_or(
                 Value::Null,
                 |entry| {
                     json!({
                         "vars": crate::vars::settled(entry).into_owned(),
-                        "trusted": !self.untrusted_hosts.iter().any(|hosts| hosts.contains_key(&host)),
+                        "trusted": entry.all_templates_trusted(),
                     })
                 },
             ))),

@@ -8,6 +8,9 @@ use serde_json::{Map, Value};
 
 use super::{Inventory, InventoryPlugin, ParseCx, PluginError, Source, ini, sources};
 
+mod values;
+use values::{script_origin, script_tagged, type_name, vault_not_text};
+
 pub(super) struct Script;
 
 impl InventoryPlugin for Script {
@@ -52,9 +55,11 @@ impl InventoryPlugin for Script {
                     Some(Value::Object(vars)) => vars,
                     Some(other) => {
                         return Err(failure(format!(
-                            "Improperly formatted host information for {host}: '{}' object has \
-                             no attribute 'items'",
-                            type_name(&other)
+                            "Invalid data from file, expected dictionary and got:\n\n{}",
+                            match other {
+                                Value::String(text) => text,
+                                other => crate::playbook::python_repr(&other),
+                            }
                         )));
                     }
                 };
@@ -77,22 +82,6 @@ impl InventoryPlugin for Script {
 }
 
 /// A deprecation of the script plugin, worded and ended as the reference's `display.deprecated`.
-/// Where the reference says an inventory script's values come from.
-fn script_origin(path: &str) -> crate::tags::OriginId {
-    crate::tags::origin_described(&format!("<inventory script output from {}>", py_repr(path)))
-}
-
-/// A host's variables from a script's output, trusted as the reference trusts that output.
-fn script_tagged(path: &str, vars: Map<String, Value>) -> crate::tags::Tagged {
-    let origin = script_origin(path);
-    let mut out = crate::tags::Tagged::default();
-    for (key, value) in vars {
-        let tree = crate::tags::uniform(&value, origin, true);
-        out.insert(key, value, tree);
-    }
-    out
-}
-
 fn deprecation(path: &str, what: &str) -> String {
     format!(
         "{what} This feature will be removed from inventory plugin 'script' in ansible-core \
@@ -141,18 +130,6 @@ fn failure(message: String) -> PluginError {
         message,
         origin: None,
         cause: None,
-    }
-}
-
-fn type_name(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "NoneType",
-        Value::Bool(_) => "bool",
-        Value::Number(n) if n.is_f64() => "float",
-        Value::Number(_) => "int",
-        Value::String(_) => "str",
-        Value::Array(_) => "list",
-        Value::Object(_) => "dict",
     }
 }
 
@@ -251,7 +228,10 @@ fn run(path: &str, args: &[&str]) -> Result<(Map<String, Value>, String), Plugin
             }
             match map.get("_meta").and_then(|m| m.get("profile")) {
                 None => {}
-                Some(Value::String(p)) if p.starts_with("inventory_") => {}
+                Some(Value::String(p)) if p == "inventory_legacy" => {}
+                Some(Value::String(p)) if p.starts_with("inventory_") => {
+                    return Err(decoder(format!("Unknown profile name {}.", py_repr(p))));
+                }
                 Some(Value::String(p)) => {
                     return Err(decoder(format!(
                         "Non-inventory profile {} is not allowed.",
@@ -264,6 +244,15 @@ fn run(path: &str, args: &[&str]) -> Result<(Map<String, Value>, String), Plugin
                         type_name(other)
                     )));
                 }
+            }
+            if let Some(kind) = vault_not_text(&map) {
+                return Err(with_stderr(
+                    path,
+                    format!(
+                        "Inventory script result could not be parsed as JSON: JSON parsing                          failed: __ansible_vault is <class '{kind}'> not <class 'str'>"
+                    ),
+                    &stderr,
+                ));
             }
             let mut map = map;
             map.values_mut().for_each(crate::yaml::escape_strings);
@@ -392,6 +381,9 @@ fn group(
         ))
     };
     into.group_mut(name);
+    // Measured on ansible-core 2.19.12: the variables of a group rewritten as its sole host are
+    // never trusted as templates.
+    let mut rewritten = false;
     let data = match data {
         Value::Object(map) => {
             if ["hosts", "vars", "children"]
@@ -408,6 +400,7 @@ fn group(
                         py_repr(name)
                     ),
                 ));
+                rewritten = true;
                 Map::from_iter([
                     ("hosts".to_string(), Value::from(vec![name])),
                     ("vars".to_string(), Value::Object(map)),
@@ -456,14 +449,14 @@ fn group(
                     into.group_mut(name).priority = Some(p);
                 }
             } else {
-                let tree = crate::tags::uniform(
-                    value,
-                    script_origin(&source.path().display().to_string()),
-                    true,
-                );
-                into.group_mut(name)
-                    .vars
-                    .insert(key.clone(), value.clone(), tree);
+                let origin = script_origin(&source.path().display().to_string());
+                let (value, tree) = crate::yaml::unsafe_markers(value, origin);
+                let tree = if rewritten {
+                    crate::tags::uniform(&value, origin, false)
+                } else {
+                    tree
+                };
+                into.group_mut(name).vars.insert(key.clone(), value, tree);
             }
         }
     }

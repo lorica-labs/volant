@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use crate::inventory::Host;
 use crate::playbook::PlayTask;
@@ -226,7 +226,7 @@ pub(crate) fn batches(
     hosts: &[Host],
     serial: Option<&Value>,
     templar: &Templar,
-    vars: &Map<String, Value>,
+    vars: &crate::tags::Tagged,
 ) -> anyhow::Result<Vec<Vec<Host>>> {
     // The reference stores `serial` as a list, so a scalar is a one-element list and an empty
     // list is `[-1]`, which is "every host at once". An absent `serial` reaches the same place.
@@ -241,7 +241,7 @@ pub(crate) fn batches(
             let mut with_omit;
             let vars = if raw.to_string().contains("omit") {
                 with_omit = vars.clone();
-                with_omit.insert("omit".into(), Value::from(omit));
+                with_omit.insert("omit".into(), Value::from(omit), None);
                 &with_omit
             } else {
                 vars

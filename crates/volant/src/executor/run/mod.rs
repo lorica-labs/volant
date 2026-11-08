@@ -50,7 +50,9 @@ pub(super) use record::{
     fact_targets, record_facts, record_inventory_results, record_local_facts, record_registered,
     record_unrun,
 };
-pub(super) use register::{failed_task_value, notified_handlers, registered_value, take_warnings};
+pub(super) use register::{
+    failed_task_value, keep_item_tags, notified_handlers, registered_value, take_warnings,
+};
 pub(super) use replayed::Replayed;
 pub(crate) use retry::RAISED_KEY;
 pub(super) use retry::{

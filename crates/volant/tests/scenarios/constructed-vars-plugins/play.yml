@@ -1,0 +1,8 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: >-
+          {{ group_names }} group={{ seen_group }} host={{ seen_host }} early={{ seen_early }}
+          staged={{ seen_staged }}/{{ staged_note | default('unset') }}
+          all={{ seen_all }}/{{ only_all }}

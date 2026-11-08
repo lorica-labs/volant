@@ -77,15 +77,13 @@ impl Emitter {
         }
     }
 
-    /// A `!vault` value, or text marked unsafe written as the text: `false` for any other value.
+    /// A `!vault` value: `false` for any other value.
     pub(super) fn tagged_scalar(&mut self, v: &Value, simple_key: bool) -> bool {
         let Some(text) = v.as_str() else {
             return false;
         };
         if let Some(cipher) = crate::yaml::vault_text(text) {
             self.vault(&cipher, simple_key);
-        } else if let Some(plain) = crate::yaml::unsafe_text(text) {
-            self.scalar_text(&Value::from(plain), simple_key);
         } else {
             return false;
         }

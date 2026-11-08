@@ -13,12 +13,10 @@ use serde_json::Value;
 use crate::bridge::{Bridge, PluginKind};
 
 use super::bridged;
-use super::context::{Vars, begin, context_of, deferred, is_literal, take_failure};
+use super::context::{Vars, begin, context_of, take_failure};
 use super::env::{environment, holds_undefined, truthy, type_name};
 use super::missing::{named, omitting, without_undefined};
-use super::vm::{
-    TemplateReads, convert_error, eval_expr, keep_literal, single_expression, template_reads,
-};
+use super::vm::{TemplateReads, convert_error, eval_expr, single_expression, template_reads};
 use super::{Tainted, TemplateError, as_expression, inline_conditional};
 
 /// A handle on the environment and the bridge, cheap to clone: a render's context holds one so
@@ -171,33 +169,22 @@ impl Templar {
         Arc::clone(env)
     }
 
-    /// What the template `text` reads, cached. `None` when it does not compile.
-    pub(super) fn reads_of(&self, text: &str) -> Option<Arc<TemplateReads>> {
-        self.reads_counted(text, true)
-    }
-
     /// Whether the template `text` may read one of `names`: `true` when that cannot be told.
     /// For the profile, so the cache's own counters leave it out.
     pub fn may_read(&self, text: &str, names: &[&str]) -> bool {
-        self.reads_counted(text, false).is_none_or(|reads| {
+        self.reads(text).is_none_or(|reads| {
             reads.dynamic || names.iter().any(|name| reads.names.contains(*name))
         })
     }
 
-    fn reads_counted(&self, text: &str, counted: bool) -> Option<Arc<TemplateReads>> {
+    fn reads(&self, text: &str) -> Option<Arc<TemplateReads>> {
         let mut table = self
             .inner
             .reads
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         if let Some(known) = table.get(text) {
-            if counted {
-                crate::profile::count(crate::profile::Counter::ReadsHit, 1);
-            }
             return known.clone();
-        }
-        if counted {
-            crate::profile::count(crate::profile::Counter::ReadsMiss, 1);
         }
         let found = template_reads(text).map(Arc::new);
         if table.len() >= MAX_READS {
@@ -227,6 +214,8 @@ impl Templar {
         super::unknown::through(|| self.render_known(text, ctx, tainted))
     }
 
+    /// A render happens once: a variable holding a trusted template is rendered when it is read,
+    /// so what comes out is a result, and no marker in it is a template.
     fn render_known(
         &self,
         text: &str,
@@ -236,43 +225,8 @@ impl Templar {
         // Per string, not per context: `render_value_in` walks a whole structure through one
         // context, and a tainted field must not make the next field data too.
         tainted.store(false, Ordering::Relaxed);
-        let before = begin(ctx);
-        let mut value = self.render_once(text, ctx)?;
-        keep_literal(text, &value, ctx, true, deferred(ctx) == before);
-        // A variable can hold a template of its own, so Ansible renders a result again while it
-        // still carries a marker. Three further passes: a chain longer than that is a loop, and
-        // an unchanged result ends it earlier. Not when the pass read a value that came from a
-        // managed host, or a file read at run time: such a result is data, and rendering it
-        // again is how a remote string gets to run code here. Nor when the text wrote the
-        // marker itself: see `keep_literal`.
-        for _ in 0..3 {
-            if tainted.load(Ordering::Relaxed) || is_literal(ctx) {
-                break;
-            }
-            let Value::String(text) = &value else { break };
-            if !Self::holds_expression(text) {
-                break;
-            }
-            let before = deferred(ctx);
-            let next = self.render_once(text, ctx)?;
-            if next == value {
-                break;
-            }
-            keep_literal(text, &next, ctx, false, deferred(ctx) == before);
-            value = next;
-        }
-        Ok(value)
-    }
-
-    /// `render`, one pass: a result that is itself a template is not rendered again, which is how
-    /// the reference templates a play's `vars_prompt` before it asks.
-    pub(crate) fn render_one_pass<'a>(
-        &self,
-        text: &str,
-        vars: impl Into<Vars<'a>>,
-    ) -> Result<Value, TemplateError> {
-        let (ctx, _tainted) = context_of(self, vars.into());
-        self.render_once(text, &ctx)
+        begin(ctx);
+        self.render_once(text, ctx)
     }
 
     /// Templates every string inside a value. Mapping keys are left alone.
@@ -284,9 +238,8 @@ impl Templar {
         Ok(self.render_value_tainted(value, vars)?.0)
     }
 
-    /// `render_value`, saying as well whether what came out is data: true when a string of it
-    /// read a name from a managed host or a file at run time, or holds text `keep_literal` keeps.
-    /// The loop path asks: such items must not be rendered again once bound to the loop variable.
+    /// `render_value`, saying as well whether a string of it read a name from a managed host or a
+    /// file at run time.
     pub fn render_value_tainted<'a>(
         &self,
         value: &Value,
@@ -294,8 +247,21 @@ impl Templar {
     ) -> Result<(Value, bool), TemplateError> {
         let (ctx, tainted) = context_of(self, vars.into());
         let mut any = false;
-        let (out, _) = self.render_value_in(value, &ctx, &tainted, &mut any, true, None)?;
+        let (out, _) = self.render_value_in(value, &ctx, &tainted, &mut any, None)?;
         Ok((out, any))
+    }
+
+    /// `render_value_tainted`, with the tags of the value in place of the answer.
+    pub fn render_value_tagged<'a>(
+        &self,
+        value: &Value,
+        vars: impl Into<Vars<'a>>,
+    ) -> Result<(Value, bool, Option<crate::tags::TagTree>), TemplateError> {
+        let (ctx, tainted) = context_of(self, vars.into());
+        let mut any = false;
+        let tagging = Some(super::render_map::Tagging { origin: None });
+        let (out, tree) = self.render_value_in(value, &ctx, &tainted, &mut any, tagging)?;
+        Ok((out, any, tree))
     }
 
     /// Evaluates one expression and returns its value with its type.
@@ -304,8 +270,6 @@ impl Templar {
         expr: &str,
         vars: impl Into<Vars<'a>>,
     ) -> Result<Value, TemplateError> {
-        // `evaluate_in` takes one pass and no more, so a result built from a name that came from
-        // a managed host is already handed back as it stands: there is nothing here to stop.
         self.evaluate_in(expr, &context_of(self, vars.into()).0)
     }
 
@@ -319,6 +283,17 @@ impl Templar {
         let (ctx, tainted) = context_of(self, vars.into());
         let value = self.evaluate_in(expr, &ctx)?;
         Ok((value, tainted.load(Ordering::Relaxed)))
+    }
+
+    /// `evaluate`, with the tags of the value: a string they trust is one a read left as written.
+    pub fn evaluate_tagged<'a>(
+        &self,
+        expr: &str,
+        vars: impl Into<Vars<'a>>,
+    ) -> Result<(Value, Option<crate::tags::TagTree>), TemplateError> {
+        let (ctx, _) = context_of(self, vars.into());
+        let value = self.evaluate_in(expr, &ctx)?;
+        Ok((value, super::tagged::take_result(&ctx)))
     }
 
     pub(super) fn evaluate_in(
@@ -362,31 +337,35 @@ impl Templar {
     /// A `when` clause. Ansible accepts `{{ }}` around it with a warning; the result must be a
     /// boolean, anything else is an error in the reference release.
     ///
-    /// A delimited condition that renders to a string is evaluated again as a condition, the
-    /// way the reference treats a string an author wrote (`healthy: "true"`, `cond: "1 == 1"`).
-    /// Never when the first pass read a value from a managed host or a lookup's text: that
-    /// string is data, and compiling it is how a host would run code here.
+    /// A delimited condition that renders to a string is evaluated again as a condition when the
+    /// string is trusted as a template, the way the reference treats a string an author wrote
+    /// (`healthy: "true"`, `cond: "1 == 1"`). Any other string is data, refused here: compiling it
+    /// is how a host would run code on the controller.
     pub fn condition<'a>(
         &self,
         expr: &str,
         vars: impl Into<Vars<'a>>,
     ) -> Result<bool, TemplateError> {
-        if crate::yaml::unsafe_text(expr).is_some() {
-            return Err(TemplateError(super::UNTRUSTED.into()));
-        }
         let (ctx, tainted) = context_of(self, vars.into());
         let delimited = single_expression(expr);
+        // Measured on ansible-core 2.19.12: a condition that starts and ends with delimiters is
+        // rendered as a template, `{{ 'a' }} == {{ 'b' }}` included, and what it renders to is
+        // evaluated only when trusted.
+        let whole = delimited.is_none() && crate::playbook::possibly_all_template(expr.trim());
         // A condition written in braces is a template: its syntax errors are a template's.
         let mut value = match delimited {
             Some(inner) => super::as_template(expr, inner, || self.evaluate_in(inner, &ctx))?,
+            None if whole => self.render_in(expr.trim(), &ctx, &tainted)?,
             None => self
                 .evaluate_in(&inline_conditional(expr), &ctx)
                 .map_err(as_expression)?,
         };
-        if delimited.is_some()
+        if (delimited.is_some() || whole)
             && let Value::String(text) = &value
         {
-            if tainted.load(Ordering::Relaxed) {
+            let trusted = super::tagged::take_result(&ctx)
+                .is_some_and(|tree| crate::tags::is_trusted(tree.own()));
+            if !trusted {
                 return Err(TemplateError(super::UNTRUSTED.into()));
             }
             value = self.evaluate_in(single_expression(text).unwrap_or(text.trim()), &ctx)?;
@@ -399,6 +378,15 @@ impl Templar {
         }
         match value {
             Value::Bool(b) => Ok(b),
+            other if super::allow_broken_conditionals() => {
+                let held = truthy(&other);
+                crate::playbook::print_deprecation(&format!(
+                    "Conditional result ({}) was derived from value of type '{}'. Conditionals must have a boolean result. This feature will be removed from ansible-core version 2.23.\n\nBroken conditionals are currently allowed because the `ALLOW_BROKEN_CONDITIONALS` configuration option is enabled.",
+                    if held { "True" } else { "False" },
+                    type_name(&other),
+                ));
+                Ok(held)
+            }
             other => Err(TemplateError(format!(
                 "Conditional result was {other} of type {}, which evaluates to {}. Conditionals must have a boolean result.",
                 type_name(&other),

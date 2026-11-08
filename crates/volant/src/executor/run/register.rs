@@ -13,28 +13,58 @@ use crate::template::Templar;
 use super::interpreter::action_fqcn;
 use super::judge::{empty_loop_result, loops, task_fails};
 
+/// The key a result of a loop holds the tags of its item under, as JSON: a `_volant_` key, taken
+/// off before anything shows or registers the result.
+const ITEM_TAGS_KEY: &str = "_volant_item_tags";
+
+/// Keeps the tags of the item in `r`, its result, for what the task registers.
+pub(in crate::executor) fn keep_item_tags(task: &PlayTask, item: &Item, r: &mut TaskResult) {
+    if task.register.is_some()
+        && item.element.is_some()
+        && let Some(tree) = item.vars.tree(&task.loop_var)
+    {
+        r.0.insert(ITEM_TAGS_KEY.into(), json!(tree));
+    }
+}
+
 /// The tags of what [`registered_value`] stores: those of the facts a `set_fact` or an
-/// `include_vars` result sets, under `ansible_facts` and, for a loop, under each item.
+/// `include_vars` result sets, under `ansible_facts` and, for a loop, under each item, beside
+/// those of the item itself.
 pub(in crate::executor) fn registered_tree(
     task: &PlayTask,
     results: &[(Option<Value>, TaskResult)],
 ) -> Option<TagTree> {
     let facts = |r: &TaskResult| {
         let tags = super::include_vars::result_tags(r);
-        let facts = TagTree::node(TagSetId::NONE, Children::Map(tags.into_iter().collect()))?;
-        let children = Children::Map(vec![("ansible_facts".into(), facts)]);
-        TagTree::node(TagSetId::NONE, children)
+        TagTree::node(TagSetId::NONE, Children::Map(tags.into_iter().collect()))
+            .map(|tree| ("ansible_facts".to_string(), tree))
+    };
+    let item = |r: &TaskResult| {
+        let kept = r.0.get(ITEM_TAGS_KEY)?;
+        let tree = serde_json::from_value::<TagTree>(kept.clone()).ok()?;
+        tree.is_known().then(|| (task.loop_var.clone(), tree))
     };
     if crate::executor::prepare::raised_by_label(results).is_some() {
         return None;
     }
     if !loops(task, results.first().map(|(element, _)| element)) {
-        return facts(&results.first()?.1);
+        let r = &results.first()?.1;
+        let children = facts(r)
+            .into_iter()
+            .chain(super::deprecation::value_tags(r));
+        return TagTree::node(TagSetId::NONE, Children::Map(children.collect()));
     }
     let items = results
         .iter()
         .enumerate()
-        .filter_map(|(i, (_, r))| Some((i, facts(r)?)))
+        .filter_map(|(i, (_, r))| {
+            let children = facts(r)
+                .into_iter()
+                .chain(super::deprecation::value_tags(r))
+                .chain(item(r))
+                .collect();
+            Some((i, TagTree::node(TagSetId::NONE, Children::Map(children))?))
+        })
         .collect();
     let items = TagTree::node(TagSetId::NONE, Children::Seq(items))?;
     let children = Children::Map(vec![("results".into(), items)]);

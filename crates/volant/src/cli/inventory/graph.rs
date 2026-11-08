@@ -25,10 +25,10 @@ pub(super) fn graph(
             GraphItem::Host(name) if export => store.exported_vars(name),
             GraphItem::Host(name) => store.listed_vars(name),
             GraphItem::Group(name) => {
-                store.listed_group_vars(name, &inventory.group_vars_of(name).into_iter().collect())
+                store.listed_group_vars(name, &inventory.tagged_group_vars(name))
             }
         };
-        let vars: BTreeMap<String, Value> = written(vars).into_iter().collect();
+        let vars = sorted_vars(written(vars));
         vars.iter()
             .map(|(name, value)| Ok(format!("{{{name} = {}}}", shown(value)?)))
             .collect()
@@ -74,9 +74,6 @@ fn shown(value: &Value) -> Result<String, String> {
             return crate::vault::reveal(&cipher)
                 .map_err(|reason| crate::vault::undecryptable(&cipher, &reason));
         }
-        if let Some(plain) = crate::yaml::unsafe_text(text) {
-            return Ok(plain);
-        }
         return Ok(text.clone());
     }
     Ok(nested(value))
@@ -89,8 +86,6 @@ fn nested(value: &Value) -> String {
         Value::String(text) => {
             if let Some(cipher) = crate::yaml::vault_text(text) {
                 format!("EncryptedString(ciphertext={})", quoted(&cipher))
-            } else if let Some(plain) = crate::yaml::unsafe_text(text) {
-                quoted(&plain)
             } else {
                 quoted(text)
             }

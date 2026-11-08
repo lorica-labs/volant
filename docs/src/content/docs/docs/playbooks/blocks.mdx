@@ -87,7 +87,7 @@ Handlers run in the order they are defined, not the order they were notified. A 
 
 A task notifies only when it reports `changed`. For a loop, the overall result decides, so one changed item is enough. Once a flush has run, the notifications are cleared, so a handler does not run again at the next flush unless something notifies it again.
 
-A `handlers:` list may hold an `import_tasks`, in a play or in a role. The handlers of the file it names take its place, with its keywords, and are notified by name and by `listen`. The file is looked for beside the file that wrote the statement, then in the playbook's directory.
+A `handlers:` list may hold an `import_tasks`, in a play or in a role. The handlers of the file it names take its place, with its keywords, and are notified by name and by `listen`. The file is looked for beside the file that wrote the statement. In a role it is then looked for in the role's `tasks/`, in the role's own directory and in the playbook's `handlers/`. The playbook's directory comes last.
 
 A handler may also be an `include_tasks`. Notified, it includes its file at the flush: `included:` shows under its `RUNNING HANDLER` banner, then the file's tasks run as handlers for the hosts that notified it. A role's handler looks for its file in the role's `tasks/` directory, as a task of the role does, and its tasks find the role's templates and files. An `include_role` written as a handler stops the run before anything runs, with exit code 4, as in Ansible.
 

@@ -76,3 +76,21 @@ pub(crate) fn configured_async_dir() -> Option<String> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone()
 }
+
+/// `ANSIBLE_ROLES_PATH` and `ANSIBLE_COLLECTIONS_PATH`. Measured: the environment replaces the
+/// file's `roles_path` rather than being appended to it, and a relative entry is read against the
+/// working directory.
+pub(super) fn env(config: &mut super::Config) {
+    let from_env = |name: &str| -> Option<Vec<PathBuf>> {
+        let list = path_list(&std::env::var(name).ok()?, Path::new(""));
+        (!list.is_empty()).then_some(list)
+    };
+    if let Some(list) = from_env("ANSIBLE_ROLES_PATH") {
+        config.roles_path = list;
+    }
+    if let Some(list) =
+        from_env("ANSIBLE_COLLECTIONS_PATHS").or_else(|| from_env("ANSIBLE_COLLECTIONS_PATH"))
+    {
+        config.collections_path = list;
+    }
+}

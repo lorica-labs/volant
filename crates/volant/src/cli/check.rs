@@ -7,6 +7,7 @@
 //! is `unknown`. Nothing connects, nothing is rendered for a host, nothing is written.
 
 mod discover;
+mod follow;
 mod report;
 
 use std::path::{Path, PathBuf};
@@ -206,19 +207,8 @@ impl Judge {
                 first_refused(compiled.iter().flatten().flat_map(tasks)),
             )
         })?;
-        // What a dynamic include names is read when a host reaches the statement.
-        for step in compiled.iter().flatten().flat_map(|c| &c.steps) {
-            if matches!(step.kind, StepKind::Include(_)) {
-                verdict.reasons.push(unknown(
-                    format!(
-                        "{}: what it names is checked when the run reaches it",
-                        step.task.module
-                    ),
-                    step.task.origin.as_ref(),
-                ));
-            }
-        }
-        let every = || compiled.iter().flatten();
+        let expanded = follow::includes(compiled.iter().flatten(), &mut verdict.reasons)?;
+        let every = || compiled.iter().flatten().chain(&expanded);
         for task in every().flat_map(tasks) {
             if task.deferred.module.is_some() {
                 verdict.reasons.push(unknown(
@@ -237,6 +227,7 @@ impl Judge {
             &every().collect::<Vec<_>>(),
             verdict,
         )?;
+        self.vars_plugins(&reach.plugin_dirs, verdict);
         let mut keys = self.keys.clone();
         for play in &playbooks[0].plays {
             keys.extend(key_files(play.vars.as_map(), &play.dir));
@@ -269,6 +260,39 @@ impl Judge {
         Ok(())
     }
 
+    /// The ansible-core the check asks, started the first time it is needed.
+    fn helper(&mut self) -> &mut Result<PythonBuilder, String> {
+        let runtime_less = self.runtime_less;
+        self.helper.get_or_insert_with(|| {
+            if runtime_less {
+                return Err("--runtime-less starts no ansible-core to resolve it".into());
+            }
+            PythonBuilder::start_installing(false).map_err(|err| {
+                format!(
+                    "no ansible-core on this controller resolves it ({err:#}); volant runtime install sets one up"
+                )
+            })
+        })
+    }
+
+    /// The vars plugins the run would load besides `host_group_vars`, which only ansible-core
+    /// runs: `unknown` when there is none to run them.
+    fn vars_plugins(&mut self, dirs: &[PathBuf], verdict: &mut Verdict) {
+        let found = self.config.vars_plugins.found(dirs);
+        if found.is_empty() {
+            return;
+        }
+        if self.helper().is_err() {
+            let why = if self.runtime_less {
+                "--runtime-less starts no ansible-core to run them"
+            } else {
+                "no ansible-core on this controller runs them; volant runtime install sets one up"
+            };
+            let message = format!("vars plugins {}: {why}", found.join(", "));
+            verdict.reasons.push(unknown(message, None));
+        }
+    }
+
     /// The collection modules `named`, resolved by the controller's ansible-core as the run
     /// resolves them; `unknown` when there is none to ask.
     fn resolve(
@@ -288,18 +312,7 @@ impl Judge {
                 .find(|t| t.name == task && t.module == module)
                 .and_then(|t| t.origin.clone())
         };
-        let runtime_less = self.runtime_less;
-        let helper = self.helper.get_or_insert_with(|| {
-            if runtime_less {
-                return Err("--runtime-less starts no ansible-core to resolve it".into());
-            }
-            PythonBuilder::start_installing(false).map_err(|err| {
-                format!(
-                    "no ansible-core on this controller resolves it ({err:#}); volant runtime install sets one up"
-                )
-            })
-        });
-        let answers = match helper {
+        let answers = match self.helper() {
             Ok(helper) => {
                 let mut modules: Vec<String> = named.iter().map(|(_, m)| m.clone()).collect();
                 modules.sort();
@@ -362,7 +375,7 @@ fn own_tasks(play: &playbook::Play) -> Vec<&PlayTask> {
 }
 
 /// Every task of a task list, blocks walked.
-fn listed(items: &[TaskOrBlock]) -> Vec<&PlayTask> {
+pub(super) fn listed(items: &[TaskOrBlock]) -> Vec<&PlayTask> {
     let mut out = Vec::new();
     for item in items {
         match item {
@@ -378,7 +391,9 @@ fn listed(items: &[TaskOrBlock]) -> Vec<&PlayTask> {
 }
 
 /// Where the first task the pre-flight refuses on its own was written.
-fn first_refused<'a>(mut tasks: impl Iterator<Item = &'a PlayTask>) -> Option<&'a Origin> {
+pub(super) fn first_refused<'a>(
+    mut tasks: impl Iterator<Item = &'a PlayTask>,
+) -> Option<&'a Origin> {
     tasks
         .find(|t| preflight::check_task(t).is_err())
         .and_then(|t| t.origin.as_ref())

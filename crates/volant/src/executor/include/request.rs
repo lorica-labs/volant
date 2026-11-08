@@ -118,8 +118,8 @@ pub(super) fn include_request(
                 // the parent role's, so `{role: top, p: param}` including a role whose
                 // statement says `vars: {p: statement}` reads `param` there.
                 for (key, value) in &parent.params {
-                    vars.untrusted.remove(key);
-                    vars.values.insert(key.clone(), value.clone());
+                    let tree = parent.params.tree(key).cloned();
+                    vars.values.insert(key.clone(), value.clone(), tree);
                 }
                 prepend(
                     &mut vars,
@@ -158,19 +158,15 @@ fn own_vars(
         match templar.render_value_tainted(raw, &item.vars) {
             Ok((value, tainted)) => {
                 own.insert(key.clone(), value.clone());
-                if tainted {
-                    vars.untrusted.insert(key.clone());
-                } else {
-                    vars.untrusted.remove(key);
-                }
-                vars.values.insert(key.clone(), value);
+                let tree = tainted.then(|| crate::tags::from_host(None));
+                vars.values.insert(key.clone(), value, tree);
             }
             // Measured on ansible-core 2.19.12: a value that reads a name not defined yet goes
             // down as written, and renders when a task below reads it.
             Err(err) if err.is_undefined() => {
                 own.insert(key.clone(), raw.clone());
-                vars.untrusted.remove(key);
-                vars.values.insert(key.clone(), raw.clone());
+                let tree = task.vars.tree(key).cloned();
+                vars.values.insert(key.clone(), raw.clone(), tree);
             }
             Err(err) => {
                 return Err(TaskResult::failed_with(format!("Task failed: {}", err.0)));
@@ -187,8 +183,8 @@ fn prepend(vars: &mut IncludeParams, name: &str, value: Value) {
         _ => Vec::new(),
     };
     list.insert(0, value);
-    vars.values.insert(name.to_string(), Value::Array(list));
-    vars.untrusted.remove(name);
+    vars.values
+        .insert(name.to_string(), Value::Array(list), None);
 }
 
 /// What the loop binds for one item, handed down with the statement's variables and kept apart
@@ -207,20 +203,19 @@ fn bind_loop(task: &PlayTask, item: &Item, vars: &mut IncludeParams, own: &mut M
         .chain(["ansible_loop"]);
     for name in bound {
         if let Some(value) = item.vars.get_whole(name) {
-            if item.vars.untrusted.contains(name) {
-                vars.untrusted.insert(name.to_string());
-            }
-            vars.values.insert(name.to_string(), value.clone());
+            let tree = item.vars.tree(name).cloned();
+            vars.values.insert(name.to_string(), value.clone(), tree);
             own.insert(name.to_string(), value);
         }
     }
     let var = Value::String(loop_var.clone());
-    vars.values.insert("ansible_loop_var".into(), var.clone());
+    vars.values
+        .insert("ansible_loop_var".into(), var.clone(), None);
     own.insert("ansible_loop_var".into(), var);
     if let Some(index) = &task.index_var {
         let index = Value::String(index.clone());
         vars.values
-            .insert("ansible_index_var".into(), index.clone());
+            .insert("ansible_index_var".into(), index.clone(), None);
         own.insert("ansible_index_var".into(), index);
     }
 }

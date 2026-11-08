@@ -20,18 +20,20 @@ mod paramiko;
 mod parse;
 mod paths;
 mod settings;
+mod vars_plugins;
 
 pub use callbacks::Callbacks;
 pub(crate) use locate::{defaults_value, interpreter_python, is_world_writable};
 use parse::parse;
 pub(crate) use parse::{error_tracebacks, strict_utf8};
 pub(crate) use paths::{configured_async_dir, expand_home};
-use paths::{default_collections_path, default_roles_path, path_list};
+use paths::{default_collections_path, default_roles_path};
 pub use settings::HostNamedPaths;
 use settings::{
     boolean, cache_plugin, callback_flag, forks, gathering, host_named_dest_dirs, host_named_paths,
     integer, runtime_mode, switch, timeout_secs,
 };
+pub use vars_plugins::VarsPlugins;
 
 /// Ansible's own default for `remote_tmp`, where the agent is cached on a host.
 pub const DEFAULT_REMOTE_TMP: &str = "~/.ansible/tmp";
@@ -97,6 +99,8 @@ pub struct Config {
     pub callback_result_format: Option<String>,
     /// The callbacks a run loads.
     pub callbacks: Callbacks,
+    /// The vars plugins a run loads.
+    pub vars_plugins: VarsPlugins,
     /// `[defaults] force_color` or `ANSIBLE_FORCE_COLOR`: colour the output even when it is not a
     /// terminal. It wins over `nocolor` and `NO_COLOR`, as measured on ansible-core 2.19.12;
     /// only `--no-color` wins over it.
@@ -348,6 +352,7 @@ impl Config {
         }
         color::read_env(&mut config)?;
         callbacks::env(&mut config.callbacks)?;
+        vars_plugins::env(&mut config.vars_plugins);
         // The environment wins over the file; an empty or unknown word reads as false, measured.
         if let Ok(flag) = std::env::var("ANSIBLE_SSH_USETTY") {
             config.ssh_usetty = callback_flag(&flag);
@@ -413,20 +418,7 @@ impl Config {
         {
             config.ssh_control_master = on;
         }
-        // Measured: the environment replaces the file's `roles_path` rather than being appended
-        // to it, and a relative entry is read against the working directory.
-        let from_env = |name: &str| -> Option<Vec<PathBuf>> {
-            let list = path_list(&std::env::var(name).ok()?, Path::new(""));
-            (!list.is_empty()).then_some(list)
-        };
-        if let Some(list) = from_env("ANSIBLE_ROLES_PATH") {
-            config.roles_path = list;
-        }
-        if let Some(list) =
-            from_env("ANSIBLE_COLLECTIONS_PATHS").or_else(|| from_env("ANSIBLE_COLLECTIONS_PATH"))
-        {
-            config.collections_path = list;
-        }
+        paths::env(&mut config);
         if let Ok(user) = std::env::var("ANSIBLE_BECOME_USER")
             && !user.trim().is_empty()
         {

@@ -306,6 +306,9 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
             | "json_indent" => {
                 super::callbacks::ini(&mut config.callbacks, key.trim(), value, origin, base)?;
             }
+            "vars_plugins" | "vars_plugins_enabled" | "run_vars_plugins" => {
+                super::vars_plugins::ini(&mut config.vars_plugins, key.trim(), value, base);
+            }
             "enable_task_debugger" => {
                 if let Some(on) = crate::yaml::bool_from_str(value.trim()) {
                     config.enable_task_debugger = on;

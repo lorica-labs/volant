@@ -12,7 +12,8 @@ description: Volant 在哪里查找 role，依赖、参数规范和 role 变量�
 
 1. `<playbook_dir>/roles`
 2. `ansible.cfg` 中的 `roles_path`，或 `ANSIBLE_ROLES_PATH`。两者都没有时，默认值是 `~/.ansible/roles`、`/usr/share/ansible/roles` 和 `/etc/ansible/roles`。
-3. `<playbook_dir>` 本身
+3. 仅对 `meta/main.yml` 中的依赖：声明它的 role 所在的目录。`roles/apps/pc` 的依赖 `pc/calico` 会在 `roles/apps/pc/calico` 找到。
+4. `<playbook_dir>` 本身
 
 相对的 `roles_path` 条目，相对于 `ansible.cfg` 所在的目录解析；如果来自 `ANSIBLE_ROLES_PATH`，则相对于工作目录解析。每个条目在使用之前都会转为绝对路径，并去掉 `.` 和 `..`。role 的 `ansible_search_path` 和 `included:` 行显示的是这条路径，与 ansible-core 一致。
 

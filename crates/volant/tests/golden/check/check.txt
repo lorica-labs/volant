@@ -1,0 +1,8 @@
+collection.yml     unknown  collection.yml:4  module 'community.general.nosuch_module': --runtime-less starts no ansible-core to resolve it
+invalid.yml        refused  (invalid)  invalid.yml:4  the role 'nosuchrole' was not found in <fixture>/roles:/nonexistent:<fixture>
+playbooks/all.yml  ready
+site.yml           ready
+templated.yml      unknown  templated.yml:4  include_tasks: what it names is checked when the run reaches it
+unsupported.yml    refused  unsupported.yml:4  play 1: task 'Retry an include': keyword 'until' is not supported yet on 'include_tasks'
+vaulted-key.yml    refused  -  the private key file keys/id_vaulted is vault-encrypted, and this release cannot decrypt a private key
+7 playbooks: 2 ready, 3 refused, 2 unknown, 2 other YAML files skipped

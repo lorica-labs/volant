@@ -1,18 +1,26 @@
 ---
-sourceHash: 72e07b4420ea
+sourceHash: 5526981c261e
 title: 我的 playbook 能运行吗？
 description: 几秒钟内对照当前版本检查现有的 Ansible 项目，不接触任何主机。
 ---
 
 import { Steps, Aside } from '@astrojs/starlight/components';
 
-要知道一个 playbook 能不能运行，先对它运行 `--syntax-check`，再在一台主机上运行它。Volant 能读取 ansible-core 2.19 的全部语法，所以你的 playbook 在这里的解析结果和在 Ansible 下一样。在连接任何主机之前，还有第二项检查，即预检，它会查找这个版本尚不支持的内容，并用一条点名的消息停止运行。下面的[已知缺口](#已知缺口)是例外：在那些地方，运行可能忽略某个设置或给出错误的结果，而且没有任何报错。
+要知道一个 playbook 能不能运行，先在仓库根目录运行 `volant check .`，再在一台主机上运行这个 playbook。Volant 能读取 ansible-core 2.19 的全部语法，所以你的 playbook 在这里的解析结果和在 Ansible 下一样。在连接任何主机之前，还有第二项检查，即预检，它会查找这个版本尚不支持的内容，并用一条点名的消息停止运行。下面的[已知缺口](#已知缺口)是例外：在那些地方，运行可能忽略某个设置或给出错误的结果，而且没有任何报错。
 
 ## 检查项目
 
 <Steps>
 
-1. 只读取，不运行。列表输出和 `--syntax-check` 遇到不支持的模块或关键字时从不停止，所以即使是这个版本还不能运行的 playbook，它们也能工作：
+1. 一次检查所有 playbook，不连接任何主机：
+
+   ```sh
+   volant check .
+   ```
+
+   每个 playbook 都得到一个结论：`ready`；`refused`，附带原因、文件和行号；或者 `unknown`，表示只有实际运行才能知道。它不是 `volant playbook --check`，后者以检查模式在主机上运行 playbook。参见 [`volant check`](/zh-cn/docs/reference/cli/check/)。
+
+2. 只读取，不运行。列表输出和 `--syntax-check` 遇到不支持的模块或关键字时从不停止，所以即使是这个版本还不能运行的 playbook，它们也能工作：
 
    ```sh
    volant playbook -i inventory.ini site.yml --syntax-check
@@ -21,7 +29,7 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 
    如果 task 列表与 `ansible-playbook --list-tasks` 打印的一致，说明 Volant 编译你的 role、import 和 tag 的方式与它相同。
 
-2. 在一台你可以动的主机上做一次真正的运行。`--check --diff` 除了缓存 agent 之外不会改动主机，所以它是安全的第一次运行：
+3. 在一台你可以动的主机上做一次真正的运行。`--check --diff` 除了缓存 agent 之外不会改动主机，所以它是安全的第一次运行：
 
    ```sh
    volant playbook -i inventory.ini site.yml --limit test1 --check --diff
@@ -30,7 +38,7 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 
    这个版本无法执行的内容，大部分会在连接之前就让运行停止。消息会点出模块、关键字或值，运行以退出码 4 结束。[目前会拒绝什么](#目前会拒绝什么)列出了这些消息。
 
-3. 修改，或者等待。尚不支持的内容列在[关键字](/zh-cn/docs/reference/keywords/)、[模块](/zh-cn/docs/reference/modules/)和下面的[已知缺口](#已知缺口)中，大部分都有变通办法。
+4. 修改，或者等待。尚不支持的内容列在[关键字](/zh-cn/docs/reference/keywords/)、[模块](/zh-cn/docs/reference/modules/)和下面的[已知缺口](#已知缺口)中，大部分都有变通办法。
 
 </Steps>
 
@@ -101,7 +109,6 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 | 内容 | 会发生什么 |
 |---|---|
 | `vars_plugins/` | 被忽略。 |
-| `volant check` 和 `volant lint` | 它们不存在。请用 ansible-core 或 ansible-lint 运行。 |
 | 失败的带 `no_log: true` 的 task | 这是有意为之。Volant 打印 `[ERROR]: Task failed: Action failed: <error censored due to no log>`，不打印失败原因的其他内容。ansible-core 2.19.12 会打印原因：`[ERROR]: Task failed: Action failed: <the msg of fail or assert>`、模块的错误，以及 `<<< caused by >>>` 块。这些文字可能包含机密，例如点出密码的 `fail` 的 `msg`。[安全策略](https://github.com/lorica-labs/volant/blob/main/SECURITY.md)把在 ansible-core 里被 `no_log` 隐藏、却进入日志或终端的机密算作漏洞，所以 Volant 把它隐藏起来。`fatal:` 行、已注册的结果和汇总在两者中相同。要读到原因，请去掉 `no_log` 再运行这个 task。 |
 | SIGTERM | 这是有意为之。Volant 会干净地停止：取消正在运行的 task，删除存放连接密码的目录，打印汇总，并以退出码 99 退出，与 Ctrl-C 的处理相同。`ansible-playbook` 不捕获 SIGTERM，它会立刻以退出码 143 终止，并且不打印汇总。在 `command: sleep` 运行期间用 `kill -TERM` 测得：Volant 下是 99，ansible-core 2.19.12 下是 143。 |
 | `_ansible_ansiballz_pydevd_config` | 这是有意为之。会被忽略。ansible-core 把这个设置留给自己使用：它把调试器附加到模块包装器上。Volant 用自己的运行器执行 Python 模块，其原生模块不需要 Python。 |

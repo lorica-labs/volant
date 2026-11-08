@@ -1,0 +1,5 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Read the file of the platform
+      include_tasks: "tasks/{{ ansible_os_family }}.yml"

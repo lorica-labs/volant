@@ -1645,6 +1645,172 @@ bench-k3s runs="3":
       printf 'ratio %s\n' "$ratio"
     } | tee "$out"
 
+# What the Molecule proof runs: the role at a pinned commit, the image of its default scenario at
+# a pinned digest, and the Python packages and collections Molecule needs, all at pinned versions.
+MOLECULE_ROLE_REPO := "https://github.com/geerlingguy/ansible-role-nginx"
+MOLECULE_ROLE_SHA := "5ff0b235006390a0d5666fd4cce7477410982cdf"
+MOLECULE_IMAGE := "geerlingguy/docker-rockylinux9-ansible"
+MOLECULE_IMAGE_DIGEST := "sha256:fe4403522f5e48aa0a77b86008a184c88b12e7ff9c7f90bcd26f2e9db4f502f1"
+MOLECULE_PACKAGES := "ansible-core==2.19.12 molecule==26.11.0 molecule-plugins[docker]==26.11.0 ansible-compat==26.11.0 docker==7.2.0 requests==2.34.2"
+MOLECULE_COLLECTIONS := "community.docker:4.8.5 ansible.posix:2.2.2"
+
+# Time `molecule test` on geerlingguy.nginx with the docker driver, under ansible-core and under
+# Volant's `ansible-*` links, and check that both report the same PLAY RECAP lines. Everything is
+# set up under target/molecule/ from the pins above: a virtualenv made by `uv`, the collections,
+# the role and the image, pulled by digest and tagged as the `latest` the scenario names, so the
+# timed passes never pull. Needs docker and uv on this machine; no other host is used.
+#
+# Passes alternate between the engines, one untimed warm-up of each first, under the bench lock
+# (see `bench`). Every pass starts with no `instance` container and must end with none. A small
+# `ansible-playbook` placed first on PATH times each playbook Molecule starts, the same way for
+# both engines, so the report splits the time into Molecule's steps; what is left of the total is
+# Molecule's own work. The Volant passes set VOLANT_RUNTIME=system so that the implicit localhost
+# runs the docker driver's modules with the virtualenv's Python, which has the docker library.
+#
+# Before each pass the recipe also waits for the one-minute load average to fall under `max_load`,
+# and it records the load average before and after every pass, so the report states the load the
+# numbers were measured under.
+bench-molecule runs="5" max_load="1.5":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v docker > /dev/null || { echo "docker is not installed"; exit 1; }
+    command -v uv > /dev/null || { echo "uv is not installed"; exit 1; }
+    just agent-musl
+    cargo build --release -p volant
+    cp target/agents/volant-agent-x86_64-unknown-linux-musl target/agents/volant-agent
+
+    dir="$PWD/target/molecule"
+    agents="$PWD/target/agents"
+    mkdir -p "$dir/shims" "$dir/timer" "$dir/logs"
+    [ -x "$dir/venv/bin/python" ] || uv venv -q --python 3.12 "$dir/venv"
+    uv pip install -q --python "$dir/venv/bin/python" {{MOLECULE_PACKAGES}}
+    export ANSIBLE_COLLECTIONS_PATH="$dir/collections"
+    for c in {{MOLECULE_COLLECTIONS}}; do
+      "$dir/venv/bin/ansible-galaxy" collection install -p "$dir/collections" "${c%%:*}==${c#*:}" > /dev/null
+    done
+    role="$dir/ansible-role-nginx"
+    if [ "$(git -C "$role" rev-parse HEAD 2>/dev/null)" != "{{MOLECULE_ROLE_SHA}}" ]; then
+      rm -rf "$role"
+      git init -q "$role"
+      git -C "$role" fetch -q --depth 1 {{MOLECULE_ROLE_REPO}} {{MOLECULE_ROLE_SHA}}
+      git -C "$role" checkout -q FETCH_HEAD
+    fi
+    docker pull -q "{{MOLECULE_IMAGE}}@{{MOLECULE_IMAGE_DIGEST}}" > /dev/null
+    docker tag "{{MOLECULE_IMAGE}}@{{MOLECULE_IMAGE_DIGEST}}" "{{MOLECULE_IMAGE}}:latest"
+    ./target/release/volant shims install --force --dir "$dir/shims" > /dev/null
+    cat > "$dir/timer/ansible-playbook" <<'EOF'
+    #!/bin/sh
+    start=$(date +%s.%N)
+    "$MOLECULE_BENCH_PLAYBOOK" "$@"
+    rc=$?
+    printf '%s %s %s\n' "$start" "$(date +%s.%N)" "$*" >> "$MOLECULE_BENCH_TIMES"
+    exit $rc
+    EOF
+    chmod +x "$dir/timer/ansible-playbook"
+    unset MOLECULE_DISTRO MOLECULE_DOCKER_COMMAND MOLECULE_PLAYBOOK
+
+    idle() {
+      while pgrep -x cargo > /dev/null || pgrep -x rustc > /dev/null || pgrep -x cargo-nextest > /dev/null || pgrep -f bin/ansible-playbook > /dev/null; do
+        sleep 5
+      done
+      while awk -v max="{{max_load}}" '{exit !($1 >= max)}' /proc/loadavg; do
+        sleep 10
+      done
+    }
+    load() { cut -d' ' -f1 /proc/loadavg; }
+    no_instance() {
+      [ -z "$(docker ps -aq --filter name='^instance$')" ] || { echo "a container named instance exists: $1"; exit 1; }
+    }
+    recap() {
+      sed 's/\x1b\[[0-9;]*m//g' "$1" | awk '/^PLAY RECAP/ {f=1; next} f && NF == 0 {f=0} f' | tr -s ' '
+    }
+    # One line per pass: engine, total, then the seconds of each Molecule step, then the load
+    # average before and after the pass. The `ansible-playbook --version` calls Molecule makes
+    # count as Molecule's own time.
+    steps() {
+      awk -v engine="$1" -v total="$2" -v loads="$last_load_before $last_load_after" '
+        { d = $2 - $1; p = $NF; sub(".*/", "", p); sub("[.]yml$", "", p)
+          if ($0 ~ /--syntax-check/) p = "syntax"
+          if (p == "converge" && seen++) p = "idempotence"
+          t[p] += d }
+        END { s = t["create"] + t["converge"] + t["idempotence"] + t["destroy"] + t["syntax"]
+              printf "%s %.3f %.3f %.3f %.3f %.3f %.3f %.3f %s\n", engine, total, t["create"], t["converge"], t["idempotence"], t["destroy"], t["syntax"], total - s, loads }' "$3"
+    }
+    median() {
+      sort -n | awk '{a[NR]=$1} END{n=NR; if(n%2==1) m=a[(n+1)/2]; else m=(a[n/2]+a[n/2+1])/2; printf "%.3f", m}'
+    }
+    pass() {
+      local engine="$1" name="$2" playbook
+      local log="$dir/logs/$stamp-$name.log" times="$dir/logs/$stamp-$name.times"
+      if [ "$engine" = volant ]; then playbook="$dir/shims/ansible-playbook"; else playbook="$dir/venv/bin/ansible-playbook"; fi
+      idle
+      no_instance "before $name"
+      local start end
+      last_load_before="$(load)"
+      start="$(date +%s.%N)"
+      (
+        cd "$role"
+        if [ "$engine" = volant ]; then
+          export PATH="$dir/timer:$dir/shims:$dir/venv/bin:$PATH" VOLANT_RUNTIME=system VOLANT_AGENT_DIR="$agents"
+        else
+          export PATH="$dir/timer:$dir/venv/bin:$PATH"
+        fi
+        MOLECULE_BENCH_PLAYBOOK="$playbook" MOLECULE_BENCH_TIMES="$times" "$dir/venv/bin/molecule" test > "$log" 2>&1
+      ) || { echo "molecule test failed under $engine: $log"; tail -n 20 "$log"; exit 1; }
+      end="$(date +%s.%N)"
+      last_load_after="$(load)"
+      no_instance "after $name"
+      last_total="$(awk -v a="$start" -v b="$end" 'BEGIN{printf "%.3f", b-a}')"
+      last_log="$log"
+      last_times="$times"
+    }
+
+    stamp="$(date -u +%Y-%m-%dT%H%MZ)"
+    lock="${XDG_RUNTIME_DIR:-/tmp}/volant-bench.lock"
+    exec 200>"$lock"
+    if ! flock -n 200; then
+      echo "waiting for another bench to release the lock"
+      flock 200
+    fi
+
+    pass reference reference-warmup
+    pass volant volant-warmup
+    rows="$dir/logs/$stamp-steps.txt"
+    : > "$rows"
+    first=""
+    for i in $(seq 1 {{runs}}); do
+      for engine in reference volant; do
+        pass "$engine" "$engine-$i"
+        steps "$engine" "$last_total" "$last_times" >> "$rows"
+        [ -n "$first" ] || first="$last_log"
+        diff <(recap "$first") <(recap "$last_log") > /dev/null || {
+          echo "PLAY RECAP lines differ:"
+          echo "-- $first --"; recap "$first"
+          echo "-- $last_log --"; recap "$last_log"
+          exit 1
+        }
+      done
+    done
+    flock -u 200
+
+    out="$dir/logs/$stamp.txt"
+    {
+      printf 'bench molecule date=%s volant=%s role=geerlingguy.nginx@%s image=%s@%s\n' "$stamp" "$(git describe --always --dirty 2>/dev/null || cat .volant-describe)" "{{MOLECULE_ROLE_SHA}}" "{{MOLECULE_IMAGE}}" "{{MOLECULE_IMAGE_DIGEST}}"
+      printf 'packages %s\n' "{{MOLECULE_PACKAGES}}"
+      printf 'recap %s\n' "$(recap "$first" | tr '\n' ';')"
+      printf '%-9s %9s %9s %9s %11s %9s %9s %9s\n' engine total create converge idempotence destroy syntax molecule
+      for engine in reference volant; do
+        printf '%-9s' "$engine"
+        for col in 2 3 4 5 6 7 8; do
+          printf ' %9s' "$(awk -v e="$engine" -v c="$col" '$1 == e {print $c}' "$rows" | median)"
+        done
+        printf '\n'
+      done
+      printf 'load average (1 min) before and after the timed passes: %s to %s\n' \
+        "$(awk '{print $9; print $10}' "$rows" | sort -n | head -n 1)" "$(awk '{print $9; print $10}' "$rows" | sort -n | tail -n 1)"
+      printf 'medians of %s passes per engine; every pass: %s\n' "{{runs}}" "$rows"
+    } | tee "$out"
+
 # Flamegraphs of one converged pass, for the controller and for the agent on each host, under
 # target/profile/. `play` is a playbook path (a corpus entry name will be accepted once
 # fixtures/corpus/corpus.yml exists). `hosts` is `local` (a local connection, perf run here) or

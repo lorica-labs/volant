@@ -1,15 +1,15 @@
 ---
-sourceHash: c9d640267c68
+sourceHash: 05824b579502
 title: 性能
-description: 两个实测的工作负载、背后的配置、复现它们的命令，以及剩余的时间花在了哪里。
+description: 三个实测的工作负载、背后的配置、复现它们的命令，以及剩余的时间花在了哪里。
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 import BarChart from '../../../../../components/BarChart.astro';
 
-Volant 在两个真实的工作负载上做了测量，每个都由仓库中的一个 recipe 运行。本页的每个数字都来自这些 recipe。
+Volant 在三个真实的工作负载上做了测量，每个都由仓库中的一个 recipe 运行。本页的每个数字都来自这些 recipe。
 
-在已经收敛的两台 Ubuntu 24.04 主机上，应用四个 Ansible Galaxy role（`geerlingguy.security`、`nginx`、`git` 和 `pip`），Volant 用 0.529 秒完成，而启用 `pipelining = True` 的 ansible-core 2.19.12 需要 26.435 秒，比值为 49.97。在官方 k3s-ansible 的 `site.yml` 上，针对已安装的集群，Volant 用 23.477 秒，参照版本用 50.519 秒，比值为 2.15。测量日期为 2026-09-27，使用 `just bench` 和 `just bench-k3s`，它们可以复现这些数字。此后没有重新测量过。
+在已经收敛的两台 Ubuntu 24.04 主机上，应用四个 Ansible Galaxy role（`geerlingguy.security`、`nginx`、`git` 和 `pip`），Volant 用 0.529 秒完成，而启用 `pipelining = True` 的 ansible-core 2.19.12 需要 26.435 秒，比值为 49.97。在官方 k3s-ansible 的 `site.yml` 上，针对已安装的集群，Volant 用 23.477 秒，参照版本用 50.519 秒，比值为 2.15。测量日期为 2026-09-27，使用 `just bench` 和 `just bench-k3s`，它们可以复现这些数字。此后没有重新测量过。第三个工作负载是对一个 Galaxy role 完整运行 `molecule test`，见 [Molecule](#molecule)。
 
 <BarChart
   title="两个工作负载，两台已收敛的主机"
@@ -118,8 +118,85 @@ VOLANT_TARGET_HOST=host1 VOLANT_SECOND_HOST=host2 just bench-k3s 3
 
 这两个步骤合计每台主机耗时 4.5 到 4.7 秒。要让它们更快，就意味着读取参照版本之外的其他来源，这个决定留给以后的版本。
 
+## Molecule
+
+`molecule test` 运行一个 role 的整套测试流程：删除之前运行留下的容器，检查语法，创建容器，应用 role（converge），再应用一次以确认没有任何变化（idempotence），最后删除容器。Molecule 为其中每个 playbook 启动 `ansible-playbook`，所以只要把 Volant 的 `ansible-playbook` 放在 `PATH` 最前面，整套流程就在 Volant 下运行，role 和 Molecule 都不用改。
+
+在 `geerlingguy.nginx` 上使用 docker 驱动，完整的 `molecule test` 在 Volant 下用 60.349 秒，在 ansible-core 2.19.12 下用 96.102 秒，比值为 1.59。两个引擎在每一轮中给出的 `PLAY RECAP` 行都相同。测量日期为 2026-11-08，使用 `just bench-molecule 5`。
+
+<BarChart
+  title="geerlingguy.nginx 上的 molecule test，docker 驱动"
+  subtitle="每个引擎五轮计时运行的中位数，2026-11-08。参照版本：ansible-core 2.19.12，使用 Molecule 写入的配置。越短越快。"
+  unit="s"
+  decimals={3}
+  series={[{ name: 'ansible-core 2.19.12' }, { name: 'Volant', accent: true }]}
+  rows={[
+    { label: 'Create', values: [9.750, 5.931] },
+    { label: 'Converge', values: [51.650, 38.133] },
+    { label: 'Idempotence', values: [13.133, 3.320] },
+    { label: 'Destroy，两次', values: [15.801, 11.288] },
+    { label: '完整测试', values: [96.102, 60.349] },
+  ]}
+/>
+
+### Molecule 工作负载的配置
+
+| | |
+|---|---|
+| Role | `geerlingguy.nginx`，commit `5ff0b23`，其 `default` 场景：一个 Rocky Linux 9 容器，22 个 task |
+| 镜像 | `geerlingguy/docker-rockylinux9-ansible`，按 digest 固定，在各轮运行之前拉取 |
+| Molecule | Molecule 26.11.0、molecule-plugins 26.11.0 和 ansible-compat 26.11.0，装在 Python 3.12 虚拟环境中，另有 `community.docker` 4.8.5 和 `ansible.posix` 2.2.2 |
+| 参照版本 | 同一虚拟环境中的 ansible-core 2.19.12，使用 Molecule 写入的 `ansible.cfg`（`forks = 50`），其他设置均为默认值 |
+| Volant | `da423e7`（`v0.1.0-alpha.13-265-gda423e78`）的 release 构建，通过其 `ansible-playbook` 链接运行，设置 `VOLANT_RUNTIME=system` |
+| 机器 | 其他工作负载使用的同一台控制节点（Ubuntu 26.04，8 核），Docker 29.1.3 和容器也在这台机器上运行 |
+| 系统负载 | 每轮计时运行前后的一分钟平均负载在 0.84 到 2.30 之间，两个引擎处于同一范围 |
+| 运行轮次 | 每个引擎先运行一轮不计时的预热，然后两个引擎交替各运行五轮计时，报告中位数 |
+
+每一轮开始时都没有容器，结束时也必须没有容器。每一轮中，converge 都以 `ok=14 changed=8 skipped=8` 结束，idempotence 都以 `ok=12 changed=0 skipped=8` 结束，两个引擎都是如此。
+
+放在 `PATH` 最前面的一个小 `ansible-playbook` 为 Molecule 启动的每个 playbook 计时，两个引擎的计时方式相同，由此得到各步骤的拆分：
+
+| 步骤 | ansible-core（秒） | Volant（秒） |
+|---|---|---|
+| 创建容器 | 9.750 | 5.931 |
+| Converge | 51.650 | 38.133 |
+| Idempotence | 13.133 | 3.320 |
+| Destroy，开始时和结束时各一次 | 15.801 | 11.288 |
+| 语法检查 | 0.749 | 0.027 |
+| Molecule 自身的工作 | 5.167 | 1.650 |
+| 完整测试 | 96.102 | 60.349 |
+
+每一行都是单独取的中位数，所以各行相加不等于最后一行。Molecule 自身的工作是完整测试去掉各 playbook 之后剩下的时间，其中包括 Molecule 发起的 `ansible-playbook --version` 调用，这些调用在被测引擎下运行。
+
+完整测试的逐轮结果：
+
+| 引擎 | 各轮（秒） |
+|---|---|
+| ansible-core | 100.599、95.499、96.675、96.102、95.646 |
+| Volant | 61.769、60.048、60.349、60.095、60.794 |
+
+### Volant 不改变的部分
+
+Volant 下剩余的时间大部分花在引擎之外：
+
+- Converge 用 `dnf` 安装 nginx，`dnf` 从 Rocky Linux 和 EPEL 的镜像站下载软件包。Idempotence 运行同样的 task，但没有东西要安装，只用 3.320 秒，所以 converge 的 38.133 秒大部分是软件包安装。这段时间取决于镜像站：参照版本的一轮不计时预热就因为一个 EPEL 镜像站没有响应而失败。
+- Docker 在 create 期间启动容器，在 destroy 期间停止并删除容器。引擎只是在等待它。
+- 在新机器上第一次运行 `molecule test` 时还要拉取镜像，大小为 268,904,562 字节。recipe 在计时运行之前就拉取了镜像，所以上面的数字不包括这次下载。下载要多久取决于你的网络。
+
+有两处差异出现在日志中，而不在 recap 中。Volant 比 ansible-core 更早轮询 `async_status`，所以 destroy 在等待 docker 时可能多打印一行 `FAILED - RETRYING`。另外，Volant 的各轮运行设置了 `VOLANT_RUNTIME=system`：不设置时，隐式 localhost 会在 Volant 托管的 Python 下运行 docker 驱动的模块，而这个 Python 没有 `docker` 库；ansible-core 则使用虚拟环境中的 Python（[#1422](https://github.com/lorica-labs/volant/issues/1422)）。
+
+### 复现 Molecule 的数字
+
+这个 recipe 需要运行它的机器上有 Docker 和 `uv`，不需要其他主机。它以 release 模式构建 Volant，在 `target/molecule/` 下安装固定的版本，按 commit 获取 role，并按 digest 拉取镜像：
+
+```sh
+just bench-molecule 5
+```
+
+第一个参数是每个引擎的计时轮数。每轮开始前，recipe 会等到没有构建或其他 `ansible-playbook` 在运行，并且一分钟平均负载低于第二个参数（默认 1.5）。它把中位数和负载范围写到 `target/molecule/logs/`，如果两轮给出的 `PLAY RECAP` 行不同，或者某轮之前或之后存在名为 `instance` 的容器，就会失败。
+
 <Aside type="note">
-这些数字描述的是两台主机上的两个 playbook。你自己的数字取决于网络延迟、你的 task 做什么、其中有多少个被原生模块覆盖，以及你同时驱动多少台主机。`--profile` 会显示你自己这次运行的拆分：见[命令行](/zh-cn/docs/reference/cli/#运行与输出)。
+这些数字描述的是三个工作负载。你自己的数字取决于网络延迟、你的 task 做什么、其中有多少个被原生模块覆盖，以及你同时驱动多少台主机。`--profile` 会显示你自己这次运行的拆分：见[命令行](/zh-cn/docs/reference/cli/#运行与输出)。
 </Aside>
 
 [决策记录 0008](/zh-cn/docs/decisions/0008-native-modules-and-speed/)解释了这些数字背后的选择，以及测量过后被放弃的方案。

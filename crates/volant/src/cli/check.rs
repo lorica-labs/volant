@@ -7,6 +7,7 @@
 //! is `unknown`. Nothing connects, nothing is rendered for a host, nothing is written.
 
 mod discover;
+mod follow;
 mod report;
 
 use std::path::{Path, PathBuf};
@@ -206,19 +207,8 @@ impl Judge {
                 first_refused(compiled.iter().flatten().flat_map(tasks)),
             )
         })?;
-        // What a dynamic include names is read when a host reaches the statement.
-        for step in compiled.iter().flatten().flat_map(|c| &c.steps) {
-            if matches!(step.kind, StepKind::Include(_)) {
-                verdict.reasons.push(unknown(
-                    format!(
-                        "{}: what it names is checked when the run reaches it",
-                        step.task.module
-                    ),
-                    step.task.origin.as_ref(),
-                ));
-            }
-        }
-        let every = || compiled.iter().flatten();
+        let expanded = follow::includes(compiled.iter().flatten(), &mut verdict.reasons)?;
+        let every = || compiled.iter().flatten().chain(&expanded);
         for task in every().flat_map(tasks) {
             if task.deferred.module.is_some() {
                 verdict.reasons.push(unknown(
@@ -362,7 +352,7 @@ fn own_tasks(play: &playbook::Play) -> Vec<&PlayTask> {
 }
 
 /// Every task of a task list, blocks walked.
-fn listed(items: &[TaskOrBlock]) -> Vec<&PlayTask> {
+pub(super) fn listed(items: &[TaskOrBlock]) -> Vec<&PlayTask> {
     let mut out = Vec::new();
     for item in items {
         match item {
@@ -378,7 +368,9 @@ fn listed(items: &[TaskOrBlock]) -> Vec<&PlayTask> {
 }
 
 /// Where the first task the pre-flight refuses on its own was written.
-fn first_refused<'a>(mut tasks: impl Iterator<Item = &'a PlayTask>) -> Option<&'a Origin> {
+pub(super) fn first_refused<'a>(
+    mut tasks: impl Iterator<Item = &'a PlayTask>,
+) -> Option<&'a Origin> {
     tasks
         .find(|t| preflight::check_task(t).is_err())
         .and_then(|t| t.origin.as_ref())

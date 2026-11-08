@@ -1,0 +1,3 @@
+- name: Retry an include inside an include
+  include_tasks: plain.yml
+  retries: 2

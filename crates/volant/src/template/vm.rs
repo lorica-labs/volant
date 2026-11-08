@@ -18,6 +18,7 @@ mod embedded;
 mod expression;
 mod literals;
 mod syntax;
+mod unary;
 pub(super) use syntax::{as_expression, as_template, jinja as jinja_syntax};
 
 pub(super) use embedded::inline_conditional;
@@ -238,7 +239,8 @@ pub(super) fn render_counted(
     syntax_config: SyntaxConfig,
 ) -> Result<(String, Emitted), minijinja::Error> {
     let inlined = embedded::inline_lookup_terms(source, false, syntax_config.clone());
-    let unfolded = literals::unfold_comparisons(&inlined, false, syntax_config.clone());
+    let signed = unary::without_unary_plus(&inlined, false, syntax_config.clone());
+    let unfolded = literals::unfold_comparisons(&signed, false, syntax_config.clone());
     let config = TemplateConfig {
         syntax_config,
         // Never by file name: measured on ansible-core 2.19.12, `index.html.j2` holding
@@ -346,7 +348,8 @@ pub(super) fn eval_expr(
 ) -> Result<minijinja::Value, minijinja::Error> {
     crate::profile::count(crate::profile::Counter::Compile, 1);
     let inlined = embedded::inline_lookup_terms(expr, true, SyntaxConfig::default());
-    let unfolded = literals::unfold_comparisons(&inlined, true, SyntaxConfig::default());
+    let signed = unary::without_unary_plus(&inlined, true, SyntaxConfig::default());
+    let unfolded = literals::unfold_comparisons(&signed, true, SyntaxConfig::default());
     let ast = no_panic(|| parse_expr(&unfolded))?;
     let mut codegen = CodeGenerator::new("<expression>", &unfolded);
     codegen.compile_expr(&ast);

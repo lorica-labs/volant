@@ -12,7 +12,8 @@ Les entrées de `roles:`, les dépendances de `meta/main.yml` et `import_role` n
 
 1. `<playbook_dir>/roles`
 2. `roles_path` d'`ansible.cfg`, ou `ANSIBLE_ROLES_PATH`. Sans l'un ni l'autre, les valeurs par défaut sont `~/.ansible/roles`, `/usr/share/ansible/roles` et `/etc/ansible/roles`.
-3. `<playbook_dir>` lui-même
+3. Pour une dépendance de `meta/main.yml` seulement, le répertoire qui contient le rôle qui la déclare. Une dépendance `pc/calico` de `roles/apps/pc` est trouvée en `roles/apps/pc/calico`.
+4. `<playbook_dir>` lui-même
 
 Une entrée relative de `roles_path` est lue par rapport au répertoire d'`ansible.cfg`, ou par rapport au répertoire de travail quand elle vient de `ANSIBLE_ROLES_PATH`. Chaque entrée est rendue absolue, `.` et `..` retirés, avant d'être utilisée. L'`ansible_search_path` d'un rôle et les lignes `included:` montrent ce chemin, comme le fait ansible-core.
 

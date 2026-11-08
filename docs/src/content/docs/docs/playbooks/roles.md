@@ -11,7 +11,8 @@ This page answers where Volant finds a role, how its dependencies and variables 
 
 1. `<playbook_dir>/roles`
 2. `roles_path` from `ansible.cfg`, or `ANSIBLE_ROLES_PATH`. Without either, the defaults are `~/.ansible/roles`, `/usr/share/ansible/roles` and `/etc/ansible/roles`.
-3. `<playbook_dir>` itself
+3. For a `meta/main.yml` dependency only, the directory that holds the role declaring it. A dependency `pc/calico` of `roles/apps/pc` is found as `roles/apps/pc/calico`.
+4. `<playbook_dir>` itself
 
 A relative `roles_path` entry is read against the directory of `ansible.cfg`, or against the working directory when it comes from `ANSIBLE_ROLES_PATH`. Every entry is made absolute, with `.` and `..` removed, before it is used. A role's `ansible_search_path` and the `included:` lines show that path, as ansible-core does.
 

@@ -16,14 +16,14 @@ use crate::tags::Tagged;
 use anyhow::{Context, bail};
 use serde_json::{Map, Value};
 
-use crate::config::Config;
 use crate::playbook::{HandlerTask, PlayTask, TaskOrBlock};
-use crate::stats::Refusal;
 
 mod instance;
 mod privacy;
+mod search;
 pub use instance::{OwnVars, RoleKind, RoleVars, identity};
 pub use privacy::{private_role_vars, set_private_role_vars};
+pub use search::RoleSearch;
 
 /// Which file of each of a role's directories to read. `main` everywhere unless the entry that
 /// named the role said otherwise, which is what `tasks_from` and its three siblings do.
@@ -109,87 +109,6 @@ pub struct LoadedRole {
     /// dash. Measured on ansible-core 2.19.12 through `--list-tasks`:
     /// `Validating arguments against arg spec 'main' - The spec role`.
     pub argument_spec_description: Option<String>,
-}
-
-/// Where a role is looked for.
-///
-/// Measured on ansible-core 2.19.12: with no `roles_path` set, a missing role names
-/// `<playbook_dir>/roles`, `~/.ansible/roles`, `/usr/share/ansible/roles`, `/etc/ansible/roles`
-/// and `<playbook_dir>`, in that order and separated by colons. A `roles_path` from `ansible.cfg`
-/// or from `ANSIBLE_ROLES_PATH` replaces the three middle entries rather than adding to them,
-/// and the environment wins over the file - both measured the same way, by reading the list a
-/// missing role prints.
-#[derive(Debug, Clone, Default)]
-pub struct RoleSearch {
-    pub paths: Vec<PathBuf>,
-    pub collections: Vec<PathBuf>,
-}
-
-impl RoleSearch {
-    /// The playbook's directory, whose `roles/` is the first place searched.
-    pub fn playbook_dir(&self) -> Option<&Path> {
-        self.paths.first().and_then(|roles| roles.parent())
-    }
-
-    pub fn new(playbook_dir: &Path, config: &Config) -> Self {
-        // The reference makes every one of these absolute and folds `.` and `..` out of the text
-        // (`unfrackpath`); the search path a role's lookups read is built from them, and so is
-        // what an `included:` line shows.
-        let playbook_dir = folded(playbook_dir);
-        let mut paths = vec![playbook_dir.join("roles")];
-        paths.extend(config.roles_path.iter().cloned());
-        paths.push(playbook_dir.clone());
-        let mut collections = vec![playbook_dir.join("collections")];
-        collections.extend(config.collections_path.iter().cloned());
-        Self { paths, collections }
-    }
-
-    /// The directory a role name points at.
-    ///
-    /// A role found on the search path is named by its real path, links followed, as the
-    /// reference's `unfrackpath` names it: a `~/.ansible/roles/geerlingguy.nginx` link to a
-    /// checkout makes `included:` lines and `role_path` show the checkout.
-    ///
-    /// A three-part name is a collection role and is looked for under
-    /// `<collection path>/ansible_collections/<namespace>/<collection>/roles/<role>`; measured,
-    /// a `collections/` directory beside the playbook is searched, and the paths a missing one
-    /// names are the ordinary ones and not the collection ones.
-    pub fn locate(&self, name: &str) -> anyhow::Result<PathBuf> {
-        for base in &self.paths {
-            let candidate = base.join(name);
-            if candidate.is_dir() {
-                return Ok(std::fs::canonicalize(&candidate).unwrap_or(candidate));
-            }
-        }
-        let parts: Vec<&str> = name.split('.').collect();
-        if let [namespace, collection, role] = parts[..] {
-            for base in &self.collections {
-                let candidate = base
-                    .join("ansible_collections")
-                    .join(namespace)
-                    .join(collection)
-                    .join("roles")
-                    .join(role);
-                if candidate.is_dir() {
-                    return Ok(candidate);
-                }
-            }
-        }
-        // Exit 1, measured, and notably not the 4 the rest of a playbook this engine cannot make
-        // sense of gets. It is built with its own code so the blanket code the compiler wraps its
-        // failures in cannot bury it.
-        Err(Refusal::at(
-            1,
-            format!(
-                "the role '{name}' was not found in {}",
-                self.paths
-                    .iter()
-                    .map(|p| p.display().to_string())
-                    .collect::<Vec<_>>()
-                    .join(":")
-            ),
-        ))
-    }
 }
 
 /// Reads one role directory. `name` is the role as the entry wrote it, for error messages.

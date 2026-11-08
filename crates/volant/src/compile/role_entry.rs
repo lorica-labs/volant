@@ -75,6 +75,38 @@ impl Builder<'_> {
         (inherited_defaults, inherited_vars)
     }
 
+    /// The directory of the role an entry names. A dependency is read while its owner is the
+    /// innermost of `parent_roles`, and the owner's `collections` are what `inherited` carries.
+    fn locate(
+        &self,
+        entry: &RoleEntry,
+        inherited: &PlayTask,
+        kind: RoleKind,
+    ) -> anyhow::Result<std::path::PathBuf> {
+        let found = match (kind, self.parent_roles.first()) {
+            (RoleKind::Dependency, Some(owner)) => self.search.locate_dependency(
+                &entry.name,
+                owner,
+                inherited.collections.as_deref().unwrap_or_default(),
+            ),
+            _ => self.search.locate(&entry.name),
+        };
+        found.map_err(|err| {
+            // Measured on ansible-core 2.19.12: `[ERROR]:` and the sentence, at the entry.
+            match &entry.keywords.origin {
+                Some(origin) => Refusal::plain(
+                    1,
+                    crate::playbook::Located {
+                        message: format!("{err:#}"),
+                        origin: origin.clone(),
+                    }
+                    .text(),
+                ),
+                None => err,
+            }
+        })
+    }
+
     /// One role entry: its dependencies first, then its argument-spec check, then its tasks.
     ///
     /// Measured on ansible-core 2.19.12: a `meta/main.yml` dependency runs before the role that
@@ -88,20 +120,7 @@ impl Builder<'_> {
         section: Section,
         kind: RoleKind,
     ) -> anyhow::Result<()> {
-        let path = self.search.locate(&entry.name).map_err(|err| {
-            // Measured on ansible-core 2.19.12: `[ERROR]:` and the sentence, at the entry.
-            match &entry.keywords.origin {
-                Some(origin) => Refusal::plain(
-                    1,
-                    crate::playbook::Located {
-                        message: format!("{err:#}"),
-                        origin: origin.clone(),
-                    }
-                    .text(),
-                ),
-                None => err,
-            }
-        })?;
+        let path = self.locate(entry, inherited, kind)?;
         let role = crate::roles::load(&path, &entry.name, &entry.from)?;
         let key = identity(entry);
         // A role brought in twice is compiled twice: whether a host runs it again is decided

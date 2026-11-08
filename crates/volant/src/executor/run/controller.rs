@@ -17,6 +17,20 @@ use super::argspec::{unchanged_failure, unsupported};
 use super::output::python_falsy;
 use super::retry::{PYTIME_OUT_OF_RANGE, conditional_error};
 
+/// The list of conditions a `that` of one bare name reads, as the task's `vars` write it.
+/// Measured on ansible-core 2.19.12, `that: '{{ thats }}'` with `thats: ['{{ 1 == 1 }}']`
+/// evaluates the item as written, with the deprecation for its braces. A name from any other
+/// layer is read rendered.
+fn written_conditions(task: &PlayTask, that: &str) -> Option<Vec<Value>> {
+    let name = that.trim().strip_prefix("{{")?.strip_suffix("}}")?.trim();
+    if name.is_empty() || !name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let list = task.vars.get(name)?;
+    let trusted = list.is_array() && strings_trusted(list, task.vars.tree(name));
+    trusted.then(|| list.as_array().cloned()).flatten()
+}
+
 /// The deprecation of a `that` condition written as one template that renders to anything but
 /// an expression, as for `when`: measured on ansible-core 2.19.12, the task registers it.
 fn deprecate_one_template(task: &PlayTask, item: &Item, templar: &Templar, condition: &Value) {
@@ -70,8 +84,9 @@ pub(super) fn assert_module(task: &PlayTask, item: &Item, templar: &Templar) -> 
             }
         }
         Value::Array(list) => list.clone(),
-        Value::String(s) if Templar::is_template(s) => {
-            match templar.render_value_tagged(that, &item.vars) {
+        Value::String(s) if Templar::is_template(s) => match written_conditions(task, s) {
+            Some(list) => list,
+            None => match templar.render_value_tagged(that, &item.vars) {
                 Ok((rendered @ Value::Array(_), _, tree)) => {
                     if !strings_trusted(&rendered, tree.as_ref()) {
                         return untrusted_that();
@@ -82,8 +97,8 @@ pub(super) fn assert_module(task: &PlayTask, item: &Item, templar: &Templar) -> 
                     list
                 }
                 _ => vec![that.clone()],
-            }
-        }
+            },
+        },
         one => vec![one.clone()],
     };
     let mut r = Map::new();

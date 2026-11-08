@@ -1,0 +1,5 @@
+# A role reached through a link is named by its real path: `role_path` and the `included:` line
+# show the directory the link points at.
+args: [play.yml]
+links:
+  roles/linked: ../checkout

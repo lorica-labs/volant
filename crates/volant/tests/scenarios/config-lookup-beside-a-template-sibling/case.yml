@@ -1,0 +1,5 @@
+# A variable that reads `lookup('config')` renders beside a sibling that holds a template, as in
+# ansible-core: the lookup is sent every variable, and the sibling it is sent as written is the
+# plugin's to render, so the variable does not keep its text.
+args: [-i, inv.ini, site.yml]
+needs: [ansible-core]

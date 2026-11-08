@@ -97,18 +97,26 @@ pub(in crate::executor) fn running_host_vars<'a>(
 pub(in crate::executor) fn requested_interpreter<V: crate::vars::HostSettings + ?Sized>(
     vars: &V,
 ) -> Option<String> {
-    crate::vars::host_setting(vars, "ansible_python_interpreter")
-        .and_then(Value::as_str)
-        .map(str::trim)
+    interpreter_setting(vars)
+        .map(|asked| asked.trim().to_string())
         .filter(|asked| {
             !asked.is_empty()
-                && *asked != crate::vars::omit_token()
+                && asked != crate::vars::omit_token()
                 && !matches!(
-                    *asked,
+                    asked.as_str(),
                     "auto" | "auto_legacy" | "auto_silent" | "auto_legacy_silent"
                 )
         })
-        .map(str::to_string)
+}
+
+/// `INTERPRETER_PYTHON` for a host, read the way the reference reads the setting with the host's
+/// variables: its `ansible_python_interpreter` when it has one, else `interpreter_python` from
+/// the configuration. A value that is not text names nothing.
+fn interpreter_setting<V: crate::vars::HostSettings + ?Sized>(vars: &V) -> Option<String> {
+    match crate::vars::host_setting(vars, "ansible_python_interpreter") {
+        Some(value) => value.as_str().map(str::to_string),
+        None => crate::config::interpreter_python(),
+    }
 }
 
 /// The fact the reference adds to the first result that discovered a host's interpreter.
@@ -144,8 +152,7 @@ pub(in crate::executor) fn discovers_interpreter<V: crate::vars::HostSettings + 
 pub(in crate::executor) fn silent_discovery<V: crate::vars::HostSettings + ?Sized>(
     vars: &V,
 ) -> bool {
-    crate::vars::host_setting(vars, "ansible_python_interpreter")
-        .and_then(Value::as_str)
+    interpreter_setting(vars)
         .is_some_and(|asked| matches!(asked.trim(), "auto_silent" | "auto_legacy_silent"))
 }
 
@@ -201,9 +208,8 @@ pub(in crate::executor) fn legacy_discovery<V: crate::vars::HostSettings + ?Size
     result: &mut TaskResult,
     vars: &V,
 ) -> Vec<String> {
-    let Some(mode) = crate::vars::host_setting(vars, "ansible_python_interpreter")
-        .and_then(Value::as_str)
-        .map(str::trim)
+    let Some(mode) = interpreter_setting(vars)
+        .map(|mode| mode.trim().to_string())
         .filter(|mode| mode.starts_with("auto_legacy"))
     else {
         return Vec::new();

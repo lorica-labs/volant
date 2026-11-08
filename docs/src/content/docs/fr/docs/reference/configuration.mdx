@@ -122,6 +122,10 @@ Un fichier qui existe mais ne peut pas être lu est ignoré, et l'exécution con
   Les modules de facts que lance la collecte des facts d'une play, `smart` (`setup`) sauf réglage. Une liste littérale dans les plays, leurs tâches ou l'inventaire (`ansible_facts_modules`) est lue aussi ; un module que seul un template nomme ne peut pas être lancé.
 </Option>
 
+<Option name="interpreter_python" id="defaults-interpreter-python" default="auto" env="ANSIBLE_PYTHON_INTERPRETER">
+  Le Python sous lequel un module tourne sur un hôte qui ne définit pas `ansible_python_interpreter` ; la variable de l'hôte l'emporte sur ce réglage. `auto` et `auto_silent` cherchent l'interpréteur sur l'hôte, et `auto_silent` omet l'avertissement qui nomme celui trouvé. `auto_legacy` et `auto_legacy_silent` agissent comme `auto` et `auto_silent` et ajoutent la dépréciation d'ansible-core. Toute autre valeur est le chemin de l'interpréteur.
+</Option>
+
 <Option name="module_strict_utf8_response" id="defaults-module-strict-utf8-response" default="true" env="ANSIBLE_MODULE_STRICT_UTF8_RESPONSE">
   Indique si `from_json` refuse une chaîne qui contient un surrogate isolé, comme `\udc80`. Désactivé, la valeur le garde et s'affiche avec `?` à sa place, avec un avertissement.
 </Option>

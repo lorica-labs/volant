@@ -56,7 +56,9 @@ pub(in crate::executor) async fn run_local(
         super::record::foresee_inventory(&mut result, task, item, store);
         result
     } else {
-        local_result(task, item, step, templar, store, verbosity)
+        super::deprecation::noting_reads(|| {
+            local_result(task, item, step, templar, store, verbosity)
+        })
     };
     // The reference's `maybe_raise_on_result` normalises every task's final result, wherever it
     // ran, the way `run_agent_batch` normalises an agent's.

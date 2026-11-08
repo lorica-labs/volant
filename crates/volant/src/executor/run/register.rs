@@ -48,14 +48,21 @@ pub(in crate::executor) fn registered_tree(
         return None;
     }
     if !loops(task, results.first().map(|(element, _)| element)) {
-        let children = Children::Map(facts(&results.first()?.1).into_iter().collect());
-        return TagTree::node(TagSetId::NONE, children);
+        let r = &results.first()?.1;
+        let children = facts(r)
+            .into_iter()
+            .chain(super::deprecation::value_tags(r));
+        return TagTree::node(TagSetId::NONE, Children::Map(children.collect()));
     }
     let items = results
         .iter()
         .enumerate()
         .filter_map(|(i, (_, r))| {
-            let children = facts(r).into_iter().chain(item(r)).collect();
+            let children = facts(r)
+                .into_iter()
+                .chain(super::deprecation::value_tags(r))
+                .chain(item(r))
+                .collect();
             Some((i, TagTree::node(TagSetId::NONE, Children::Map(children))?))
         })
         .collect();

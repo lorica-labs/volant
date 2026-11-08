@@ -1,0 +1,7 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - command: "true"
+      register: first
+    - debug:
+        msg: "{{ first.warnings | default([]) | length }} {{ discovered_interpreter_python is defined }}"

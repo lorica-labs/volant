@@ -42,7 +42,7 @@ Jedes Playbook durchläuft die Schritte, die `volant playbook` vor seiner ersten
 |---|---|
 | `ready` | Es lädt, besteht die Vorabprüfung und kompiliert, und jedes Modul, das es nennt, wird gefunden. |
 | `refused` | `volant playbook` würde vor der ersten Verbindung abbrechen. Der Grund hat eine Art. `unsupported` ist etwas, das Volant noch nicht kann. `invalid` ist ein Playbook, das auch ansible-core ablehnt, etwa eine Rolle, die niemand findet, oder ein Modul aus einer Collection, die nicht installiert ist. Beide zählen als Fehlschlag. |
-| `unknown` | Nur ein Lauf kann es zeigen. Jeder Grund wird aufgeführt: ein `include_tasks` oder `include_role`, dessen Name ein Template ist, ein Modul, das ein Template nennt, oder das Modul einer Collection, ohne ansible-core, das man fragen könnte. |
+| `unknown` | Nur ein Lauf kann es zeigen. Jeder Grund wird aufgeführt: ein `include_tasks` oder `include_role`, dessen Name ein Template ist, ein Modul, das ein Template nennt, das Modul einer Collection, ohne ansible-core, das man fragen könnte, oder Vars-Plugins ohne ansible-core, das sie ausführt. |
 
 Ein `include_tasks` oder `include_role` mit einem Namen in Klartext wird verfolgt: Die Datei oder Rolle wird gelesen und geprüft, wie der Lauf sie prüft, wenn ein Host die Anweisung erreicht. Eine Ablehnung darin macht das Playbook zu `refused`. Ein `when` an der Anweisung wird nicht ausgewertet, also wird auch eine Datei geprüft, die nur manche Hosts lesen.
 

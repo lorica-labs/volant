@@ -259,10 +259,7 @@ impl Reach {
         }
         for handler in &play.handlers {
             self.named(&handler.task.module);
-            let role_dir = handler
-                .role
-                .and_then(|i| play.roles.get(i))
-                .and_then(|role| play.search.locate(&role.name).ok());
+            let role_dir = handler.role.and(handler.origin.role_dir.clone());
             if let Some(role) = &role_dir {
                 self.role(role, &play.search)?;
             }
@@ -285,7 +282,7 @@ impl Reach {
         // Its `meta/main.yml` dependencies run with it, wherever it was reached from.
         let (dependencies, _, collections) = crate::roles::meta(dir)?;
         for dependency in dependencies {
-            if let Ok(found) = search.locate(&dependency.name) {
+            if let Ok(found) = search.locate_dependency(&dependency.name, dir, &collections) {
                 self.role(&found, search)?;
             }
         }

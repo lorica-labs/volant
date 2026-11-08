@@ -143,19 +143,19 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
     crate::vault::install(secrets);
     let base = std::env::current_dir()?;
     let unreadable = extra::unreadable(&args.extra_vars, &base);
-    let loaded = match load(args, &config, unreadable.as_ref(), &mut out) {
-        Ok(inventory) => inventory,
+    let (loaded, bridge, dirs) = match load(args, &config, unreadable.as_ref(), &mut out) {
+        Ok(loaded) => loaded,
         Err(code) => return Ok(code),
     };
     let extra = crate::vars::parse_extra_vars(&args.extra_vars, &base)?;
     // The reference reads `group_vars` and `host_vars` beside each source and in the directory
     // it was started from.
-    let store = VarStore::with_sources(
-        &loaded,
-        &inventory_sources(&args.inventory, &config),
-        &base,
-        extra,
-    )?;
+    let sources = inventory_sources(&args.inventory, &config);
+    let mut store = VarStore::with_sources(&loaded, &sources, &base, extra)?;
+    let plugins = &config.vars_plugins;
+    super::vars_plugins::load_at(&mut store, plugins, &dirs, &bridge, &sources, "all")?;
+    // With what the vars plugins answered at the inventory stage.
+    let loaded = store.inventory().clone();
     // `[inventory] export` makes `--export` the default, which the flag cannot then turn off.
     let export = args.export || config.inventory_plugins.export;
     if let Some(group) = &args.graph {
@@ -364,21 +364,24 @@ fn yaml_list(
 }
 
 /// The inventory every `-i` names, else the configuration's, else the reference's default; what
-/// is said while reading goes to the terminal as `ansible-playbook` says it. `Err` carries the
-/// exit code, with the message already printed.
+/// is said while reading goes to the terminal as `ansible-playbook` says it. With it, the bridge
+/// that read it and the plugin directories `--playbook-dir` adds. `Err` carries the exit code,
+/// with the message already printed.
 fn load(
     args: &InventoryArgs,
     config: &Config,
     unreadable: Option<&extra::Unreadable>,
     out: &mut Renderer,
-) -> Result<Inventory, i32> {
+) -> Result<(Inventory, Arc<Bridge>, Vec<PathBuf>), i32> {
     let sources = inventory_sources(&args.inventory, config);
     let bridge = Bridge::late();
     let playbook_dir = super::args::playbook_dir(args.playbook_dir.as_deref());
-    if let Some(dir) = playbook_dir.and_then(|dir| std::path::absolute(dir).ok()) {
-        // Nothing can refuse them: no helper is running yet.
-        let _ = bridge.set_plugin_dirs(vec![dir]);
-    }
+    let dirs: Vec<PathBuf> = playbook_dir
+        .and_then(|dir| std::path::absolute(dir).ok())
+        .into_iter()
+        .collect();
+    // Nothing can refuse them: no helper is running yet.
+    let _ = bridge.set_plugin_dirs(dirs.clone());
     let mut plugins = config.inventory_plugins.clone();
     plugins.extra_vars_error = unreadable.map(|u| (u.message.clone(), u.origin.clone()));
     let loaded = load_sources_with(&sources, &plugins, &|| Arc::clone(&bridge));
@@ -406,7 +409,7 @@ fn load(
     for warning in loaded.inventory.resolve("all").warnings {
         out.warning(&warning, false);
     }
-    Ok(loaded.inventory)
+    Ok((loaded.inventory, bridge, dirs))
 }
 
 /// The inventory narrowed to the hosts `pattern` matches, groups kept. A pattern nothing matches

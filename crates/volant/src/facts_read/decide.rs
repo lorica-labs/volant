@@ -167,10 +167,7 @@ pub(crate) fn facts_read(
             );
         }
         for handler in &compiled.handlers {
-            let role_dir = handler
-                .role
-                .and_then(|i| compiled.roles.get(i))
-                .and_then(|role| compiled.search.locate(&role.name).ok());
+            let role_dir = handler.role.and(handler.origin.role_dir.clone());
             let origin = Origin {
                 file_dir: role_dir
                     .as_ref()

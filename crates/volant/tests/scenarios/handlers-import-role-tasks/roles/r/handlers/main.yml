@@ -1,0 +1,3 @@
+- name: Remount tmp
+  ansible.builtin.import_tasks:
+    file: remount_tmp.yml

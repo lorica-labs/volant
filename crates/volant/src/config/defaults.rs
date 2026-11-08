@@ -31,6 +31,7 @@ impl Default for Config {
             duplicate_dict_key: None,
             show_task_path_on_failure: false,
             callbacks: Callbacks::default(),
+            vars_plugins: VarsPlugins::default(),
             callback_result_format: None,
             force_color: false,
             nocolor: false,

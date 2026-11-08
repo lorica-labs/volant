@@ -138,6 +138,7 @@ impl VarStore {
             play_grew: false,
             inventory_changed: false,
             custom_stats: CustomStats::default(),
+            vars_plugins: None,
         };
         store.mark_inventory_names();
         Ok(store)
@@ -374,6 +375,9 @@ impl VarStore {
         self.inventory_changed = true;
         self.forget_hostvars();
         self.shared = None;
+        if let Err(err) = self.ask_vars_plugins() {
+            eprintln!("[WARNING]: {err}");
+        }
     }
 
     /// The inventory after the additions of the play that just ended, once; `None` when nothing
@@ -437,11 +441,14 @@ impl VarStore {
     /// Moves the playbook-side roots to another playbook's directory, keeping the facts hosts
     /// have gathered so far. Inventory-side sources do not move.
     pub fn rebase(&mut self, playbook_dir: &Path) -> anyhow::Result<()> {
-        let last = self.group_files.len() - 1;
-        self.group_files[last] = load_vars_dir(&playbook_dir.join("group_vars"))?;
-        self.host_files[last] = load_vars_dir(&playbook_dir.join("host_vars"))?;
+        let last = self.group_files.len() - 1 - self.plugin_layout().1;
+        if self.host_group_vars_at_task() {
+            self.group_files[last] = load_vars_dir(&playbook_dir.join("group_vars"))?;
+            self.host_files[last] = load_vars_dir(&playbook_dir.join("host_vars"))?;
+        }
         self.playbook_dir = playbook_dir.to_path_buf();
         self.forget_hostvars();
+        self.rebase_vars_plugins()?;
         Ok(())
     }
 }

@@ -24,6 +24,8 @@ Cuando dos fuentes definen la misma variable, gana la que está más abajo en es
 14. Parámetros de rol, y las `vars:` de una sentencia de include dinámico
 15. `--extra-vars`
 
+Un plugin de vars responde para `all`, para cada grupo del host y para el propio host, y se ordena con los ficheros `group_vars` y `host_vars` del mismo directorio: esos ficheros los lee `host_group_vars`, que también es un plugin de vars. Un plugin de un directorio `vars_plugins/` se ejecuta antes que `host_group_vars`, así que los ficheros le ganan. Un plugin que va después de `host_group_vars` en `vars_plugins_enabled` se ejecuta después y gana. Todos los plugins de vars salvo `host_group_vars` se ejecutan mediante ansible-core. Con `run_vars_plugins = start`, los plugins de vars se ejecutan una vez, al leer el inventario: lo que devuelven cuenta como variables del inventario, y no se leen los `group_vars` ni los `host_vars` del directorio del playbook, como en ansible-core.
+
 [Roles](/es/docs/playbooks/roles/#variables-de-rol) explica de dónde vienen las tres capas de rol y en qué se diferencian.
 
 Un archivo de variables que solo contiene `---` y comentarios se carga como un mapa vacío, como en ansible-core. Un archivo que contiene un escalar como `42` se sigue rechazando.

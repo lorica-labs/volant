@@ -23,6 +23,8 @@ When two sources define the same variable, the one further down this list wins. 
 14. Role parameters, and the `vars:` of a dynamic include statement
 15. `--extra-vars`
 
+A vars plugin answers for `all`, for each of the host's groups and for the host, and ranks with the `group_vars` and `host_vars` files of the same directory: those files are read by `host_group_vars`, itself a vars plugin. A plugin in a `vars_plugins/` directory runs before `host_group_vars`, so the files win over it. A plugin listed after `host_group_vars` in `vars_plugins_enabled` runs after it and wins. Every vars plugin but `host_group_vars` runs through ansible-core. With `run_vars_plugins = start`, vars plugins run once, when the inventory is read: what they return ranks as inventory variables, and the playbook directory's `group_vars` and `host_vars` are not read, as in ansible-core.
+
 [Roles](/docs/playbooks/roles/#role-variables) explains where the three role layers come from and how they differ.
 
 A vars file that holds only `---` and comments loads as an empty mapping, as in ansible-core. A file holding a scalar such as `42` is still refused.

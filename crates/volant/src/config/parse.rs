@@ -176,6 +176,9 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
             }
             _ => {}
         }
+        if section == "vars_host_group_vars" && key.trim() == "stage" {
+            config.vars_plugins.host_group_vars_stage = Some(value.trim().to_string());
+        }
         if section == "ssh_connection" && key.trim() == "usetty" {
             config.ssh_usetty = callback_flag(value);
         }
@@ -305,6 +308,9 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
             | "callback_format_pretty"
             | "json_indent" => {
                 super::callbacks::ini(&mut config.callbacks, key.trim(), value, origin, base)?;
+            }
+            "vars_plugins" | "vars_plugins_enabled" | "run_vars_plugins" => {
+                super::vars_plugins::ini(&mut config.vars_plugins, key.trim(), value, base);
             }
             "enable_task_debugger" => {
                 if let Some(on) = crate::yaml::bool_from_str(value.trim()) {

@@ -1,0 +1,2 @@
+clash_group_all: inventory group_vars
+clash_group_g: inventory group_vars all

@@ -1,0 +1,3 @@
+- hosts: h1
+  gather_facts: false
+  roles: [r]

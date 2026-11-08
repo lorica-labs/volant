@@ -1,0 +1,6 @@
+# Under `RUN_VARS_PLUGINS=start` the vars plugins run once the inventory is read, on the
+# inventory's directory, and their answers rank as inventory variables: the playbook's
+# `group_vars` are not read, the inventory's are, and a child group beats `all`.
+args: [-i, inv/hosts.ini, play.yml]
+env: {"ANSIBLE_RUN_VARS_PLUGINS": "start"}
+needs: [ansible-core]

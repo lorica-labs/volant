@@ -41,7 +41,7 @@ Each playbook goes through the steps `volant playbook` runs before its first con
 |---|---|
 | `ready` | It loads, passes the pre-flight check and compiles, and every module it names is found. |
 | `refused` | `volant playbook` would stop before the first connection. The reason has a kind. `unsupported` is something Volant does not do yet. `invalid` is a playbook ansible-core rejects too, such as a role nobody can find or a module from a collection that is not installed. Both count as failures. |
-| `unknown` | Only a run can tell. Each reason is listed: an `include_tasks` or `include_role` whose name is a template, a module named by a template, or a collection's module with no ansible-core to ask. |
+| `unknown` | Only a run can tell. Each reason is listed: an `include_tasks` or `include_role` whose name is a template, a module named by a template, a collection's module with no ansible-core to ask, or vars plugins with no ansible-core to run them. |
 
 An `include_tasks` or `include_role` with a plain name is followed: the file or role is read and checked as the run checks it when a host reaches the statement. A refusal inside it makes the playbook `refused`. A `when` on the statement is not evaluated, so a file that only some hosts read is checked all the same.
 

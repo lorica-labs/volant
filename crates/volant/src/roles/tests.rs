@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::*;
+use crate::config::Config;
 use crate::testing::scratch;
 use rstest::rstest;
 
@@ -113,6 +114,35 @@ fn a_missing_role_names_every_path_and_exits_1() {
     assert!(text.contains("/opt/roles"), "{text}");
     assert!(text.contains(&dir.display().to_string()), "{text}");
     assert_eq!(crate::stats::error_code(&err), 1, "{text}");
+}
+
+/// A dependency is also looked for in the directory that holds its owner, before the playbook's
+/// own; a missing one names the owner's collections first. Both measured on ansible-core 2.19.12
+/// with kubespray's `policy_controller/calico` layout.
+#[test]
+fn a_dependency_is_found_beside_its_owner() {
+    let tmp = tree();
+    let dir = tmp.path().to_path_buf();
+    let owner = dir.join("roles/apps/pc");
+    std::fs::create_dir_all(owner.join("calico/tasks")).unwrap();
+    let search = RoleSearch::new(&dir, &Config::default());
+    assert!(
+        search.locate("pc/calico").is_err(),
+        "not on the plain search"
+    );
+    assert_eq!(
+        search.locate_dependency("pc/calico", &owner, &[]).unwrap(),
+        owner.join("calico").canonicalize().unwrap(),
+    );
+    let text = format!(
+        "{:#}",
+        search
+            .locate_dependency("pc/nosuch", &owner, &["acme.demo".to_string()])
+            .unwrap_err()
+    );
+    let tail = format!("{}:{}", dir.join("roles/apps").display(), dir.display());
+    assert!(text.contains("in acme.demo:ansible.legacy:"), "{text}");
+    assert!(text.ends_with(&tail), "{text}");
 }
 
 /// The directory of a playbook given as `play/../play/./sub` is searched by its folded name, the

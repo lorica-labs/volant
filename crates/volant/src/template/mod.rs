@@ -42,6 +42,7 @@ pub(crate) mod unknown;
 mod version;
 mod vm;
 mod written;
+pub(crate) use tagged::take_deprecated_reads;
 pub(crate) use written::{inner_origin, note as note_written, written_at};
 mod yaml_dump;
 pub(crate) use pymethods::format::float::repr as python_float_repr;

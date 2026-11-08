@@ -148,6 +148,18 @@ pub(crate) fn deprecate_play_hosts(origin: Option<&super::Origin>) {
     }
 }
 
+thread_local! {
+    /// The deprecations printed on this thread since the last [`take_shown_deprecations`], as a
+    /// registered result holds them: the reference registers each one in the result of the task
+    /// it was raised for, however many times it is printed.
+    static SHOWN: std::cell::RefCell<Vec<Value>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The deprecations [`deprecate_conditional_template`] raised on this thread since the last call.
+pub(crate) fn take_shown_deprecations() -> Vec<Value> {
+    SHOWN.with_borrow_mut(std::mem::take)
+}
+
 /// The deprecation the reference prints for a condition written as one template that renders
 /// to something other than an expression, at where it was written, once per place for the run.
 pub(crate) fn deprecate_conditional_template(origin: Option<&super::Origin>) {
@@ -159,6 +171,14 @@ pub(crate) fn deprecate_conditional_template(origin: Option<&super::Origin>) {
     let text = format!(
         "Conditionals should not be surrounded by templating delimiters such as {{{{ }}}} or {{% %}}. This feature will be removed from ansible-core version 2.23.{place}"
     );
+    SHOWN.with_borrow_mut(|shown| {
+        shown.push(serde_json::json!({
+            "msg": "Conditionals should not be surrounded by templating delimiters such as {{ }} or {% %}.",
+            "collection_name": "ansible.builtin",
+            "version": "2.23",
+            "deprecator": {"resolved_name": "ansible.builtin", "type": null},
+        }));
+    });
     if SAID.lock().expect("said lock").insert(text.clone()) {
         print_deprecation(&text);
     }

@@ -346,16 +346,21 @@ impl Templar {
         expr: &str,
         vars: impl Into<Vars<'a>>,
     ) -> Result<bool, TemplateError> {
-        let (ctx, _) = context_of(self, vars.into());
+        let (ctx, tainted) = context_of(self, vars.into());
         let delimited = single_expression(expr);
+        // Measured on ansible-core 2.19.12: a condition that starts and ends with delimiters is
+        // rendered as a template, `{{ 'a' }} == {{ 'b' }}` included, and what it renders to is
+        // evaluated only when trusted.
+        let whole = delimited.is_none() && crate::playbook::possibly_all_template(expr.trim());
         // A condition written in braces is a template: its syntax errors are a template's.
         let mut value = match delimited {
             Some(inner) => super::as_template(expr, inner, || self.evaluate_in(inner, &ctx))?,
+            None if whole => self.render_in(expr.trim(), &ctx, &tainted)?,
             None => self
                 .evaluate_in(&inline_conditional(expr), &ctx)
                 .map_err(as_expression)?,
         };
-        if delimited.is_some()
+        if (delimited.is_some() || whole)
             && let Value::String(text) = &value
         {
             let trusted = super::tagged::take_result(&ctx)

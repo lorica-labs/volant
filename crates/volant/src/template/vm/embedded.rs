@@ -92,7 +92,10 @@ pub(in crate::template) fn inline_lookup_terms(
                     tokens.get(i + 1).map(|(t, _)| t),
                     Some(Token::ParenClose | Token::Comma | Token::BracketClose)
                 );
-                let term = open.len() == 1 || (open.len() == 2 && open[1]);
+                // The first term names the plugin, which the reference never renders: measured
+                // on ansible-core 2.19.12, `lookup('{{ "pipe" }}')` finds no plugin of that name.
+                let name = open.len() == 1 && matches!(before, Some(Token::ParenOpen));
+                let term = !name && (open.len() == 1 || (open.len() == 2 && open[1]));
                 if let (true, true, Some(expr)) = (term, whole, expression(text)) {
                     let (start, end) = (span.start_offset as usize, span.end_offset as usize);
                     out.push_str(&source[from..start]);
@@ -179,6 +182,7 @@ mod tests {
         "lookup('items', '{% if 1 %}x{% endif %}')"
     )]
     #[case("x.lookup('{{ v }}')", "x.lookup('{{ v }}')")]
+    #[case("lookup('{{ \"pipe\" }}')", "lookup('{{ \"pipe\" }}')")]
     #[case(
         "lookup('file', d ~ '/{{ x }}.txt')",
         "lookup('file', d ~ '/{{ x }}.txt')"

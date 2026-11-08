@@ -286,15 +286,23 @@ fn with_registered(extra: Value) -> HostVars {
 }
 
 /// Measured on ansible-core 2.19.12, after `register: r` on `command: echo "1 == 2"`: the three
-/// forms below pass, the first two with the deprecation warning for the braces.
+/// forms below pass, the first two with the deprecation for the braces, which the result holds.
 #[tokio::test]
 async fn a_that_reading_a_registered_value_reads_it_as_data() {
-    for that in [
-        json!("{{ r.rc == 0 }}"),
-        json!(["1 == 1", "{{ r.rc == 0 }}"]),
-        json!("r.stdout == '1 == 2'"),
+    for (that, braces) in [
+        (json!("{{ r.rc == 0 }}"), true),
+        (json!(["1 == 1", "{{ r.rc == 0 }}"]), true),
+        (json!("r.stdout == '1 == 2'"), false),
     ] {
-        let r = local_with("assert", json!({"that": that}), with_registered(json!({}))).await;
+        let mut r = local_with("assert", json!({"that": that}), with_registered(json!({}))).await;
+        let deprecations = r.0.remove("deprecations");
+        assert_eq!(
+            deprecations.is_some_and(|d| d[0]["msg"]
+                .as_str()
+                .is_some_and(|m| m.contains("templating delimiters"))),
+            braces,
+            "{that}"
+        );
         assert_eq!(
             Value::Object(r.0),
             json!({"_ansible_verbose_always": true, "changed": false, "msg": "All assertions passed"}),

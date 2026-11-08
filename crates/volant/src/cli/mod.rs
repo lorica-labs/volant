@@ -25,6 +25,7 @@ mod runtime;
 mod setup;
 mod shims;
 mod signals;
+mod stages;
 mod tool;
 mod vault;
 mod vault_args;

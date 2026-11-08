@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use anstream::ColorChoice;
@@ -14,14 +14,14 @@ use super::passwords::{ask_passwords, ssh_words};
 use super::plays::Plays;
 use super::setup::{SetUp, set_up};
 use super::signals::spawn_signal_watcher;
-use crate::compile::{self, Compiled};
+use super::stages;
+use crate::compile;
 use crate::executor::{self, Abort, LocalPool, RunOptions, RunState};
 use crate::inventory::Host;
 use crate::listing::{self, Listing};
 use crate::profile::{Phase, Profile, json_path, micros};
 use crate::python::Facts;
 use crate::render::Renderer;
-use crate::roles::RoleSearch;
 use crate::stats::{Refusal, Stats, error_code, exit_code};
 use crate::template::Templar;
 use crate::transport::{ConnectionDefaults, Transport};
@@ -158,20 +158,11 @@ async fn run_all(
     // stops the run with nothing printed, which is where the reference stops it too. The whole
     // compilation is wrapped in the code the reference gives a playbook it cannot make sense of,
     // and the refusals that measured a code of their own carry it through untouched.
-    let mut compiled: Vec<Vec<Compiled>> = Vec::new();
     // Read here for the paths an import renders, and kept for the local-agent check further down,
     // which runs before any host has an effective view and would otherwise read
     // `ansible_connection` from the inventory alone.
     let extra = crate::vars::parse_extra_vars(&args.extra_vars, &std::env::current_dir()?)?;
-    for pb in &playbooks {
-        let mut plays = Vec::new();
-        for play in &pb.plays {
-            let search = RoleSearch::new(&play.dir, &config);
-            let play = compile::compile_with(play, &search, &selection, &extra);
-            plays.push(play.map_err(|e| Refusal::or(4, e))?);
-        }
-        compiled.push(plays);
-    }
+    let mut compiled = stages::compile_all(&playbooks, &config, &selection, &extra)?;
     profile.phase(
         None,
         Phase::Compile,
@@ -240,19 +231,17 @@ async fn run_all(
     // by its own name too, and before the first connection like everything else.
     let checking = std::time::Instant::now();
     let terminal = std::io::IsTerminal::is_terminal(&std::io::stdin());
-    for (pb, steps) in playbooks.iter().zip(&compiled) {
-        for (play, compiled) in pb.plays.iter().zip(steps) {
-            // Resolved quietly: `play_hosts` prints the pattern warnings when the play starts.
-            // A template is not known yet, so it may match: refused as a pattern that does.
-            let matched = executor::is_templated(play)
-                || inventory.resolve(&play.hosts).hosts.iter().any(|h| {
-                    limit
-                        .as_ref()
-                        .is_none_or(|allowed| allowed.contains(&h.name))
-                });
-            preflight::check_steps(compiled, terminal && matched)?;
-        }
-    }
+    stages::check_compiled(&playbooks, &compiled, |play| {
+        // Resolved quietly: `play_hosts` prints the pattern warnings when the play starts.
+        // A template is not known yet, so it may match: refused as a pattern that does.
+        let matched = executor::is_templated(play)
+            || inventory.resolve(&play.hosts).hosts.iter().any(|h| {
+                limit
+                    .as_ref()
+                    .is_none_or(|allowed| allowed.contains(&h.name))
+            });
+        terminal && matched
+    })?;
     preflight_micros += micros(checking);
     profile.phase(None, Phase::Preflight, preflight_micros);
     let building = std::time::Instant::now();
@@ -267,32 +256,8 @@ async fn run_all(
     //
     // A collection's module the plays name is resolved by the same helper first, and refused
     // here, by name, when its collection is not installed or serves it through an action plugin.
-    let named_dirs: Vec<PathBuf> = files
-        .iter()
-        .map(PathBuf::as_path)
-        .map(playbook::base_dir)
-        .collect();
-    let named_playbooks: Vec<python::Named> = named_dirs
-        .iter()
-        .zip(playbooks.iter().zip(&compiled))
-        .map(|(dir, (pb, steps))| python::Named {
-            dir: Some(dir.as_path()),
-            plays: pb
-                .plays
-                .iter()
-                .map(|play| play.dir.as_path())
-                .zip(steps)
-                .collect(),
-        })
-        .collect();
-    let reach = python::Reach::walk_run(&named_playbooks).map_err(|e| Refusal::or(4, e))?;
-    reach.note_own_actions();
-    python::check_plugin_order(&reach).map_err(|e| Refusal::or(4, e))?;
-    let named: Vec<(String, String)> = compiled
-        .iter()
-        .flatten()
-        .flat_map(preflight::collection_modules)
-        .collect();
+    let reach = stages::reach_of(&files, &playbooks, &compiled)?;
+    let named = stages::collection_names(&compiled);
     let built = python::union_for_run(&reach, &named, &mut |warning| {
         out.warning(&warning, false);
     });

@@ -2,8 +2,12 @@
 //! The deprecations a module returns: kept in its result as ansible-core registers them, and
 //! shown as it shows them.
 
+use std::sync::Arc;
+
 use serde_json::{Map, Value, json};
 use volant_protocol::TaskResult;
+
+use crate::tags::{Children, Deprecated, TagSet, TagSetId, TagTree};
 
 /// Rewrites each deprecation a module sent in ansible-core 2.19's wire form (`DeprecationSummary`,
 /// its message under `event`) into the mapping a registered result holds:
@@ -27,27 +31,197 @@ pub(super) fn register_deprecations(result: &mut TaskResult) {
             .pointer("/deprecator/type")
             .cloned()
             .unwrap_or(Value::Null);
-        let collection = resolved
-            .as_str()
-            .map(|name| name.split('.').take(2).collect::<Vec<_>>().join("."));
         let msg = super::register::warning_text(&json!({ "event": item.get("event") }));
-        let mut shown = Map::new();
-        shown.insert("msg".into(), json!(msg));
-        shown.insert("collection_name".into(), json!(collection));
-        match item.get("date").filter(|d| !d.is_null()) {
-            Some(date) => shown.insert("date".into(), date.clone()),
-            None => shown.insert(
-                "version".into(),
-                item.get("version").cloned().unwrap_or(Value::Null),
-            ),
-        };
-        shown.insert(
-            "deprecator".into(),
-            json!({ "resolved_name": resolved, "type": kind }),
-        );
-        *item = Value::Object(shown);
+        let date = item.get("date").filter(|d| !d.is_null()).cloned();
+        let version = item.get("version").cloned();
+        *item = registered(msg, resolved, kind, date, version);
     }
     if any {
+        result.0.insert(SHOW_KEY.into(), Value::Bool(true));
+    }
+}
+
+/// A deprecation as a registered result holds it.
+fn registered(
+    msg: String,
+    resolved: Value,
+    kind: Value,
+    date: Option<Value>,
+    version: Option<Value>,
+) -> Value {
+    let collection = resolved
+        .as_str()
+        .map(|name| name.split('.').take(2).collect::<Vec<_>>().join("."));
+    let mut shown = Map::new();
+    shown.insert("msg".into(), json!(msg));
+    shown.insert("collection_name".into(), json!(collection));
+    match date {
+        Some(date) => shown.insert("date".into(), date),
+        None => shown.insert("version".into(), version.unwrap_or(Value::Null)),
+    };
+    shown.insert(
+        "deprecator".into(),
+        json!({ "resolved_name": resolved, "type": kind }),
+    );
+    Value::Object(shown)
+}
+
+/// The key a result holds the tags of its values under, as JSON: a `_volant_` key, which
+/// nothing shows.
+const VALUE_TAGS_KEY: &str = "_volant_value_tags";
+
+/// Takes the tags ansible-core 2.19's module wire form writes on a value off the values of
+/// `result`, leaving the plain value, and keeps the `Deprecated` ones for what the task
+/// registers. Measured on ansible-core 2.19.12, a module returning `deprecate_value(...)` sends
+/// `{"value": ..., "tags": [{"msg": ..., "version": ..., "deprecator": {...}, "__ansible_type":
+/// "Deprecated"}], "__ansible_type": "_AnsibleTaggedStr"}`.
+pub(super) fn keep_value_tags(result: &mut TaskResult) {
+    if !result.0.values().any(holds_tagged) {
+        return;
+    }
+    let kids = result
+        .0
+        .iter_mut()
+        .filter_map(|(key, value)| Some((key.clone(), untag(value)?)))
+        .collect();
+    if let Some(tree) = TagTree::node(TagSetId::NONE, Children::Map(kids)) {
+        result.0.insert(VALUE_TAGS_KEY.into(), json!(tree));
+    }
+}
+
+/// The tags [`keep_value_tags`] kept, by the key of the result they are under.
+pub(super) fn value_tags(result: &TaskResult) -> Vec<(String, TagTree)> {
+    let tree = result
+        .0
+        .get(VALUE_TAGS_KEY)
+        .and_then(|kept| serde_json::from_value::<TagTree>(kept.clone()).ok())
+        .filter(TagTree::is_known);
+    match tree {
+        Some(TagTree::Node(_, Children::Map(kids))) => kids,
+        _ => Vec::new(),
+    }
+}
+
+fn tagged_wire(map: &Map<String, Value>) -> bool {
+    map.contains_key("value")
+        && map
+            .get("__ansible_type")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| kind.starts_with("_AnsibleTagged"))
+}
+
+fn holds_tagged(value: &Value) -> bool {
+    match value {
+        Value::Object(map) => tagged_wire(map) || map.values().any(holds_tagged),
+        Value::Array(items) => items.iter().any(holds_tagged),
+        _ => false,
+    }
+}
+
+/// `value` with the wire form of its tags taken off, and the tree of the `Deprecated` ones.
+fn untag(value: &mut Value) -> Option<TagTree> {
+    let unwrapped = match value {
+        Value::Object(map) if tagged_wire(map) => {
+            let found = map
+                .get("tags")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .find_map(deprecated);
+            let own = found.map_or(TagSetId::NONE, |d| {
+                crate::tags::intern(TagSet {
+                    deprecated: Some(Arc::new(d)),
+                    ..TagSet::default()
+                })
+            });
+            Some((own, map.remove("value").unwrap_or(Value::Null)))
+        }
+        _ => None,
+    };
+    let mut own = TagSetId::NONE;
+    if let Some((id, inner)) = unwrapped {
+        own = id;
+        *value = inner;
+    }
+    let children = match value {
+        Value::Object(map) => Children::Map(
+            map.iter_mut()
+                .filter_map(|(key, v)| Some((key.clone(), untag(v)?)))
+                .collect(),
+        ),
+        Value::Array(items) => Children::Seq(
+            items
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(i, v)| Some((i, untag(v)?)))
+                .collect(),
+        ),
+        _ => Children::Seq(Vec::new()),
+    };
+    TagTree::node(own, children)
+}
+
+/// A `Deprecated` tag of the wire form.
+fn deprecated(tag: &Value) -> Option<Deprecated> {
+    if tag.get("__ansible_type")?.as_str()? != "Deprecated" {
+        return None;
+    }
+    let text = |key: &str| tag.get(key).and_then(Value::as_str).map(str::to_string);
+    let deprecator = tag
+        .pointer("/deprecator/resolved_name")
+        .and_then(Value::as_str)
+        .map(|name| {
+            let kind = tag.pointer("/deprecator/type").and_then(Value::as_str);
+            (name.to_string(), kind.unwrap_or_default().to_string())
+        });
+    Some(Deprecated {
+        msg: text("msg")?,
+        help_text: text("help_text"),
+        date: text("date"),
+        version: text("version"),
+        deprecator,
+    })
+}
+
+/// The result `run` gives, with the deprecations its templates raised, as ansible-core registers
+/// them: those already printed, then the deprecated values they read, which are shown with the
+/// result.
+pub(super) fn noting_reads(run: impl FnOnce() -> TaskResult) -> TaskResult {
+    crate::template::take_deprecated_reads();
+    crate::playbook::take_shown_deprecations();
+    let mut result = run();
+    add_read_deprecations(&mut result);
+    result
+}
+
+fn add_read_deprecations(result: &mut TaskResult) {
+    let printed = crate::playbook::take_shown_deprecations();
+    let read = crate::template::take_deprecated_reads();
+    if read.is_empty() && printed.is_empty() {
+        return;
+    }
+    let shown = read.iter().map(|d| {
+        let (resolved, kind) = match &d.deprecator {
+            Some((name, kind)) => (json!(name), (!kind.is_empty()).then(|| json!(kind))),
+            None => (Value::Null, None),
+        };
+        registered(
+            d.msg.clone(),
+            resolved,
+            kind.unwrap_or(Value::Null),
+            d.date.clone().map(Value::String),
+            d.version.clone().map(Value::String),
+        )
+    });
+    let list = result
+        .0
+        .entry("deprecations")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    if let Value::Array(list) = list {
+        list.extend(printed);
+        list.extend(shown);
+    }
+    if !read.is_empty() {
         result.0.insert(SHOW_KEY.into(), Value::Bool(true));
     }
 }
@@ -186,7 +360,36 @@ fn join_sentences(first: &str, second: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{join_sentences, removal};
+    use serde_json::json;
+    use volant_protocol::TaskResult;
+
+    use super::{join_sentences, keep_value_tags, removal, value_tags};
+
+    #[test]
+    fn a_tagged_module_value_comes_out_plain_and_keeps_its_deprecation() {
+        let wire = json!({
+            "deprecated_result": {
+                "value": "v",
+                "tags": [{
+                    "msg": "value is deprecated",
+                    "version": "9999.9",
+                    "deprecator": {"resolved_name": "foo.bar", "type": null, "__ansible_type": "PluginInfo"},
+                    "__ansible_type": "Deprecated",
+                }],
+                "__ansible_type": "_AnsibleTaggedStr",
+            },
+            "plain": "x",
+        });
+        let mut r = TaskResult(serde_json::from_value(wire).unwrap());
+        keep_value_tags(&mut r);
+        assert_eq!(r.0["deprecated_result"], json!("v"));
+        let kept = value_tags(&r);
+        assert_eq!(kept.len(), 1);
+        let found = crate::tags::get(kept[0].1.own()).deprecated.unwrap();
+        assert_eq!(found.msg, "value is deprecated");
+        assert_eq!(found.version.as_deref(), Some("9999.9"));
+        assert_eq!(found.deprecator, Some(("foo.bar".into(), String::new())));
+    }
 
     #[test]
     fn the_removal_sentence_names_who_removes_it_and_when() {

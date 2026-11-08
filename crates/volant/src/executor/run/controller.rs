@@ -17,6 +17,19 @@ use super::argspec::{unchanged_failure, unsupported};
 use super::output::python_falsy;
 use super::retry::{PYTIME_OUT_OF_RANGE, conditional_error};
 
+/// The deprecation of a `that` condition written as one template that renders to anything but
+/// an expression, as for `when`: measured on ansible-core 2.19.12, the task registers it.
+fn deprecate_one_template(task: &PlayTask, item: &Item, templar: &Templar, condition: &Value) {
+    if let Value::String(text) = condition
+        && crate::playbook::possibly_all_template(text.trim())
+        && templar
+            .render(text.trim(), &item.vars)
+            .is_ok_and(|rendered| !rendered.is_string())
+    {
+        crate::playbook::deprecate_conditional_template(task.value_origins.get("that"));
+    }
+}
+
 /// `assert`, measured on ansible-core 2.19.12: the conditions are evaluated in order, the first
 /// false one is reported as the playbook wrote it, a string or a boolean, and an undefined name
 /// fails the task the way any other conditional does.
@@ -92,6 +105,7 @@ pub(super) fn assert_module(task: &PlayTask, item: &Item, templar: &Templar) -> 
             Value::Bool(b) => if *b { "True" } else { "False" }.to_string(),
             other => other.to_string(),
         };
+        deprecate_one_template(task, item, templar, condition);
         crate::profile::count(crate::profile::Counter::RenderWhen, 1);
         match templar.condition(&text, &item.vars) {
             // Measured on ansible-core 2.19.12: an untrusted `that` is refused with a cause at

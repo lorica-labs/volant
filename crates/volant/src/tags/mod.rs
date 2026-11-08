@@ -176,6 +176,9 @@ pub fn intern(set: TagSet) -> TagSetId {
     if let Some(&id) = tables().set_ids.get(&set) {
         return TagSetId(id);
     }
+    if set.deprecated.is_some() {
+        ANY_DEPRECATED.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
     let mut tables = tables_mut();
     if let Some(&id) = tables.set_ids.get(&set) {
         return TagSetId(id);
@@ -184,6 +187,14 @@ pub fn intern(set: TagSet) -> TagSetId {
     tables.sets.push(set.clone());
     tables.set_ids.insert(set, id);
     TagSetId(id)
+}
+
+/// Set once a set with `Deprecated` is interned: until then no render looks for one.
+static ANY_DEPRECATED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether this process has interned a set with `Deprecated`.
+pub fn any_deprecated() -> bool {
+    ANY_DEPRECATED.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Whether the set `id` names holds `TrustedAsTemplate`.

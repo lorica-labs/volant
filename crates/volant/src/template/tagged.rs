@@ -274,7 +274,43 @@ pub(super) fn take_result(ctx: &Value) -> Option<TagTree> {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .take()?;
-    root.registry.tree_of(&value)
+    let tree = root.registry.tree_of(&value);
+    if let Some(tree) = &tree
+        && crate::tags::any_deprecated()
+    {
+        DEPRECATED_READS.with_borrow_mut(|read| note_deprecated(tree, read));
+    }
+    tree
+}
+
+thread_local! {
+    /// The `Deprecated` tags of the values the renders on this thread returned, each once, since
+    /// the last [`take_deprecated_reads`].
+    static DEPRECATED_READS: std::cell::RefCell<Vec<Arc<crate::tags::Deprecated>>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn note_deprecated(tree: &TagTree, read: &mut Vec<Arc<crate::tags::Deprecated>>) {
+    if let Some(found) = crate::tags::get(tree.own()).deprecated
+        && !read.iter().any(|d| Arc::ptr_eq(d, &found))
+    {
+        read.push(found);
+    }
+    match tree {
+        TagTree::Leaf(_) => {}
+        TagTree::Node(_, Children::Map(kids)) => {
+            kids.iter().for_each(|(_, kid)| note_deprecated(kid, read));
+        }
+        TagTree::Node(_, Children::Seq(kids)) => {
+            kids.iter().for_each(|(_, kid)| note_deprecated(kid, read));
+        }
+    }
+}
+
+/// The deprecated values the renders on this thread returned since the last call, in the order
+/// they were first read.
+pub(crate) fn take_deprecated_reads() -> Vec<Arc<crate::tags::Deprecated>> {
+    DEPRECATED_READS.with_borrow_mut(std::mem::take)
 }
 
 fn number_key(value: &Value) -> Option<NumberKey> {

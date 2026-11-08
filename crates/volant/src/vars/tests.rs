@@ -1859,3 +1859,22 @@ fn the_store_of_an_inventory_grows_linearly_with_its_hosts() {
         "500 hosts took {small:?} and 4,000 took {large:?}: more than linear"
     );
 }
+
+/// The values of a whole-file-encrypted vars file are trusted and carry `SourceWasEncrypted`.
+#[test]
+fn the_values_of_an_encrypted_vars_file_are_trusted_and_marked_encrypted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("v.yml");
+    crate::vault::install(crate::vault::Secrets::new(vec![b"pw".to_vec()]));
+    let text = crate::vault::encrypt(
+        b"a: '{{ x }}'
+",
+        b"pw",
+        None,
+    )
+    .unwrap();
+    std::fs::write(&path, text).unwrap();
+    let loaded = load_vars_file(&path).unwrap();
+    let set = crate::tags::get(loaded.tree("a").unwrap().own());
+    assert!(set.trusted && set.source_encrypted);
+}

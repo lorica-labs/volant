@@ -193,7 +193,13 @@ pub fn read_vars_document(path: &Path) -> anyhow::Result<VarsDocument> {
                 yaml::to_tagged_json(doc).with_context(|| format!("in {}", path.display()))?;
             let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
             let absolute = absolute.display().to_string();
-            (value, yaml::tags_of(doc, &origins, Some(&absolute), true))
+            let tags = yaml::tags_of(doc, &origins, Some(&absolute), true);
+            let tags = if encrypted {
+                tags.map(TagTree::encrypted_source)
+            } else {
+                tags
+            };
+            (value, tags)
         }
     };
     yaml::note_value_origins(&docs, &origins, &source, &text);

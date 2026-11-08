@@ -253,8 +253,13 @@ fn vaulted_fact(task: &PlayTask, item: &Item, key: &str) -> Option<String> {
     if name.is_empty() || !name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
         return None;
     }
-    let host = item.vars.get("inventory_hostname")?.as_str()?;
-    crate::vault::vaulted_value(host, name)
+    if let Some(wrapper) = item.vars.get(name).and_then(Value::as_str)
+        && crate::yaml::vault_text(wrapper).is_some()
+    {
+        return Some(wrapper.to_string());
+    }
+    let ciphertext = crate::tags::get(item.vars.tree(name)?.own()).vaulted?;
+    Some(crate::yaml::vault_data(&ciphertext))
 }
 
 /// ansible-core's `validate_variable_name`: why this value cannot name a variable, or `None`.

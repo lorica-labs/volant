@@ -1145,6 +1145,19 @@ fn the_vault_filter_tags_its_result_only_when_asked_to_wrap_it() {
     }
 }
 
+/// A unary `+` gives its operand, as in Python.
+#[test]
+fn a_unary_plus_gives_its_operand() {
+    let t = templar();
+    let none = Map::new();
+    assert_eq!(t.render("{{ +2.5 }}", &none), Ok(json!(2.5)));
+    assert_eq!(t.render("{{ [+1] }}", &none), Ok(json!([1])));
+    assert_eq!(
+        t.render("x {{ [-2.5, +2.5, 1 + 2.5] }}", &none),
+        Ok(json!("x [-2.5, 2.5, 3.5]"))
+    );
+}
+
 /// Inside text a container prints as Python's `repr` and a whole `none` prints nothing; an
 /// undefined parent stays undefined until `default` decides; a final newline is kept.
 #[test]

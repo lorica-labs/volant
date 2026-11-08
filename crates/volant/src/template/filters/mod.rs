@@ -46,16 +46,16 @@ pub fn register(
             super::bridged::raise(crate::vault::undecryptable(&ciphertext, &reason))
         })?;
         super::lookups::taint(state);
-        Ok::<_, Error>(plain)
+        Ok::<_, Error>(vaulted(state, plain, &ciphertext))
     });
     add_filter(
         env,
         "vault",
-        |data: String, secret: String, kwargs: Kwargs| {
+        |state: &State, data: String, secret: String, kwargs: Kwargs| {
             let id: Option<String> = kwargs.get("vault_id")?;
             let id = id.unwrap_or_else(|| "filter_default".into());
             // A salt is read as its text, as Python's `to_bytes` reads it: `salt=7` salts with
-            // `b'7'`. The wrapped object is read here, so it is refused rather than dropped.
+            // `b'7'`.
             let salt = kwargs
                 .get::<Option<Value>>("salt")?
                 .filter(|v| !v.is_none())
@@ -63,22 +63,24 @@ pub fn register(
             if salt.as_deref() == Some("") {
                 return Err(invalid("Empty or invalid salt passed"));
             }
-            if truthy_value(kwargs.get::<Option<Value>>("wrap_object")?) {
-                return Err(invalid(
-                    "the wrap_object argument of vault is not supported yet",
-                ));
-            }
+            let wrap = truthy_value(kwargs.get::<Option<Value>>("wrap_object")?);
             kwargs.assert_all_used()?;
-            match salt {
-                Some(salt) => Ok(crate::vault::encrypt_with_salt(
+            let ciphertext = match salt {
+                Some(salt) => crate::vault::encrypt_with_salt(
                     data.as_bytes(),
                     secret.as_bytes(),
                     Some(&id),
                     salt.as_bytes(),
-                )),
+                ),
                 None => crate::vault::encrypt(data.as_bytes(), secret.as_bytes(), Some(&id))
-                    .map_err(|_| invalid("Unable to encrypt.")),
-            }
+                    .map_err(|_| invalid("Unable to encrypt."))?,
+            };
+            // `wrap_object=True` returns the vaulted value, plain text otherwise.
+            Ok(if wrap {
+                vaulted(state, ciphertext.clone(), &ciphertext)
+            } else {
+                Value::from(ciphertext)
+            })
         },
     );
     add_filter(
@@ -96,20 +98,10 @@ pub fn register(
                 .map(|plain| String::from_utf8_lossy(&plain).into_owned())
         },
     );
-    // `NAME is vault_encrypted` is rewritten to carry the name (see `route_calls`): the
-    // reference tells a vaulted variable by a tag this engine does not carry. The answer is the
-    // current host's: the names are kept per host.
     add_test(env, "vault_encrypted", |state: &State, value: Value| {
-        let host = state.lookup("inventory_hostname");
-        value
-            .as_str()
-            .and_then(|s| s.strip_prefix(super::VAULT_NAME))
-            .is_some_and(|name| {
-                crate::vault::is_name(
-                    host.as_ref().and_then(Value::as_str).unwrap_or_default(),
-                    name,
-                )
-            })
+        crate::tags::get(super::tagged::tags_of(state, &value))
+            .vaulted
+            .is_some()
     });
     add_test(env, "vaulted_file", |path: String| {
         std::fs::File::open(&path)
@@ -490,4 +482,15 @@ fn string(state: &State, value: Value) -> Result<Value, Error> {
         ));
     }
     minijinja::filters::string(state, &value)
+}
+
+/// `text`, tagged `VaultedValue` with the ciphertext it was decrypted from or encrypted to.
+fn vaulted(state: &State, text: String, ciphertext: &str) -> Value {
+    let out = Value::from(text);
+    let set = crate::tags::TagSet {
+        vaulted: Some(std::sync::Arc::from(ciphertext)),
+        ..crate::tags::TagSet::default()
+    };
+    super::tagged::tag(state, &out, crate::tags::intern(set));
+    out
 }

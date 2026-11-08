@@ -14,6 +14,7 @@ use minijinja::syntax::SyntaxConfig;
 use minijinja::{AutoEscape, ErrorKind};
 use serde_json::Value;
 
+mod closure;
 mod embedded;
 mod expression;
 mod literals;
@@ -240,7 +241,8 @@ pub(super) fn render_counted(
 ) -> Result<(String, Emitted), minijinja::Error> {
     let inlined = embedded::inline_lookup_terms(source, false, syntax_config.clone());
     let signed = unary::without_unary_plus(&inlined, false, syntax_config.clone());
-    let unfolded = literals::unfold_comparisons(&signed, false, syntax_config.clone());
+    let enclosed = closure::with_includes_enclosed(&signed, syntax_config.clone());
+    let unfolded = literals::unfold_comparisons(&enclosed, false, syntax_config.clone());
     let config = TemplateConfig {
         syntax_config,
         // Never by file name: measured on ansible-core 2.19.12, `index.html.j2` holding

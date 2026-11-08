@@ -5,5 +5,5 @@ cache-plugins                  #1440
 deprecations                   #1443
 filter_encryption              #1442
 protomatter                    #1441
-template                       #1446
+template                       #1450
 templating                     #1441

@@ -1,0 +1,8 @@
+- hosts: all
+  gather_facts: false
+  roles:
+    - web
+  tasks:
+    - name: Say hi
+      debug:
+        msg: hi

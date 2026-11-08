@@ -284,8 +284,10 @@ fn hash(
 }
 
 /// Reads one line from the terminal with the echo off, the prompt written to the terminal as
-/// `getpass` does (stderr where there is none) so that a redirected stdout still carries only the
-/// run's own output, and the line break after the answer with it. `None` when nothing was read.
+/// `getpass` does (stdin and stderr where there is none) so that a redirected stdout still carries
+/// only the run's own output, and the line break after the answer with it. `None` when nothing was
+/// read. The terminal is read even when stdin is not it, as `getpass` reads it: `sshpass` answers
+/// on the terminal it gives the run, and leaves stdin as it was.
 /// The stderr written to is the inherited descriptor: reopening `/dev/stderr` by name would
 /// truncate a file it is redirected to.
 ///
@@ -296,18 +298,18 @@ fn hash(
 /// Ctrl-\ is a key an operator reaches for at a prompt that seems stuck, and it would otherwise
 /// kill the shell with the echo still off, leaving a terminal that types nothing back. Doing
 /// this from Rust would need a `Drop` that a signal never runs, and a terminal left with the
-/// echo off is a poor parting gift. Where stdin is not a terminal, `stty` fails, its complaint
-/// is dropped and the line is read as it comes.
+/// echo off is a poor parting gift. With no terminal and a stdin that is not one either, `stty`
+/// fails, its complaint is dropped and the line is read as it comes.
 #[cfg(unix)]
 pub(crate) fn hidden_line(prompt: &str) -> anyhow::Result<Option<Vec<u8>>> {
     use std::process::Stdio;
-    const READ_LINE: &str = "trap 'stty echo 2>/dev/null' EXIT INT QUIT TERM HUP\n\
-         stty -echo 2>/dev/null\n\
-         if ( : >/dev/tty ) 2>/dev/null; then exec 3>/dev/tty; else exec 3>&2; fi\n\
-         printf %s \"$1\" >&3\n\
-         IFS= read -r password\n\
+    const READ_LINE: &str = "trap 'stty echo 2>/dev/null <&3' EXIT INT QUIT TERM HUP\n\
+         if ( : <>/dev/tty ) 2>/dev/null; then exec 3<>/dev/tty 4>&3; else exec 3<&0 4>&2; fi\n\
+         stty -echo 2>/dev/null <&3\n\
+         printf %s \"$1\" >&4\n\
+         IFS= read -r password <&3\n\
          status=$?\n\
-         printf '\\n' >&3\n\
+         printf '\\n' >&4\n\
          [ $status = 0 ] || exit 1\n\
          printf %s \"$password\"\n";
     // The shell prints the prompt itself, once the echo is off: a person (or a test) answering

@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [r : debug] ***************************************************************\nchanged: [h1] => {\n    \"msg\": \"role task\"\n}\n\nRUNNING HANDLER [r : remount] **************************************************\nok: [h1] => {\n    \"msg\": \"remounted\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

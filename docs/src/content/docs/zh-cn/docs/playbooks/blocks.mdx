@@ -88,7 +88,7 @@ handler 按定义的顺序运行，而不是按被通知的顺序。`roles:` 中
 
 task 只有在报告 `changed` 时才会通知。对于循环，由整体结果决定，所以只要有一个 item 发生了变化就够了。刷新运行之后，通知会被清除，所以除非再次有东西通知它，handler 不会在下一次刷新时再运行。
 
-`handlers:` 列表中可以写 `import_tasks`，无论在 play 中还是在 role 中。它指定的文件里的 handler 会带着它的关键字取代它的位置，可以按名称和 `listen` 通知。文件先在写这条语句的文件旁边查找，然后在 playbook 的目录中查找。
+`handlers:` 列表中可以写 `import_tasks`，无论在 play 中还是在 role 中。它指定的文件里的 handler 会带着它的关键字取代它的位置，可以按名称和 `listen` 通知。文件先在写这条语句的文件旁边查找。在 role 中，接着依次在 role 的 `tasks/`、role 自身的目录和 playbook 的 `handlers/` 中查找。最后才是 playbook 的目录。
 
 handler 也可以是 `include_tasks`。被通知后，它在 flush 时包含自己的文件：`RUNNING HANDLER` 标题下显示 `included:`，然后文件中的任务作为 handler 为通知了它的主机运行。role 的 handler 会像该 role 的任务一样，在 role 的 `tasks/` 目录中查找它的文件，其中的任务也能找到该 role 的模板和文件。写成 handler 的 `include_role` 会在任何任务运行之前停止运行，退出码为 4，与 Ansible 相同。
 

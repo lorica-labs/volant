@@ -1,14 +1,14 @@
 ---
 title: Performance
-description: Two measured workloads, the configuration behind them, the commands that reproduce them, and where the remaining time goes.
+description: Three measured workloads, the configuration behind them, the commands that reproduce them, and where the remaining time goes.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 import BarChart from '../../../../components/BarChart.astro';
 
-Volant is measured on two real workloads, each run by a recipe in the repository. Every figure on this page comes from those recipes.
+Volant is measured on three real workloads, each run by a recipe in the repository. Every figure on this page comes from those recipes.
 
-On four Ansible Galaxy roles (`geerlingguy.security`, `nginx`, `git` and `pip`) applied to two Ubuntu 24.04 hosts that had already converged, Volant finishes in 0.529 s where ansible-core 2.19.12 with `pipelining = True` takes 26.435 s, a ratio of 49.97. On the official k3s-ansible `site.yml`, against an installed cluster, Volant takes 23.477 s and the reference 50.519 s, a ratio of 2.15. Measured on 2026-09-27 with `just bench` and `just bench-k3s`, which reproduce these figures. They have not been measured again since.
+On four Ansible Galaxy roles (`geerlingguy.security`, `nginx`, `git` and `pip`) applied to two Ubuntu 24.04 hosts that had already converged, Volant finishes in 0.529 s where ansible-core 2.19.12 with `pipelining = True` takes 26.435 s, a ratio of 49.97. On the official k3s-ansible `site.yml`, against an installed cluster, Volant takes 23.477 s and the reference 50.519 s, a ratio of 2.15. Measured on 2026-09-27 with `just bench` and `just bench-k3s`, which reproduce these figures. They have not been measured again since. The third workload, a full `molecule test` of a Galaxy role, is described under [Molecule](#molecule).
 
 <BarChart
   title="Two workloads, two converged hosts"
@@ -117,8 +117,85 @@ Two steps are held back by what the reference itself does:
 
 Those two steps together cost 4.5 to 4.7 seconds per host. Making them faster would mean reading other sources than the reference reads, and that decision is left to a later release.
 
+## Molecule
+
+`molecule test` runs the whole test sequence of a role. It removes any container left from an earlier run, checks the syntax, creates a container, applies the role (converge), applies it a second time to check that nothing changes (idempotence), and removes the container. Molecule starts `ansible-playbook` for each of these playbooks, so with Volant's `ansible-playbook` first on `PATH` the whole sequence runs under Volant, with no change to the role or to Molecule.
+
+On `geerlingguy.nginx` with the docker driver, a full `molecule test` takes 60.349 s under Volant and 96.102 s under ansible-core 2.19.12, a ratio of 1.59. Both engines report the same `PLAY RECAP` lines on every pass. Measured on 2026-11-08 with `just bench-molecule 5`.
+
+<BarChart
+  title="molecule test on geerlingguy.nginx, docker driver"
+  subtitle="Median of five timed passes per engine, 2026-11-08. Reference: ansible-core 2.19.12 with the configuration Molecule writes. Shorter is faster."
+  unit="s"
+  decimals={3}
+  series={[{ name: 'ansible-core 2.19.12' }, { name: 'Volant', accent: true }]}
+  rows={[
+    { label: 'Create', values: [9.750, 5.931] },
+    { label: 'Converge', values: [51.650, 38.133] },
+    { label: 'Idempotence', values: [13.133, 3.320] },
+    { label: 'Destroy, twice', values: [15.801, 11.288] },
+    { label: 'Whole test', values: [96.102, 60.349] },
+  ]}
+/>
+
+### Configuration of the Molecule workload
+
+| | |
+|---|---|
+| Role | `geerlingguy.nginx` at commit `5ff0b23`, its `default` scenario: one Rocky Linux 9 container, 22 tasks |
+| Image | `geerlingguy/docker-rockylinux9-ansible`, pinned by digest, pulled before the passes |
+| Molecule | Molecule 26.11.0, molecule-plugins 26.11.0 and ansible-compat 26.11.0 in a Python 3.12 virtual environment, with `community.docker` 4.8.5 and `ansible.posix` 2.2.2 |
+| Reference | ansible-core 2.19.12 from the same virtual environment, with the `ansible.cfg` Molecule writes (`forks = 50`) and every other setting at its default |
+| Volant | release build of `da423e7` (`v0.1.0-alpha.13-265-gda423e78`), run through its `ansible-playbook` link, with `VOLANT_RUNTIME=system` |
+| Machine | the controller of the other workloads (Ubuntu 26.04, 8 cores), which also runs Docker 29.1.3 and the container |
+| Load | one-minute load average between 0.84 and 2.30 before and after every timed pass, in the same range for both engines |
+| Passes | one untimed warm-up pass per engine, then five timed passes of each, alternating, median reported |
+
+Every pass starts with no container and must end with none. On every pass converge ended on `ok=14 changed=8 skipped=8` and idempotence on `ok=12 changed=0 skipped=8`, under both engines.
+
+A small `ansible-playbook` placed first on `PATH` times each playbook Molecule starts, the same way for both engines, which gives the split by step:
+
+| Step | ansible-core (s) | Volant (s) |
+|---|---|---|
+| Create the container | 9.750 | 5.931 |
+| Converge | 51.650 | 38.133 |
+| Idempotence | 13.133 | 3.320 |
+| Destroy, at the start and at the end | 15.801 | 11.288 |
+| Syntax check | 0.749 | 0.027 |
+| Molecule's own work | 5.167 | 1.650 |
+| Whole test | 96.102 | 60.349 |
+
+Each row is a median on its own, so the rows do not add up to the last one. Molecule's own work is what is left of the whole test once the playbooks are taken out. It includes the `ansible-playbook --version` calls Molecule makes, which run under the engine being measured.
+
+The whole test, pass by pass:
+
+| Engine | Passes (s) |
+|---|---|
+| ansible-core | 100.599, 95.499, 96.675, 96.102, 95.646 |
+| Volant | 61.769, 60.048, 60.349, 60.095, 60.794 |
+
+### What Volant does not change
+
+Most of the time left under Volant is spent outside the engine:
+
+- Converge installs nginx with `dnf`, which downloads packages from the Rocky Linux and EPEL mirrors. Idempotence runs the same tasks with nothing to install and takes 3.320 s, so most of converge's 38.133 s is the package installation. That time depends on the mirrors: one untimed warm-up of the reference failed when an EPEL mirror did not answer.
+- Docker starts the container during create and stops and removes it during destroy. The engine only waits for it.
+- A first `molecule test` on a new machine also pulls the image, 268,904,562 bytes. The recipe pulls it before the timed passes, so the figures above leave that download out. Its length depends on your network.
+
+Two differences show in the logs and not in the recaps. Volant polls `async_status` sooner than ansible-core, so destroy can print one more `FAILED - RETRYING` line while it waits for docker. And the Volant passes set `VOLANT_RUNTIME=system`: without it, the implicit localhost runs the docker driver's modules under Volant's managed Python, which does not have the `docker` library, where ansible-core uses the Python of the virtual environment ([#1422](https://github.com/lorica-labs/volant/issues/1422)).
+
+### Reproducing the Molecule figures
+
+The recipe needs Docker and `uv` on the machine that runs it, and no other host. It builds Volant in release mode, installs the pinned versions under `target/molecule/`, fetches the role at its commit and pulls the image by digest:
+
+```sh
+just bench-molecule 5
+```
+
+The first argument is the number of timed passes per engine. Before each pass the recipe waits until no build or other `ansible-playbook` runs and the one-minute load average is under the second argument, 1.5 by default. It writes the medians and the load range to `target/molecule/logs/`, and fails if two passes report different `PLAY RECAP` lines or if a container named `instance` exists before or after a pass.
+
 <Aside type="note">
-These figures describe two playbooks on two hosts. Your own numbers depend on your network latency, on what your tasks do, on how many of them a native module covers, and on how many hosts you drive at once. `--profile` shows the split for your own run: see [Command line](/docs/reference/cli/#run-and-output).
+These figures describe three workloads. Your own numbers depend on your network latency, on what your tasks do, on how many of them a native module covers, and on how many hosts you drive at once. `--profile` shows the split for your own run: see [Command line](/docs/reference/cli/#run-and-output).
 </Aside>
 
 [Decision record 0008](/docs/decisions/0008-native-modules-and-speed/) explains the choices behind these numbers and the options that were measured and dropped.

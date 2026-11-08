@@ -1,15 +1,15 @@
 ---
-sourceHash: c9d640267c68
+sourceHash: 05824b579502
 title: Performances
-description: Deux charges de travail mesurées, la configuration qui les sous-tend, les commandes qui les reproduisent, et où passe le temps qui reste.
+description: Trois charges de travail mesurées, la configuration qui les sous-tend, les commandes qui les reproduisent, et où passe le temps qui reste.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
 import BarChart from '../../../../../components/BarChart.astro';
 
-Volant est mesuré sur deux charges de travail réelles, chacune lancée par une recette du dépôt. Chaque chiffre de cette page vient de ces recettes.
+Volant est mesuré sur trois charges de travail réelles, chacune lancée par une recette du dépôt. Chaque chiffre de cette page vient de ces recettes.
 
-Sur quatre rôles Ansible Galaxy (`geerlingguy.security`, `nginx`, `git` et `pip`) appliqués à deux hôtes Ubuntu 24.04 déjà convergés, Volant termine en 0.529 s là où ansible-core 2.19.12 avec `pipelining = True` prend 26.435 s, soit un rapport de 49.97. Sur le `site.yml` officiel de k3s-ansible, contre un cluster déjà installé, Volant prend 23.477 s et la référence 50.519 s, soit un rapport de 2.15. Mesuré le 2026-09-27 avec `just bench` et `just bench-k3s`, qui reproduisent ces chiffres. Ils n'ont pas été mesurés de nouveau depuis.
+Sur quatre rôles Ansible Galaxy (`geerlingguy.security`, `nginx`, `git` et `pip`) appliqués à deux hôtes Ubuntu 24.04 déjà convergés, Volant termine en 0.529 s là où ansible-core 2.19.12 avec `pipelining = True` prend 26.435 s, soit un rapport de 49.97. Sur le `site.yml` officiel de k3s-ansible, contre un cluster déjà installé, Volant prend 23.477 s et la référence 50.519 s, soit un rapport de 2.15. Mesuré le 2026-09-27 avec `just bench` et `just bench-k3s`, qui reproduisent ces chiffres. Ils n'ont pas été mesurés de nouveau depuis. La troisième charge, un `molecule test` complet d'un rôle Galaxy, est décrite sous [Molecule](#molecule).
 
 <BarChart
   title="Deux charges de travail, deux hôtes convergés"
@@ -118,8 +118,85 @@ Deux étapes sont freinées par ce que fait la référence elle-même :
 
 Ces deux étapes coûtent ensemble 4.5 à 4.7 secondes par hôte. Les accélérer reviendrait à lire d'autres sources que celles que lit la référence, et cette décision est laissée à une version ultérieure.
 
+## Molecule
+
+`molecule test` exécute toute la séquence de test d'un rôle. Il supprime le conteneur qu'une exécution précédente aurait laissé, vérifie la syntaxe, crée un conteneur, applique le rôle (converge), l'applique une seconde fois pour vérifier que rien ne change (idempotence), puis supprime le conteneur. Molecule lance `ansible-playbook` pour chacun de ces playbooks : avec l'`ansible-playbook` de Volant en tête du `PATH`, toute la séquence s'exécute donc sous Volant, sans rien changer au rôle ni à Molecule.
+
+Sur `geerlingguy.nginx` avec le pilote docker, un `molecule test` complet prend 60.349 s sous Volant et 96.102 s sous ansible-core 2.19.12, soit un rapport de 1.59. Les deux moteurs affichent les mêmes lignes de `PLAY RECAP` à chaque passe. Mesuré le 2026-11-08 avec `just bench-molecule 5`.
+
+<BarChart
+  title="molecule test sur geerlingguy.nginx, pilote docker"
+  subtitle="Médiane de cinq passes chronométrées par moteur, 2026-11-08. Référence : ansible-core 2.19.12 avec la configuration qu'écrit Molecule. Plus court, c'est plus rapide."
+  unit="s"
+  decimals={3}
+  series={[{ name: 'ansible-core 2.19.12' }, { name: 'Volant', accent: true }]}
+  rows={[
+    { label: 'Create', values: [9.750, 5.931] },
+    { label: 'Converge', values: [51.650, 38.133] },
+    { label: 'Idempotence', values: [13.133, 3.320] },
+    { label: 'Destroy, deux fois', values: [15.801, 11.288] },
+    { label: 'Test complet', values: [96.102, 60.349] },
+  ]}
+/>
+
+### Configuration de la charge Molecule
+
+| | |
+|---|---|
+| Rôle | `geerlingguy.nginx` au commit `5ff0b23`, son scénario `default` : un conteneur Rocky Linux 9, 22 tâches |
+| Image | `geerlingguy/docker-rockylinux9-ansible`, fixée par digest, téléchargée avant les passes |
+| Molecule | Molecule 26.11.0, molecule-plugins 26.11.0 et ansible-compat 26.11.0 dans un environnement virtuel Python 3.12, avec `community.docker` 4.8.5 et `ansible.posix` 2.2.2 |
+| Référence | ansible-core 2.19.12 du même environnement virtuel, avec l'`ansible.cfg` qu'écrit Molecule (`forks = 50`) et tous les autres réglages par défaut |
+| Volant | build de production de `da423e7` (`v0.1.0-alpha.13-265-gda423e78`), lancé par son lien `ansible-playbook`, avec `VOLANT_RUNTIME=system` |
+| Machine | le contrôleur des autres charges (Ubuntu 26.04, 8 cœurs), qui fait aussi tourner Docker 29.1.3 et le conteneur |
+| Charge système | charge moyenne sur une minute entre 0.84 et 2.30 avant et après chaque passe chronométrée, dans le même intervalle pour les deux moteurs |
+| Passes | une passe d'échauffement non chronométrée par moteur, puis cinq passes chronométrées de chacun, en alternance, médiane rapportée |
+
+Chaque passe commence sans conteneur et doit se terminer sans conteneur. À chaque passe, converge s'est terminé sur `ok=14 changed=8 skipped=8` et idempotence sur `ok=12 changed=0 skipped=8`, sous les deux moteurs.
+
+Un petit `ansible-playbook` placé en tête du `PATH` chronomètre chaque playbook que lance Molecule, de la même façon pour les deux moteurs, ce qui donne la répartition par étape :
+
+| Étape | ansible-core (s) | Volant (s) |
+|---|---|---|
+| Création du conteneur | 9.750 | 5.931 |
+| Converge | 51.650 | 38.133 |
+| Idempotence | 13.133 | 3.320 |
+| Destroy, au début et à la fin | 15.801 | 11.288 |
+| Vérification de la syntaxe | 0.749 | 0.027 |
+| Travail propre de Molecule | 5.167 | 1.650 |
+| Test complet | 96.102 | 60.349 |
+
+Chaque ligne est une médiane à part : les lignes ne s'additionnent donc pas pour donner la dernière. Le travail propre de Molecule est ce qui reste du test complet une fois les playbooks retirés. Il comprend les appels à `ansible-playbook --version` que fait Molecule, qui s'exécutent sous le moteur mesuré.
+
+Le test complet, passe par passe :
+
+| Moteur | Passes (s) |
+|---|---|
+| ansible-core | 100.599, 95.499, 96.675, 96.102, 95.646 |
+| Volant | 61.769, 60.048, 60.349, 60.095, 60.794 |
+
+### Ce que Volant ne change pas
+
+La plus grande partie du temps qui reste sous Volant se passe hors du moteur :
+
+- Converge installe nginx avec `dnf`, qui télécharge les paquets depuis les miroirs Rocky Linux et EPEL. Idempotence exécute les mêmes tâches sans rien à installer et prend 3.320 s : l'essentiel des 38.133 s de converge est donc l'installation des paquets. Cette durée dépend des miroirs : un échauffement non chronométré de la référence a échoué quand un miroir EPEL n'a pas répondu.
+- Docker démarre le conteneur pendant create, puis l'arrête et le supprime pendant destroy. Le moteur ne fait que l'attendre.
+- Un premier `molecule test` sur une nouvelle machine télécharge aussi l'image, 268,904,562 octets. La recette la télécharge avant les passes chronométrées, donc les chiffres ci-dessus laissent ce téléchargement de côté. Sa durée dépend de votre réseau.
+
+Deux différences apparaissent dans les journaux et pas dans les récapitulatifs. Volant interroge `async_status` plus tôt qu'ansible-core, donc destroy peut afficher une ligne `FAILED - RETRYING` de plus pendant qu'il attend docker. Et les passes de Volant définissent `VOLANT_RUNTIME=system` : sans cela, le localhost implicite exécute les modules du pilote docker sous le Python géré de Volant, qui n'a pas la bibliothèque `docker`, là où ansible-core utilise le Python de l'environnement virtuel ([#1422](https://github.com/lorica-labs/volant/issues/1422)).
+
+### Reproduire les chiffres de Molecule
+
+La recette a besoin de Docker et de `uv` sur la machine qui la lance, et d'aucun autre hôte. Elle compile Volant en mode production, installe les versions fixées sous `target/molecule/`, récupère le rôle à son commit et télécharge l'image par digest :
+
+```sh
+just bench-molecule 5
+```
+
+Le premier argument est le nombre de passes chronométrées par moteur. Avant chaque passe, la recette attend qu'aucune compilation ni aucun autre `ansible-playbook` ne tourne et que la charge moyenne sur une minute soit sous le second argument, 1.5 par défaut. Elle écrit les médianes et l'intervalle de charge dans `target/molecule/logs/`, et échoue si deux passes affichent des lignes de `PLAY RECAP` différentes ou si un conteneur nommé `instance` existe avant ou après une passe.
+
 <Aside type="note">
-Ces chiffres décrivent deux playbooks sur deux hôtes. Les vôtres dépendent de la latence de votre réseau, de ce que font vos tâches, du nombre d'entre elles qu'un module natif couvre, et du nombre d'hôtes que vous pilotez à la fois. `--profile` montre la répartition pour votre propre exécution : voir [Ligne de commande](/fr/docs/reference/cli/#exécution-et-sortie).
+Ces chiffres décrivent trois charges de travail. Les vôtres dépendent de la latence de votre réseau, de ce que font vos tâches, du nombre d'entre elles qu'un module natif couvre, et du nombre d'hôtes que vous pilotez à la fois. `--profile` montre la répartition pour votre propre exécution : voir [Ligne de commande](/fr/docs/reference/cli/#exécution-et-sortie).
 </Aside>
 
 La [fiche de décision 0008](/fr/docs/decisions/0008-native-modules-and-speed/) explique les choix qui sous-tendent ces chiffres et les options qui ont été mesurées puis abandonnées.

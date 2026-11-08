@@ -10,6 +10,7 @@ mod listed;
 mod load;
 mod magic;
 mod play_view;
+mod plugins;
 mod refresh;
 pub(crate) mod reserved;
 mod shared;
@@ -17,6 +18,7 @@ mod sources;
 mod store;
 
 pub use crate::tags::Tagged;
+pub use plugins::HostGroupVars;
 
 pub(crate) use host_vars::PENDING_PYTHON;
 
@@ -271,6 +273,8 @@ pub struct VarStore {
     inventory_changed: bool,
     /// What `set_stats` collected, printed after the recap when the run asks for it.
     custom_stats: CustomStats,
+    /// The vars plugins and their stages, when they change what the store reads.
+    vars_plugins: Option<Box<plugins::Staging>>,
 }
 
 /// One change a play made to the inventory.

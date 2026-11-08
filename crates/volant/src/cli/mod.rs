@@ -28,6 +28,7 @@ mod shims;
 mod signals;
 mod stages;
 mod tool;
+mod vars_plugins;
 mod vault;
 mod vault_args;
 mod vault_edit;

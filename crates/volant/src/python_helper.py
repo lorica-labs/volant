@@ -1056,6 +1056,91 @@ def cache_plugin(name, operation, host=None, facts=None):
     return {}
 
 
+def vars_plugins(dirs, basedir, inventory, calls):
+    """What the vars plugins other than `host_group_vars` answer, as `get_vars_from_path` runs
+    them: in the loader's order, each only on a stage `_plugin_should_run` lets it run on.
+    `inventory` is the run's groups and hosts, rebuilt as an `InventoryData` so a plugin gets
+    `Host` and `Group` objects with their place in the graph; their variables are left out.
+    Each call is a stage, a path and the entities to ask about one at a time; the answer lists,
+    per call, `[entity, plugin, variables]` for every plugin that answered something, and the
+    plugins in order with their place against `host_group_vars`: Volant reads `group_vars` and
+    `host_vars` itself. A plugin that raises ends the answer with `failed`."""
+    from ansible import constants as C
+    from ansible.inventory.data import InventoryData
+    from ansible.parsing.dataloader import DataLoader
+    from ansible.plugins.loader import add_all_plugin_dirs, vars_loader
+    from ansible.utils.collection_loader import AnsibleCollectionConfig
+    from ansible.vars import plugins as staging
+
+    loaders()
+    for directory in dirs:
+        add_all_plugin_dirs(directory)
+    if not AnsibleCollectionConfig.playbook_paths:
+        AnsibleCollectionConfig.playbook_paths = list(dirs)
+    loader = DataLoader()
+    if basedir:
+        loader.set_basedir(basedir)
+    data = InventoryData()
+    for group in inventory["groups"]:
+        data.add_group(group["name"])
+    for host in inventory["hosts"]:
+        data.add_host(host)
+    for group in inventory["groups"]:
+        for child in group["children"]:
+            data.add_child(group["name"], child)
+        for member in group["hosts"]:
+            data.add_child(group["name"], member)
+    data.reconcile_inventory()
+
+    def lookup(kind, name):
+        if kind == "group":
+            return data.groups.get(name)
+        if name not in data.hosts and name in C.LOCALHOST:
+            # The controller a play names without listing it, as `get_host` makes it.
+            return data._create_implicit_localhost(name)
+        return data.hosts.get(name)
+
+    staging._prime_vars_loader()
+    plugins, after = [], False
+    for name in list(vars_loader._plugin_instance_cache):
+        plugin = vars_loader.get(name)
+        if plugin is None:
+            continue
+        if plugin.ansible_name in ("ansible.builtin.host_group_vars", "host_group_vars"):
+            after = True
+            continue
+        plugins.append((plugin, after))
+    answers = []
+    for call in calls:
+        entities = [lookup(kind, name) for kind, name in call["entities"]]
+        answer = []
+        for index, (plugin, _) in enumerate(plugins):
+            if not staging._plugin_should_run(plugin, call["stage"]):
+                continue
+            for at, entity in enumerate(entities):
+                if entity is None:
+                    continue
+                try:
+                    found = staging.get_plugin_vars(loader, plugin, call["path"], [entity])
+                except Exception as failure:
+                    # What stops the reference: an `AnsibleError` says its message, anything
+                    # else is an unexpected exception.
+                    from ansible.errors import AnsibleError
+
+                    expected = isinstance(failure, AnsibleError)
+                    return {"failed": str(failure), "unexpected": not expected}
+                if found:
+                    answer.append([at, index, marked(found)])
+        answers.append(answer)
+    return {
+        "plugins": [
+            {"name": plugin.ansible_name, "path": plugin._original_path, "after": after}
+            for plugin, after in plugins
+        ],
+        "answers": answers,
+    }
+
+
 def lookup_needs(name):
     """The variables the lookup `name` reads off its `variables` argument: the names it asks for
     by literal key, and the variables its settings name, or `all` when it lists them or hands
@@ -1157,6 +1242,8 @@ def call(request):
         return {"value": inventory(request["args"][0], request["kwargs"].get("plugin"))}
     if kind == "cache":
         return {"value": cache_plugin(name, *request["args"])}
+    if kind == "vars_plugins":
+        return {"value": vars_plugins(**request["args"][0])}
     if kind == "inventory_plugin":
         from ansible.plugins.loader import inventory_loader
 

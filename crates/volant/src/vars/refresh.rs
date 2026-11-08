@@ -14,6 +14,9 @@ impl VarStore {
     /// Returns the inventory the store now holds.
     pub fn refresh_inventory(&mut self, inventory: &Inventory) -> Inventory {
         self.dynamic = inventory.clone();
+        if let Err(err) = self.refresh_vars_plugins() {
+            eprintln!("[WARNING]: {err:#}");
+        }
         // The hosts `add_host` made first, then the groupings, as `InventoryManager.refresh_inventory`
         // replays them: measured on ansible-core 2.19.12, a grouping of a host the sources no
         // longer hold is dropped, rather than bringing the host back.
@@ -51,6 +54,9 @@ impl VarStore {
         self.inventory_changed = false;
         self.forget_hostvars();
         self.shared = None;
+        if let Err(err) = self.ask_vars_plugins() {
+            eprintln!("[WARNING]: {err}");
+        }
         self.dynamic.clone()
     }
 }

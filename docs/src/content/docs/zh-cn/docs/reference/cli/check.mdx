@@ -42,7 +42,7 @@ templated.yml       unknown  templated.yml:4  include_tasks with a templated fil
 |---|---|
 | `ready` | 它能加载、通过预检并完成编译，它用到的每个模块都能找到。 |
 | `refused` | `volant playbook` 会在第一次连接前停下。原因带有类型。`unsupported` 是 Volant 还做不到的事。`invalid` 是 ansible-core 也会拒绝的 playbook，例如找不到的角色，或者来自未安装集合的模块。两者都算失败。 |
-| `unknown` | 只有实际运行才能知道。每个原因都会列出：名字是模板的 `include_tasks` 或 `include_role`、由模板给出名字的模块，或者没有 ansible-core 可询问时某个集合的模块。 |
+| `unknown` | 只有实际运行才能知道。每个原因都会列出：名字是模板的 `include_tasks` 或 `include_role`、由模板给出名字的模块、没有 ansible-core 可询问时某个集合的模块，或者没有 ansible-core 来运行的 vars 插件。 |
 
 名字直接写出的 `include_tasks` 或 `include_role` 会被跟进：文件或角色会被读取并检查，方式和主机执行到这条语句时运行所做的检查一样。其中有拒绝，playbook 就是 `refused`。语句上的 `when` 不会求值，所以只有部分主机才读取的文件同样会被检查。
 

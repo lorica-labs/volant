@@ -95,6 +95,11 @@ fn play_context_of(ctx: &Context<'_>, running: &Map<String, Value>) -> Value {
     if let Some(key) = &ctx.link.private_key {
         play_context["private_key_file"] = json!(key);
     }
+    // The run's password, which the helper hands the connection as the `password` keyword, as
+    // `TaskExecutor._set_connection_options` does: the plugin's own variables still win.
+    if let Some(password) = crate::askpass::run_password() {
+        play_context["password"] = json!(password);
+    }
     if let Some((method, user)) = &ctx.link.escalation {
         play_context["become"] = json!(true);
         play_context["become_method"] = json!(method);

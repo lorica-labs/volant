@@ -33,6 +33,10 @@ SKIPPED = ("needs/ssh", "needs/httptester", "needs/privileged", "cloud/", "windo
 UNRUN = ("disabled", "unsupported", "hidden", "unstable")
 # Targets of a deliberate difference, listed in the compatibility page's known gaps.
 DIFFERENT = ("ansiballz_debugging",)
+# Targets that write into the reference's own install, which every container mounts: run one at a
+# time after the rest, so that no other target imports what they leave there for a while.
+# `ansible-test-vendoring` puts a broken `packaging` in `ansible/_vendor/`.
+ALONE = ("ansible-test-vendoring",)
 
 
 def aliases(target_dir):
@@ -229,17 +233,24 @@ def main():
                 if name:
                     known[name] = line[1].strip() if len(line) > 1 else ""
 
+    runs = [(target, kind, names, container, engine, bins)
+            for target, kind, names, container in plan
+            for engine, bins in engines.items()]
     results = {}
     with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
         futures = {
             pool.submit(run_one, args.src, work, engine, bins, python, target, kind, names, container):
             (target, engine)
-            for target, kind, names, container in plan
-            for engine, bins in engines.items()
+            for target, kind, names, container, engine, bins in runs
+            if target not in ALONE
         }
         for future in concurrent.futures.as_completed(futures):
             target, engine = futures[future]
             results.setdefault(target, {})[engine] = future.result()
+    for target, kind, names, container, engine, bins in runs:
+        if target in ALONE:
+            results.setdefault(target, {})[engine] = run_one(
+                args.src, work, engine, bins, python, target, kind, names, container)
 
     new, fixed, counts = [], [], {"both": 0, "differ": 0, "reference fails": 0}
     for target, _, _, container in plan:

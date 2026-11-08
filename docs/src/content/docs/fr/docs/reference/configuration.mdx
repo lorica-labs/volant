@@ -55,7 +55,7 @@ Un fichier qui existe mais ne peut pas être lu est ignoré, et l'exécution con
 </Option>
 
 <Option name="strategy" id="defaults-strategy" default="linear" env="ANSIBLE_STRATEGY">
-  La stratégie d'un play qui n'en nomme aucune : `linear`, `free`, `host_pinned` ou `debug`, aussi sous `ansible.builtin.`. Tout autre nom affiche l'avertissement de dépréciation d'ansible-core pour les plugins de stratégie hors de `ansible.builtin`, puis est refusé.
+  La stratégie d'un play qui n'en nomme aucune : `linear`, `free`, `host_pinned` ou `debug`, aussi sous `ansible.builtin.`. Tout autre nom affiche l'avertissement de dépréciation d'ansible-core pour les plugins de stratégie hors de `ansible.builtin`. Un plugin qui hérite de l'une d'elles sans rien ajouter s'exécute comme cette stratégie, et tout autre nom est refusé.
 </Option>
 
 <Option name="async_dir" id="defaults-async-dir" default="~/.ansible_async" env="ANSIBLE_ASYNC_DIR">
@@ -76,6 +76,10 @@ Un fichier qui existe mais ne peut pas être lu est ignoré, et l'exécution con
 
 <Option name="nocolor" id="defaults-nocolor" default="false" env="ANSIBLE_NOCOLOR">
   Ne colore jamais la sortie. `force_color` l'emporte sur lui.
+</Option>
+
+<Option name="display_traceback" id="defaults-display-traceback" default="never" env="ANSIBLE_DISPLAY_TRACEBACK">
+  Les événements qui affichent un traceback, en liste séparée par des virgules. Avec `error` ou `always`, un plugin d'action Python en échec qui regroupe des erreurs, comme `gather_facts` avec ses modules de facts, affiche son traceback et ceux de ses modules, et l'enregistre comme `exception`. Tout autre échec garde `(traceback unavailable)`.
 </Option>
 
 <Option name="deprecation_warnings" id="defaults-deprecation-warnings" default="true" env="ANSIBLE_DEPRECATION_WARNINGS">
@@ -195,7 +199,7 @@ Un fichier qui existe mais ne peut pas être lu est ignoré, et l'exécution con
 </Option>
 
 <Option name="fact_caching" id="defaults-fact-caching" default="memory" env="ANSIBLE_CACHE_PLUGIN">
-  `memory` garde les facts le temps de l'exécution, `jsonfile` les garde d'une exécution à l'autre. Voir [Le cache de facts](/fr/docs/hosts/inventories/#le-cache-de-facts).
+  `memory` garde les facts le temps de l'exécution, `jsonfile` les garde d'une exécution à l'autre, et tout autre nom est un plugin Python. Voir [Le cache de facts](/fr/docs/hosts/inventories/#le-cache-de-facts).
 </Option>
 
 <Option name="fact_caching_connection" id="defaults-fact-caching-connection" env="ANSIBLE_CACHE_PLUGIN_CONNECTION">

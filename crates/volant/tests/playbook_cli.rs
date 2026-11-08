@@ -6267,35 +6267,56 @@ fn library_module(dir: &Path, name: &str, field: &str) {
     .expect("the module");
 }
 
-/// A cache plugin of the playbook's own, in `cache_plugins/`, is refused before the run with
-/// its file named.
+/// A cache plugin of the playbook's own, in `cache_plugins/`, keeps facts from one run to the next.
 #[test]
-fn an_own_cache_plugin_is_refused_with_its_file() {
+fn an_own_cache_plugin_keeps_the_facts() {
+    let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
+        return;
+    };
     let dir = probe_dir("own-cache-plugin");
     std::fs::create_dir_all(dir.join("cache_plugins")).expect("the plugin directory");
-    std::fs::write(dir.join("cache_plugins").join("mine.py"), "").expect("the plugin");
     std::fs::write(
-        dir.join("play.yml"),
-        "- hosts: localhost\n  gather_facts: false\n  tasks: []\n",
+        dir.join("cache_plugins").join("mine.py"),
+        "import json\nimport os\n\nfrom ansible.plugins.cache import BaseCacheModule\n\n\nclass CacheModule(BaseCacheModule):\n    def get(self, key):\n        try:\n            with open(key + '.json') as stored:\n                return json.load(stored)\n        except FileNotFoundError:\n            raise KeyError(key)\n\n    def set(self, key, value):\n        with open(key + '.json', 'w') as stored:\n            json.dump(value, stored)\n\n    def keys(self):\n        return []\n\n    def contains(self, key):\n        return os.path.exists(key + '.json')\n\n    def delete(self, key):\n        if self.contains(key):\n            os.remove(key + '.json')\n\n    def flush(self):\n        pass\n\n    def copy(self):\n        return {}\n",
+    )
+    .expect("the plugin");
+    std::fs::write(
+        dir.join("write.yml"),
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - set_fact: {foo: bar, cacheable: true}\n",
     )
     .expect("the play");
-    let out = volant_within_full(
-        &["playbook", "-i", "localhost,", "play.yml"],
-        std::time::Duration::from_secs(60),
-        None,
-        None,
-        Some(&dir),
-        None,
-        &[("ANSIBLE_CACHE_PLUGIN", "mine")],
-    );
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(4), "{err}");
-    // The directory as the run sees it: macOS names its temporary directory under `/private`.
-    assert!(
-        err.contains("fact cache plugin 'mine' (from 'env: ANSIBLE_CACHE_PLUGIN') at '/")
-            && err.contains("/cache_plugins/mine.py' is not supported yet"),
-        "{err}"
-    );
+    std::fs::write(
+        dir.join("read.yml"),
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - debug: {msg: 'kept {{ ansible_facts.foo }}'}\n",
+    )
+    .expect("the play");
+    for (play, flag, wanted) in [
+        ("write.yml", None, None),
+        ("read.yml", None, Some("kept bar")),
+        (
+            "read.yml",
+            Some("--flush-cache"),
+            Some("has no attribute 'foo'"),
+        ),
+    ] {
+        let mut args = vec!["playbook", "-i", "localhost,", play];
+        args.extend(flag);
+        let out = volant_within_full(
+            &args,
+            std::time::Duration::from_secs(60),
+            None,
+            None,
+            Some(&dir),
+            None,
+            &[("ANSIBLE_CACHE_PLUGIN", "mine"), ("VOLANT_PYTHON", &python)],
+        );
+        let shown = String::from_utf8_lossy(&out.stdout);
+        let err = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            wanted.is_none_or(|text| shown.contains(text) || err.contains(text)),
+            "{shown}{err}"
+        );
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -6342,6 +6363,112 @@ fn an_own_stdout_callback_prints_the_run() {
         String::from_utf8_lossy(&out.stdout),
         "mine heard the stats\n"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A strategy plugin that subclasses a builtin one and adds nothing walks the play as that one;
+/// a plugin with code of its own is refused by name.
+#[test]
+fn a_strategy_plugin_runs_only_when_it_adds_nothing() {
+    let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
+        return;
+    };
+    let dir = probe_dir("own-strategy");
+    let plugins = dir.join("strategy_plugins");
+    std::fs::create_dir_all(&plugins).expect("the plugin directory");
+    let head = "from ansible.plugins.strategy.linear import StrategyModule as Linear\n\nclass StrategyModule(Linear):\n";
+    std::fs::write(plugins.join("same.py"), format!("{head}    pass\n")).expect("the plugin");
+    std::fs::write(
+        plugins.join("own.py"),
+        format!("{head}    def run(self, iterator, play_context):\n        return 0\n"),
+    )
+    .expect("the plugin");
+    let play = |name: &str| {
+        let path = dir.join(format!("{name}.yml"));
+        std::fs::write(
+            &path,
+            format!(
+                "- hosts: localhost\n  gather_facts: false\n  strategy: {name}\n  tasks:\n    - debug: {{msg: walked}}\n"
+            ),
+        )
+        .expect("the play");
+        volant_within_env(
+            &[
+                "playbook",
+                "-i",
+                "localhost,",
+                path.to_str().expect("a path"),
+            ],
+            std::time::Duration::from_secs(60),
+            &[("VOLANT_PYTHON", &python)],
+        )
+    };
+    let same = play("same");
+    let shown = String::from_utf8_lossy(&same.stdout);
+    let err = String::from_utf8_lossy(&same.stderr);
+    assert!(same.status.success(), "{shown}{err}");
+    assert!(shown.contains("walked"), "{shown}");
+    assert!(err.contains("Use of strategy plugins"), "{err}");
+    let own = play("own");
+    let err = String::from_utf8_lossy(&own.stderr);
+    assert_eq!(own.status.code(), Some(4), "{err}");
+    assert!(err.contains("strategy 'own' is not supported yet"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `display_traceback` shows what failed in `gather_facts` and its fact modules; it stays off by
+/// default, where each failure frames its message alone.
+#[test]
+fn display_traceback_shows_the_failed_fact_modules() {
+    let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
+        return;
+    };
+    let dir = probe_dir("fact-tracebacks");
+    std::fs::create_dir_all(dir.join("library")).expect("the library");
+    for name in ["bang1", "bang2"] {
+        std::fs::write(
+            dir.join("library").join(format!("{name}.py")),
+            format!(
+                "from ansible.module_utils.basic import AnsibleModule\n\nAnsibleModule({{}}).fail_json('{name} went bang')\n"
+            ),
+        )
+        .expect("the module");
+    }
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: localhost\n  gather_facts: false\n  vars:\n    ansible_facts_modules: [bang1, bang2]\n  tasks:\n    - gather_facts:\n        parallel: false\n",
+    )
+    .expect("the play");
+    let run = |env: &[(&str, &str)]| {
+        let out = volant_within_env(
+            &[
+                "playbook",
+                "-i",
+                "localhost,",
+                "-c",
+                "local",
+                dir.join("play.yml").to_str().expect("a path"),
+            ],
+            std::time::Duration::from_secs(60),
+            env,
+        );
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let plain = run(&[("VOLANT_PYTHON", &python)]);
+    assert_eq!(plain.matches("End Sub-Event").count(), 1, "{plain}");
+    assert!(!plain.contains("Sub-Traceback"), "{plain}");
+    assert!(plain.contains("(traceback unavailable)"), "{plain}");
+    let shown = run(&[
+        ("VOLANT_PYTHON", &python),
+        ("ANSIBLE_DISPLAY_TRACEBACK", "error"),
+    ]);
+    for wanted in [
+        "Sub-Traceback 2 of 2",
+        "action/gather_facts.py",
+        "bang1 went bang",
+    ] {
+        assert!(shown.contains(wanted), "{wanted}: {shown}");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 

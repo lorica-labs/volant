@@ -289,7 +289,9 @@ To clear both, remove the two directories. Nothing else is left behind:
 ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-* ~/.ansible/tmp/volant-blobs-*'
 ```
 
-With `ANSIBLE_KEEP_REMOTE_FILES=1`, or `keep_remote_files` in `ansible.cfg`, a module with no plugin of its own runs the way ansible-core runs it. ansible-core builds its AnsiballZ wrapper, Volant copies it to `<remote_tmp>/ansible-tmp-*/AnsiballZ_<module>.py` and leaves it there, and its `explode` and `execute` commands work. The host needs Python for this and every such task is slower than through the agent. `-vvv` prints each `PUT` and `EXEC`. `copy`, `template` and the other plugins Volant has its own version of leave no wrapper.
+With `ANSIBLE_KEEP_REMOTE_FILES=1`, or `keep_remote_files` in `ansible.cfg`, a module with no plugin of its own runs the way ansible-core runs it. ansible-core builds its AnsiballZ wrapper, Volant copies it to `<remote_tmp>/ansible-tmp-*/AnsiballZ_<module>.py` and leaves it there, and its `explode` and `execute` commands work. The host needs Python for this and every such task is slower than through the agent. `-vvv` prints each `PUT` and `EXEC`. `copy`, `template` and the other plugins Volant has its own version of leave no wrapper, and a task that escalates to a user other than `root` stays with the agent.
+
+Setting `ansible_pipelining: false` on a host does the same for that host, except that ansible-core removes the wrapper and its directory after each task. Leaving the variable unset keeps the agent, although ansible-core's own default is no pipelining. A value that comes only from `ansible.cfg` or `ANSIBLE_PIPELINING` also keeps the agent.
 
 [The agent on your hosts](/docs/internals/agent/#the-agent-cache) covers the upload, the repair of a broken cache and the permission checks.
 

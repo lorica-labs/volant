@@ -58,6 +58,33 @@ pub(super) fn escalation_for(
     Ok(chosen.flatten())
 }
 
+/// The plugin that runs `task` on this host. Pipelining turned off in the host's variables asks for
+/// what the reference does without it: a module's wrapper in a temporary directory on the host.
+/// Left unset, the agent runs the module, though the reference's own default is off too.
+pub(super) fn plugin_kind(
+    task: &PlayTask,
+    vars: &HostVars,
+    templar: &Templar,
+    escalation: Option<&Escalation>,
+) -> Result<Option<crate::action_plugins::Kind>, TemplateError> {
+    let value = match host_setting(vars, "ansible_pipelining") {
+        Some(Value::String(text)) if Templar::is_template(text) => {
+            Some(templar.render(text, vars)?)
+        }
+        value => value.cloned(),
+    };
+    let no_pipelining = value
+        .as_ref()
+        .and_then(|value| as_bool_value(value).or_else(|| super::keyword::strict_boolean(value)))
+        == Some(false);
+    let unprivileged = escalation.is_some_and(|escalation| escalation.user != "root");
+    Ok(crate::action_plugins::kind_of(
+        task,
+        no_pipelining,
+        unprivileged,
+    ))
+}
+
 /// Resolves privilege escalation for one task: whether to escalate, to whom, through which
 /// program, and with what password. `None` means the task runs as the connecting user.
 /// `become_method`, `become_exe` and `become_flags` take the order the reference gives every

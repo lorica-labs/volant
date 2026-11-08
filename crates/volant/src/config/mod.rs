@@ -24,7 +24,7 @@ mod settings;
 pub use callbacks::Callbacks;
 pub(crate) use locate::{defaults_value, is_world_writable};
 use parse::parse;
-pub(crate) use parse::strict_utf8;
+pub(crate) use parse::{error_tracebacks, strict_utf8};
 pub(crate) use paths::{configured_async_dir, expand_home};
 use paths::{default_collections_path, default_roles_path, path_list};
 pub use settings::HostNamedPaths;
@@ -180,7 +180,7 @@ pub struct Config {
     pub shadow_coverage: u32,
     /// `[volant] locked`: a run that differs from `volant.lock` is refused with exit 4.
     pub locked: bool,
-    /// `fact_caching` (`ANSIBLE_CACHE_PLUGIN`): `memory`, the default, or `jsonfile`.
+    /// `fact_caching` (`ANSIBLE_CACHE_PLUGIN`): `memory`, the default, `jsonfile`, or a Python plugin.
     pub fact_caching: String,
     /// `fact_caching_connection`: the directory `jsonfile` keeps its files in.
     pub fact_caching_connection: Option<PathBuf>,
@@ -371,7 +371,7 @@ impl Config {
         TASK_DEBUGGER.store(config.enable_task_debugger, Ordering::Relaxed);
         let cwd = std::env::current_dir().unwrap_or_default();
         if let Ok(value) = std::env::var("ANSIBLE_CACHE_PLUGIN") {
-            config.fact_caching = cache_plugin(&value, "env: ANSIBLE_CACHE_PLUGIN")?;
+            config.fact_caching = cache_plugin(&value);
         }
         if let Ok(value) = std::env::var("ANSIBLE_CACHE_PLUGIN_CONNECTION") {
             config.fact_caching_connection = Some(expand_home(value.trim(), &cwd));

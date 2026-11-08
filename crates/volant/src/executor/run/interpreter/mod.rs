@@ -365,9 +365,10 @@ pub(super) fn sub_task(
             // reference's `_low_level_execute_command` makes its temporary directory and removes
             // it in check mode too.
             args: {
-                // The agent's own modules know no `_ansible_module_name`, which is for Python.
+                // The agent's own modules know neither of these, which are for Python.
                 let mut args = sub.args.clone();
                 args.remove("_ansible_module_name");
+                args.remove("_ansible_tracebacks_for");
                 if sub.module == "raw" {
                     args
                 } else {

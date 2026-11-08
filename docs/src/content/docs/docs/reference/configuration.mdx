@@ -54,7 +54,7 @@ A file that exists but cannot be read is skipped, and the run continues with the
 </Option>
 
 <Option name="strategy" id="defaults-strategy" default="linear" env="ANSIBLE_STRATEGY">
-  The strategy of a play that names none: `linear`, `free`, `host_pinned` or `debug`, also under `ansible.builtin.`. Any other name prints ansible-core's deprecation of strategy plugins outside `ansible.builtin`, then is refused.
+  The strategy of a play that names none: `linear`, `free`, `host_pinned` or `debug`, also under `ansible.builtin.`. Any other name prints ansible-core's deprecation of strategy plugins outside `ansible.builtin`. A plugin that subclasses one of these and adds nothing runs as that strategy, and any other name is refused.
 </Option>
 
 <Option name="async_dir" id="defaults-async-dir" default="~/.ansible_async" env="ANSIBLE_ASYNC_DIR">
@@ -75,6 +75,10 @@ A file that exists but cannot be read is skipped, and the run continues with the
 
 <Option name="nocolor" id="defaults-nocolor" default="false" env="ANSIBLE_NOCOLOR">
   Never colour the output. `force_color` wins over it.
+</Option>
+
+<Option name="display_traceback" id="defaults-display-traceback" default="never" env="ANSIBLE_DISPLAY_TRACEBACK">
+  Which events show a traceback, as a comma-separated list. With `error` or `always`, a failed Python action plugin that gathers errors, such as `gather_facts` running its fact modules, shows its traceback and those of its modules, and registers it as `exception`. Every other failure keeps `(traceback unavailable)`.
 </Option>
 
 <Option name="deprecation_warnings" id="defaults-deprecation-warnings" default="true" env="ANSIBLE_DEPRECATION_WARNINGS">
@@ -194,7 +198,7 @@ A file that exists but cannot be read is skipped, and the run continues with the
 </Option>
 
 <Option name="fact_caching" id="defaults-fact-caching" default="memory" env="ANSIBLE_CACHE_PLUGIN">
-  `memory` keeps facts for the run, `jsonfile` keeps them between runs. See [The fact cache](/docs/hosts/inventories/#the-fact-cache).
+  `memory` keeps facts for the run, `jsonfile` keeps them between runs, and any other name is a Python plugin. See [The fact cache](/docs/hosts/inventories/#the-fact-cache).
 </Option>
 
 <Option name="fact_caching_connection" id="defaults-fact-caching-connection" env="ANSIBLE_CACHE_PLUGIN_CONNECTION">

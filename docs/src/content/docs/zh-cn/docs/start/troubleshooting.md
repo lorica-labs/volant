@@ -23,7 +23,7 @@ description: 找出失败的 task 和原因，用 ansible-playbook 运行同一�
 | `task 'NAME': keyword 'KEYWORD' is not supported yet on 'MODULE'` | 在[关键字](/zh-cn/docs/reference/keywords/)中查看这个关键字。删掉它，或者暂时让这个 play 继续使用 `ansible-playbook`。 |
 | `task 'NAME': argument 'ARGUMENT' is not supported yet on 'MODULE'` | 在[模块](/zh-cn/docs/reference/modules/)中查看这个模块。大部分被拒绝的参数都能在那里找到变通办法。 |
 | `couldn't resolve module/action 'NAME'` | 检查拼写。如果模块来自某个 collection，用 `volant runtime install --collections NAMESPACE.COLLECTION` 安装它。 |
-| `strategy 'NAME' is not supported yet` | 使用 `linear`、`free`、`host_pinned` 或 `debug`。 |
+| `strategy 'NAME' is not supported yet` | 使用 `linear`、`free`、`host_pinned` 或 `debug`。策略插件只有在继承其中之一且不添加任何内容时才会运行。 |
 | `become_method 'NAME' is not supported yet` | 使用 `sudo` 或 `su`。这种情况以退出码 2 结束。 |
 | `the role 'NAME' was not found in ...` | 消息会列出它搜索过的目录。把 role 所在的目录加入 `roles_path`。这种情况以退出码 1 结束。 |
 

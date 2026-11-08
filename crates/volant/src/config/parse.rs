@@ -14,6 +14,23 @@ use super::{Config, tag_list};
 /// `[defaults] module_strict_utf8_response`, on unless the file turns it off.
 static STRICT_UTF8: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
+static ERROR_TRACEBACKS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `DISPLAY_TRACEBACK`: whether a failed result keeps the traceback a module or an action plugin
+/// sent. `ANSIBLE_DISPLAY_TRACEBACK` wins over the file.
+pub(crate) fn error_tracebacks() -> bool {
+    std::env::var("ANSIBLE_DISPLAY_TRACEBACK").map_or_else(
+        |_| ERROR_TRACEBACKS.load(std::sync::atomic::Ordering::Relaxed),
+        |names| names_errors(&names),
+    )
+}
+
+fn names_errors(names: &str) -> bool {
+    tag_list(names)
+        .iter()
+        .any(|name| name == "error" || name == "always")
+}
+
 /// `MODULE_STRICT_UTF8_RESPONSE`: whether `from_json` refuses a string with a lone surrogate.
 /// `ANSIBLE_MODULE_STRICT_UTF8_RESPONSE` wins over the file.
 pub(crate) fn strict_utf8() -> bool {
@@ -251,6 +268,9 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
                     STRICT_UTF8.store(on, std::sync::atomic::Ordering::Relaxed);
                 }
             }
+            "display_traceback" => {
+                ERROR_TRACEBACKS.store(names_errors(value), std::sync::atomic::Ordering::Relaxed);
+            }
             "show_custom_stats" => {
                 if let Some(on) = crate::yaml::bool_from_str(value.trim()) {
                     config.show_custom_stats = on;
@@ -311,7 +331,7 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
             // A zero reaches the caller as zero, where the single startup check refuses it.
             // A value that is no number at all is the reference's own exit 5 instead.
             "forks" => config.forks = forks(integer("DEFAULT_FORKS", origin, value)?),
-            "fact_caching" => config.fact_caching = cache_plugin(value, origin)?,
+            "fact_caching" => config.fact_caching = cache_plugin(value),
             "fact_caching_connection" => {
                 config.fact_caching_connection = Some(expand_home(value.trim(), base));
             }

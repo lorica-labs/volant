@@ -12,7 +12,8 @@ use crate::vars::HostVars;
 use super::argspec::refusal;
 use super::local::set_fact_data;
 use super::output::{
-    CAUSE_KEY, RAISED_SKIP, brief_message, grouped_segment, python_falsy, verbose_segments,
+    CAUSE_KEY, RAISED_SKIP, brief_message, grouped_segment, python_falsy, shown_traceback,
+    verbose_segments,
 };
 
 /// One module result, ready to report: `changed_when` and `failed_when` decide its outcome
@@ -343,9 +344,12 @@ pub(super) fn settle_failure(result: &mut TaskResult, task: &PlayTask) {
                 ]),
             );
         }
-        if let Some(segment) = grouped
+        if let Some(mut segment) = grouped
             && !result.0.contains_key(crate::render::CHAIN_KEY)
         {
+            if let Some(traceback) = shown_traceback(result) {
+                segment = format!("{segment}\n\n{traceback}");
+            }
             result.0.insert(
                 crate::render::CHAIN_KEY.into(),
                 json!([
@@ -378,9 +382,11 @@ pub(super) fn settle_failure(result: &mut TaskResult, task: &PlayTask) {
             .0
             .entry(crate::render::ERROR_KEY)
             .or_insert_with(|| Value::from(message));
-        result
-            .0
-            .insert("exception".into(), json!("(traceback unavailable)"));
+        if shown_traceback(result).is_none() {
+            result
+                .0
+                .insert("exception".into(), json!("(traceback unavailable)"));
+        }
     }
 }
 

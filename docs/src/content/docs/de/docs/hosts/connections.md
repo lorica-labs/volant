@@ -1,5 +1,5 @@
 ---
-sourceHash: 798067bf652a
+sourceHash: 159c4aca9e0e
 title: Verbindungen und become
 description: Wie Volant einen Host erreicht, welche Hostvariablen und ansible.cfg-Einstellungen es liest und wie become über sudo und su funktioniert.
 ---
@@ -290,7 +290,9 @@ Um beide zu leeren, entfernen Sie die beiden Verzeichnisse. Sonst bleibt nichts 
 ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-* ~/.ansible/tmp/volant-blobs-*'
 ```
 
-Mit `ANSIBLE_KEEP_REMOTE_FILES=1` oder `keep_remote_files` in `ansible.cfg` läuft ein Modul ohne eigenes Plugin so, wie ansible-core es ausführt. ansible-core baut seinen AnsiballZ-Wrapper, Volant kopiert ihn nach `<remote_tmp>/ansible-tmp-*/AnsiballZ_<module>.py` und lässt ihn dort liegen, und seine Befehle `explode` und `execute` funktionieren. Der Host braucht dafür Python, und jeder solche Task ist langsamer als über den Agent. `-vvv` gibt jedes `PUT` und `EXEC` aus. `copy`, `template` und die anderen Plugins, für die Volant eine eigene Version hat, hinterlassen keinen Wrapper.
+Mit `ANSIBLE_KEEP_REMOTE_FILES=1` oder `keep_remote_files` in `ansible.cfg` läuft ein Modul ohne eigenes Plugin so, wie ansible-core es ausführt. ansible-core baut seinen AnsiballZ-Wrapper, Volant kopiert ihn nach `<remote_tmp>/ansible-tmp-*/AnsiballZ_<module>.py` und lässt ihn dort liegen, und seine Befehle `explode` und `execute` funktionieren. Der Host braucht dafür Python, und jeder solche Task ist langsamer als über den Agent. `-vvv` gibt jedes `PUT` und `EXEC` aus. `copy`, `template` und die anderen Plugins, für die Volant eine eigene Version hat, hinterlassen keinen Wrapper, und ein Task, der zu einem anderen Benutzer als `root` eskaliert, bleibt beim Agent.
+
+`ansible_pipelining: false` auf einem Host bewirkt für diesen Host dasselbe, nur entfernt ansible-core den Wrapper und sein Verzeichnis nach jedem Task. Ist die Variable nicht gesetzt, bleibt es beim Agent, obwohl ansible-core standardmäßig ohne Pipelining arbeitet. Ein Wert, der nur aus `ansible.cfg` oder `ANSIBLE_PIPELINING` stammt, bleibt ebenfalls beim Agent.
 
 [Der Agent auf Ihren Hosts](/de/docs/internals/agent/#der-agent-cache) behandelt das Hochladen, die Reparatur eines beschädigten Caches und die Berechtigungsprüfungen.
 

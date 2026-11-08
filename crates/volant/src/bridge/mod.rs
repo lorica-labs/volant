@@ -384,6 +384,18 @@ impl Bridge {
         )
     }
 
+    /// One operation on the cache plugin `plugin`: `args` is the operation and its arguments.
+    ///
+    /// # Errors
+    /// [`BridgeError`] when the helper cannot start, or the plugin raised.
+    pub fn cache(&self, plugin: &str, args: &Value) -> Result<Value, BridgeError> {
+        self.request(
+            PluginKind::Lookup,
+            plugin,
+            json!({"kind": "cache", "name": plugin, "args": args, "kwargs": {}}),
+        )
+    }
+
     /// Whether the controller's ansible-core loads an inventory plugin of that name.
     pub fn inventory_plugin_exists(&self, plugin: &str) -> bool {
         self.request(
@@ -392,6 +404,17 @@ impl Bridge {
             json!({"kind": "inventory_plugin", "name": plugin, "args": [], "kwargs": {}}),
         )
         .is_ok_and(|found| found.as_bool() == Some(true))
+    }
+
+    /// The builtin strategy a strategy plugin only renames: a direct subclass of it that adds
+    /// nothing.
+    pub fn strategy_base(&self, plugin: &str) -> Option<String> {
+        let base = self.request(
+            PluginKind::Lookup,
+            plugin,
+            json!({"kind": "strategy_base", "name": plugin, "args": [], "kwargs": {}}),
+        );
+        base.ok()?.as_str().map(str::to_string)
     }
 
     fn defaults_request(

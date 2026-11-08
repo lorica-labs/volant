@@ -55,7 +55,7 @@ Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第
 </Option>
 
 <Option name="strategy" id="defaults-strategy" default="linear" env="ANSIBLE_STRATEGY">
-  未指定策略的 play 所用的策略：`linear`、`free`、`host_pinned` 或 `debug`，也可写在 `ansible.builtin.` 之下。其他名称会先打印 ansible-core 对 `ansible.builtin` 之外策略插件的弃用警告，然后被拒绝。
+  未指定策略的 play 所用的策略：`linear`、`free`、`host_pinned` 或 `debug`，也可写在 `ansible.builtin.` 之下。其他名称会先打印 ansible-core 对 `ansible.builtin` 之外策略插件的弃用警告。继承其中之一且不添加任何内容的插件按该策略运行，其他名称会被拒绝。
 </Option>
 
 <Option name="async_dir" id="defaults-async-dir" default="~/.ansible_async" env="ANSIBLE_ASYNC_DIR">
@@ -76,6 +76,10 @@ Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第
 
 <Option name="nocolor" id="defaults-nocolor" default="false" env="ANSIBLE_NOCOLOR">
   输出从不着色。`force_color` 优先于它。
+</Option>
+
+<Option name="display_traceback" id="defaults-display-traceback" default="never" env="ANSIBLE_DISPLAY_TRACEBACK">
+  哪些事件显示 traceback，用逗号分隔。设为 `error` 或 `always` 时，汇总错误的 Python action 插件失败（例如运行 fact 模块的 `gather_facts`）会显示它自己和其模块的 traceback，并注册为 `exception`。其他失败仍为 `(traceback unavailable)`。
 </Option>
 
 <Option name="deprecation_warnings" id="defaults-deprecation-warnings" default="true" env="ANSIBLE_DEPRECATION_WARNINGS">
@@ -195,7 +199,7 @@ Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第
 </Option>
 
 <Option name="fact_caching" id="defaults-fact-caching" default="memory" env="ANSIBLE_CACHE_PLUGIN">
-  `memory` 在本次运行期间保留 facts，`jsonfile` 在多次运行之间保留。见 [facts 缓存](/zh-cn/docs/hosts/inventories/#facts-缓存)。
+  `memory` 在本次运行期间保留 facts，`jsonfile` 在多次运行之间保留，其他任何名字都是 Python 插件。见 [facts 缓存](/zh-cn/docs/hosts/inventories/#facts-缓存)。
 </Option>
 
 <Option name="fact_caching_connection" id="defaults-fact-caching-connection" env="ANSIBLE_CACHE_PLUGIN_CONNECTION">

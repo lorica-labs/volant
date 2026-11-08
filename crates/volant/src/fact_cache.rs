@@ -6,15 +6,27 @@
 use std::fmt::Write as _;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use serde_json::{Map, Value, json};
 
+use crate::bridge::Bridge;
 use crate::config::Config;
 
-/// The cache of one run: where the files live and how long they stay fresh.
+mod python;
+use python::PythonCache;
+
+/// The cache of one run.
 #[derive(Debug, Clone)]
-pub struct FactCache {
+pub enum FactCache {
+    Files(Files),
+    Python(PythonCache),
+}
+
+/// The `jsonfile` cache: where the files live and how long they stay fresh.
+#[derive(Debug, Clone)]
+pub struct Files {
     dir: PathBuf,
     prefix: String,
     timeout: i64,
@@ -201,11 +213,60 @@ fn python_json_error(err: &serde_json::Error) -> String {
 impl FactCache {
     /// The cache the settings ask for, with the warnings the reference prints while it loads the
     /// plugin. `None` for `memory`, and for a `jsonfile` that cannot be set up: the run goes on
-    /// without it, as the reference's does.
-    pub fn open(config: &Config) -> (Option<Self>, Vec<String>) {
-        if config.fact_caching != "jsonfile" {
-            return (None, Vec::new());
+    /// without it, as the reference's does. A plugin of ansible-core's loads in [`FactCache::load`].
+    pub fn open(config: &Config, bridge: &Arc<Bridge>) -> (Option<Self>, Vec<String>) {
+        match config.fact_caching.as_str() {
+            "memory" => (None, Vec::new()),
+            "jsonfile" => {
+                let (files, warnings) = Files::open(config);
+                (files.map(Self::Files), warnings)
+            }
+            plugin => (
+                Some(Self::Python(PythonCache::new(plugin, Arc::clone(bridge)))),
+                Vec::new(),
+            ),
         }
+    }
+
+    /// Loads a plugin of ansible-core's, once the playbook's plugin directories are known. The
+    /// sentence it failed with is a warning in the reference, which then runs without a cache.
+    ///
+    /// # Errors
+    /// Why the plugin did not load.
+    pub fn load(&self) -> Result<(), String> {
+        match self {
+            Self::Files(_) => Ok(()),
+            Self::Python(python) => python.load(),
+        }
+    }
+
+    /// The facts cached for `host`, plain, or `None` when there are none or they are too old.
+    pub fn read(&self, host: &str) -> Result<Option<Map<String, Value>>, CacheFailure> {
+        match self {
+            Self::Files(files) => files.read(host),
+            Self::Python(python) => python.read(host),
+        }
+    }
+
+    /// Writes `host`'s entry whole. `facts` is in the form the file holds, see [`tag`].
+    pub fn write(&self, host: &str, facts: &Map<String, Value>) -> std::io::Result<()> {
+        match self {
+            Self::Files(files) => files.write(host, facts),
+            Self::Python(python) => python.write(host, facts),
+        }
+    }
+
+    /// Removes the entries of `hosts` and nothing else.
+    pub fn flush<'a>(&self, hosts: impl IntoIterator<Item = &'a str>) -> std::io::Result<()> {
+        match self {
+            Self::Files(files) => files.flush(hosts),
+            Self::Python(python) => python.flush(hosts),
+        }
+    }
+}
+
+impl Files {
+    fn open(config: &Config) -> (Option<Self>, Vec<String>) {
         let Some(dir) = config
             .fact_caching_connection
             .as_ref()

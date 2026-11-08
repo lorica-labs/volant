@@ -1666,7 +1666,11 @@ MOLECULE_COLLECTIONS := "community.docker:4.8.5 ansible.posix:2.2.2"
 # both engines, so the report splits the time into Molecule's steps; what is left of the total is
 # Molecule's own work. The Volant passes set VOLANT_RUNTIME=system so that the implicit localhost
 # runs the docker driver's modules with the virtualenv's Python, which has the docker library.
-bench-molecule runs="5":
+#
+# Before each pass the recipe also waits for the one-minute load average to fall under `max_load`,
+# and it records the load average before and after every pass, so the report states the load the
+# numbers were measured under.
+bench-molecule runs="5" max_load="1.5":
     #!/usr/bin/env bash
     set -euo pipefail
     command -v docker > /dev/null || { echo "docker is not installed"; exit 1; }
@@ -1709,23 +1713,28 @@ bench-molecule runs="5":
       while pgrep -x cargo > /dev/null || pgrep -x rustc > /dev/null || pgrep -x cargo-nextest > /dev/null || pgrep -f bin/ansible-playbook > /dev/null; do
         sleep 5
       done
+      while awk -v max="{{max_load}}" '{exit !($1 >= max)}' /proc/loadavg; do
+        sleep 10
+      done
     }
+    load() { cut -d' ' -f1 /proc/loadavg; }
     no_instance() {
       [ -z "$(docker ps -aq --filter name='^instance$')" ] || { echo "a container named instance exists: $1"; exit 1; }
     }
     recap() {
       sed 's/\x1b\[[0-9;]*m//g' "$1" | awk '/^PLAY RECAP/ {f=1; next} f && NF == 0 {f=0} f' | tr -s ' '
     }
-    # One line per pass: engine, total, then the seconds of each Molecule step. The
-    # `ansible-playbook --version` calls Molecule makes count as Molecule's own time.
+    # One line per pass: engine, total, then the seconds of each Molecule step, then the load
+    # average before and after the pass. The `ansible-playbook --version` calls Molecule makes
+    # count as Molecule's own time.
     steps() {
-      awk -v engine="$1" -v total="$2" '
+      awk -v engine="$1" -v total="$2" -v loads="$last_load_before $last_load_after" '
         { d = $2 - $1; p = $NF; sub(".*/", "", p); sub("[.]yml$", "", p)
           if ($0 ~ /--syntax-check/) p = "syntax"
           if (p == "converge" && seen++) p = "idempotence"
           t[p] += d }
         END { s = t["create"] + t["converge"] + t["idempotence"] + t["destroy"] + t["syntax"]
-              printf "%s %.3f %.3f %.3f %.3f %.3f %.3f %.3f\n", engine, total, t["create"], t["converge"], t["idempotence"], t["destroy"], t["syntax"], total - s }' "$3"
+              printf "%s %.3f %.3f %.3f %.3f %.3f %.3f %.3f %s\n", engine, total, t["create"], t["converge"], t["idempotence"], t["destroy"], t["syntax"], total - s, loads }' "$3"
     }
     median() {
       sort -n | awk '{a[NR]=$1} END{n=NR; if(n%2==1) m=a[(n+1)/2]; else m=(a[n/2]+a[n/2+1])/2; printf "%.3f", m}'
@@ -1737,6 +1746,7 @@ bench-molecule runs="5":
       idle
       no_instance "before $name"
       local start end
+      last_load_before="$(load)"
       start="$(date +%s.%N)"
       (
         cd "$role"
@@ -1748,6 +1758,7 @@ bench-molecule runs="5":
         MOLECULE_BENCH_PLAYBOOK="$playbook" MOLECULE_BENCH_TIMES="$times" "$dir/venv/bin/molecule" test > "$log" 2>&1
       ) || { echo "molecule test failed under $engine: $log"; tail -n 20 "$log"; exit 1; }
       end="$(date +%s.%N)"
+      last_load_after="$(load)"
       no_instance "after $name"
       last_total="$(awk -v a="$start" -v b="$end" 'BEGIN{printf "%.3f", b-a}')"
       last_log="$log"
@@ -1795,6 +1806,8 @@ bench-molecule runs="5":
         done
         printf '\n'
       done
+      printf 'load average (1 min) before and after the timed passes: %s to %s\n' \
+        "$(awk '{print $9; print $10}' "$rows" | sort -n | head -n 1)" "$(awk '{print $9; print $10}' "$rows" | sort -n | tail -n 1)"
       printf 'medians of %s passes per engine; every pass: %s\n' "{{runs}}" "$rows"
     } | tee "$out"
 

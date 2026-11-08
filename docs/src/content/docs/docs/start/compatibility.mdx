@@ -5,13 +5,21 @@ description: Check an existing Ansible project against this release in a few sec
 
 import { Steps, Aside } from '@astrojs/starlight/components';
 
-To find out whether a playbook runs, run `--syntax-check` on it, then run it on one host. Volant reads the whole ansible-core 2.19 grammar, so your playbook parses here as it parses under Ansible. Before it connects to anything, a second check, the pre-flight check, looks for what this release does not support yet and stops the run with a message that names it. The [known gaps](#known-gaps) below are the exceptions: a run can ignore a setting or give a wrong result there without an error.
+To find out whether a playbook runs, run `volant check .` at the root of the repository, then run the playbook on one host. Volant reads the whole ansible-core 2.19 grammar, so your playbook parses here as it parses under Ansible. Before it connects to anything, a second check, the pre-flight check, looks for what this release does not support yet and stops the run with a message that names it. The [known gaps](#known-gaps) below are the exceptions: a run can ignore a setting or give a wrong result there without an error.
 
 ## Check a project
 
 <Steps>
 
-1. Read it without running it. Listings and `--syntax-check` never stop on an unsupported module or keyword, so they work even on a playbook this release cannot run yet:
+1. Check every playbook at once, without contacting a host:
+
+   ```sh
+   volant check .
+   ```
+
+   Each playbook gets a verdict: `ready`, `refused` with the reason, file and line, or `unknown` when only a run can tell. `volant playbook --check` is a different command: it runs the playbook in check mode against hosts. See [`volant check`](/docs/reference/cli/check/).
+
+2. Read it without running it. Listings and `--syntax-check` never stop on an unsupported module or keyword, so they work even on a playbook this release cannot run yet:
 
    ```sh
    volant playbook -i inventory.ini site.yml --syntax-check
@@ -20,7 +28,7 @@ To find out whether a playbook runs, run `--syntax-check` on it, then run it on 
 
    If the task list matches what `ansible-playbook --list-tasks` prints, Volant compiled your roles, imports and tags the same way.
 
-2. Ask for a real run against one host you can afford to touch. `--check --diff` leaves the host as it is, except for the cached agent, so it is a safe first run:
+3. Ask for a real run against one host you can afford to touch. `--check --diff` leaves the host as it is, except for the cached agent, so it is a safe first run:
 
    ```sh
    volant playbook -i inventory.ini site.yml --limit test1 --check --diff
@@ -29,7 +37,7 @@ To find out whether a playbook runs, run `--syntax-check` on it, then run it on 
 
    Most of what this release cannot execute stops the run before it connects. The message names the module, the keyword or the value, and the run exits with code 4. [What it refuses today](#what-it-refuses-today) lists the messages.
 
-3. Fix or wait. What is not supported yet is listed in [Keywords](/docs/reference/keywords/), [Modules](/docs/reference/modules/) and the [known gaps](#known-gaps) below, and most have a workaround.
+4. Fix or wait. What is not supported yet is listed in [Keywords](/docs/reference/keywords/), [Modules](/docs/reference/modules/) and the [known gaps](#known-gaps) below, and most have a workaround.
 
 </Steps>
 
@@ -100,7 +108,6 @@ These differ from `ansible-playbook` without a message before the run, or with a
 | What | What happens |
 |---|---|
 | `vars_plugins/` | Ignored. |
-| `volant check` and `volant lint` | They do not exist. Run them from ansible-core or ansible-lint. |
 | A task with `no_log: true` that fails | On purpose. Volant prints `[ERROR]: Task failed: Action failed: <error censored due to no log>` and nothing else of the cause. ansible-core 2.19.12 prints the cause: `[ERROR]: Task failed: Action failed: <the msg of fail or assert>`, the error of the module, and the `<<< caused by >>>` blocks. That text can hold a secret, such as the `msg` of a `fail` that names a password. The [security policy](https://github.com/lorica-labs/volant/blob/main/SECURITY.md) counts a secret that reaches a log or a terminal where `no_log` hides it in ansible-core as a vulnerability, so Volant hides it. The `fatal:` line, the registered result and the recap are the same in both. To read the cause, run the task without `no_log`. |
 | SIGTERM | On purpose. Volant stops cleanly: it cancels the running tasks, removes the directory that holds the connection password, prints the recap, and exits with code 99, as it does for Ctrl-C. `ansible-playbook` does not catch SIGTERM. It dies at once with code 143 and prints no recap. Measured with `kill -TERM` during a `command: sleep`: 99 under Volant, 143 under ansible-core 2.19.12. |
 | `_ansible_ansiballz_pydevd_config` | On purpose. Ignored. ansible-core keeps this setting for its own use: it attaches a debugger to the module wrapper. Volant runs Python modules with its own runner, and its native modules without Python. |

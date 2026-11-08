@@ -1,0 +1,118 @@
+---
+sourceHash: 31aab9069080
+title: volant check
+description: Trouve les playbooks d'un dépôt et dit pour chacun si Volant peut l'exécuter, sans contacter d'hôte.
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant check` trouve chaque playbook d'un répertoire et donne à chacun un verdict : `ready`, `refused` ou `unknown`. Il ne contacte aucun hôte, ne rend aucun template pour un hôte et n'écrit aucun fichier.
+
+```sh
+volant check [CHEMIN...] [-i INVENTAIRE] [-e VARS] [--json] [--strict] [--runtime-less]
+```
+
+Ce n'est pas `volant playbook --check`, qui exécute le playbook en mode vérification sur les hôtes. `volant check` demande si Volant peut exécuter le playbook tout court.
+
+Lancez-le depuis le répertoire d'où vous lancez `ansible-playbook`, en général la racine du dépôt. Le `ansible.cfg` qui s'y trouve est lu comme `ansible-playbook` le lit, pour `roles_path`, `collections_path` et le reste. Sans chemin, il vérifie le répertoire de travail.
+
+```text
+$ volant check --runtime-less
+collection.yml      unknown  collection.yml:4  module 'community.general.nosuch_module': --runtime-less starts no ansible-core to resolve it
+invalid.yml         refused  (invalid)  invalid.yml:4  the role 'nosuchrole' was not found in ./roles:...
+site.yml            ready
+templated.yml       unknown  templated.yml:4  include_tasks: what it names is checked when the run reaches it
+4 playbooks: 1 ready, 1 refused, 2 unknown
+```
+
+Chaque ligne donne le playbook, le verdict, le fichier et la ligne, et la raison. Quand un playbook a plusieurs raisons, la première est sur sa ligne et les autres suivent sur les lignes en dessous.
+
+## Quels fichiers sont des playbooks
+
+Un fichier `.yml` ou `.yaml` est un playbook quand c'est une liste dont un élément a `hosts` ou `import_playbook`. Les autres fichiers ne sont pas listés : fichiers de tâches, fichiers de variables, inventaires et fichiers qui ne sont pas du YAML valide. Avec `-v`, la dernière ligne les compte.
+
+Le parcours n'entre pas dans les répertoires cachés, `roles`, `collections`, `group_vars`, `host_vars`, `templates`, `files`, `defaults`, `vars`, `handlers`, `meta`, `molecule`, `node_modules` ni `target`, et il ne suit pas les liens symboliques. Un chemin donné sur la ligne de commande est suivi même quand c'est un lien. Un playbook qu'un autre importe est aussi listé pour lui-même.
+
+## Verdicts
+
+Chaque playbook passe par les étapes que `volant playbook` exécute avant sa première connexion, dans le même ordre : le chargement, la [vérification préalable](/fr/docs/internals/preflight/), la compilation des rôles et des imports, et la résolution des modules. Le premier refus est le verdict.
+
+| Verdict | Sens |
+|---|---|
+| `ready` | Il se charge, passe la vérification préalable et se compile, et chaque module qu'il nomme est trouvé. |
+| `refused` | `volant playbook` s'arrêterait avant la première connexion. La raison a un type. `unsupported` est ce que Volant ne fait pas encore. `invalid` est un playbook qu'ansible-core refuse aussi, par exemple un rôle introuvable ou un module d'une collection qui n'est pas installée. Les deux comptent comme des échecs. |
+| `unknown` | Seule une exécution peut le dire. Chaque raison est listée : un `include_tasks` ou `include_role`, un module nommé par un template, ou le module d'une collection sans ansible-core à qui le demander. |
+
+Un `include_tasks` ou `include_role` est lu quand un hôte atteint l'instruction : ce qu'il nomme n'est donc pas vérifié ici, et le playbook est `unknown`.
+
+Un fichier de clé privée qui commence par `$ANSIBLE_VAULT` est `refused` : Volant ne sait pas encore utiliser une clé chiffrée par vault. Les clés vérifiées sont `private_key_file` dans `ansible.cfg`, `ansible_private_key_file` et `ansible_ssh_private_key_file` dans les `vars` d'un play, et les mêmes variables des hôtes de `-i`. Le fichier est lu, jamais déchiffré.
+
+Un module intégré qui passe par Python, comme `pip`, compte comme trouvé. Le module d'une collection est résolu par l'ansible-core du contrôleur, comme une exécution le résout. Quand il n'y en a pas, ou avec `--runtime-less`, le module est `unknown`. `volant check` n'installe jamais le runtime géré ; `volant runtime install` le fait.
+
+## Codes de sortie
+
+| Code | Quand |
+|---|---|
+| 0 | Aucun playbook n'est `refused`. |
+| 1 | Au moins un playbook est `refused`, ou `unknown` avec `--strict`. |
+| 2 | Une erreur d'usage, un chemin illisible, une configuration ou un inventaire illisible, ou plus de fichiers que `--max-files`. |
+| 3 | Aucun playbook n'a été trouvé. |
+
+## Dépôts non fiables
+
+Par défaut, `volant check` démarre l'ansible-core du contrôleur pour résoudre les modules des collections. Cela importe du code Python : mesuré, résoudre le module d'une collection importe le plugin d'action du même nom de cette collection. Un chemin de collections ou un répertoire de plugins à l'intérieur du dépôt est du code que le dépôt apporte. Pour un dépôt auquel vous ne faites pas confiance, par exemple la pull request de quelqu'un d'autre, utilisez `--runtime-less`. Il ne démarre aucun Python, donc le module d'une collection est `unknown` au lieu d'être trouvé. `-i` avec un script ou un plugin d'inventaire exécute aussi ce code.
+
+## JSON
+
+`--json` affiche un seul document :
+
+```json
+{
+  "v": 1,
+  "engine": "0.4.2",
+  "lens": ["ready"],
+  "playbooks": [
+    {"path": "site.yml", "verdict": "ready", "plays": 1, "tasks": 2, "reasons": []},
+    {"path": "invalid.yml", "verdict": "refused", "plays": 1, "tasks": 0, "reasons": [
+      {"kind": "invalid", "code": 1, "message": "the role 'nosuchrole' was not found in ...", "file": "invalid.yml", "line": 4}
+    ]}
+  ],
+  "summary": {"ready": 1, "refused": 1, "unknown": 0, "skipped_files": 3}
+}
+```
+
+`kind` vaut `unsupported`, `invalid` ou `unknown`. `code` est le code de sortie auquel `volant playbook` s'arrête, `null` pour une raison `unknown`. `file` et `line` valent `null` quand le refus ne nomme aucun endroit. `tasks` compte les tâches compilées, rôles et imports compris. Des champs peuvent être ajoutés sans changer `v`.
+
+## Options
+
+<Option name="-i, --inventory" arg="INVENTAIRE">
+  Sources d'inventaire, lues seulement pour le fichier de clé privée de chaque hôte. Sans `-i`, aucun inventaire n'est lu.
+</Option>
+
+<Option name="-e, --extra-vars" arg="VARS">
+  Variables supplémentaires, comme pour `volant playbook`. Elles rendent les noms des `import_playbook` et les `vars` compilées.
+</Option>
+
+<Option name="--json">
+  Affiche le document JSON au lieu du texte. Identique à `--format json`.
+</Option>
+
+<Option name="--format" arg="text|json">
+  Le format de sortie. Par défaut : `text`.
+</Option>
+
+<Option name="--strict">
+  Sort avec 1 quand un playbook est `unknown`, comme quand un playbook est `refused`.
+</Option>
+
+<Option name="--runtime-less">
+  Ne démarre aucun Python. Le module d'une collection est `unknown`.
+</Option>
+
+<Option name="--max-files" arg="N">
+  S'arrête sur une erreur quand le parcours voit plus de fichiers que ce nombre. Par défaut : 5000.
+</Option>
+
+<Option name="-v, --verbose">
+  Compte sur la dernière ligne les fichiers YAML qui ne sont pas des playbooks.
+</Option>

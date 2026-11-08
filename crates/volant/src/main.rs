@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use clap::{Parser, Subcommand};
 use volant::cli::{
-    AdhocArgs, CompatCommand, ConsoleArgs, GalaxyArgs, InventoryArgs, PlaybookArgs, PullArgs,
-    RuntimeCommand, ShimsCommand, ToolArgs, VaultArgs,
+    AdhocArgs, CheckArgs, CompatCommand, ConsoleArgs, GalaxyArgs, InventoryArgs, PlaybookArgs,
+    PullArgs, RuntimeCommand, ShimsCommand, ToolArgs, VaultArgs,
 };
 
 /// Fast engine for Ansible playbooks.
@@ -17,6 +17,8 @@ struct Cli {
 enum Command {
     /// Run playbooks, with the arguments of ansible-playbook.
     Playbook(Box<PlaybookArgs>),
+    /// Say for every playbook of a repository whether Volant can run it, without touching a host.
+    Check(Box<CheckArgs>),
     /// Run one module against the hosts of a pattern, with the arguments of ansible.
     Adhoc(Box<AdhocArgs>),
     /// Browse plugin documentation, with the arguments of ansible-doc.
@@ -117,6 +119,7 @@ fn main() {
     volant::askpass::answer_if_asked();
     let code = match parse().command {
         Command::Playbook(args) => volant::cli::run(*args),
+        Command::Check(args) => volant::cli::check(&args),
         Command::Adhoc(args) => volant::cli::adhoc(*args),
         Command::Doc(args) => volant::cli::doc(args),
         Command::Config(args) => volant::cli::config(args),

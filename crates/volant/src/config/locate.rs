@@ -126,6 +126,18 @@ pub(crate) fn defaults_value(key: &str) -> Option<String> {
     value_in(&text, key)
 }
 
+/// `INTERPRETER_PYTHON` as the configuration sets it: `ANSIBLE_PYTHON_INTERPRETER`, else
+/// `[defaults] interpreter_python`, the file read once per process. A host's own
+/// `ansible_python_interpreter` beats both, as it does in the reference.
+pub(crate) fn interpreter_python() -> Option<String> {
+    if let Ok(value) = std::env::var("ANSIBLE_PYTHON_INTERPRETER") {
+        return Some(value.trim().to_string()).filter(|v| !v.is_empty());
+    }
+    static FILE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    FILE.get_or_init(|| defaults_value("interpreter_python"))
+        .clone()
+}
+
 /// [`defaults_value`] over the text of a file.
 fn value_in(text: &str, key: &str) -> Option<String> {
     let mut section = "";

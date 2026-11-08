@@ -1,18 +1,26 @@
 ---
-sourceHash: 72e07b4420ea
+sourceHash: 5526981c261e
 title: ¿Se ejecutará mi playbook?
 description: Comprueba un proyecto de Ansible existente contra esta versión en unos segundos, sin tocar ningún host.
 ---
 
 import { Steps, Aside } from '@astrojs/starlight/components';
 
-Para saber si un playbook se ejecuta, lanza `--syntax-check` sobre él y después ejecútalo en un host. Volant lee toda la gramática de ansible-core 2.19, así que tu playbook se interpreta aquí igual que con Ansible. Antes de conectarse a nada, una segunda comprobación, la comprobación previa, busca lo que esta versión aún no admite y detiene la ejecución con un mensaje que lo nombra. Las [carencias conocidas](#carencias-conocidas) de más abajo son las excepciones: ahí una ejecución puede ignorar un ajuste o dar un resultado incorrecto sin ningún error.
+Para saber si un playbook se ejecuta, lanza `volant check .` en la raíz del repositorio y después ejecuta el playbook en un host. Volant lee toda la gramática de ansible-core 2.19, así que tu playbook se interpreta aquí igual que con Ansible. Antes de conectarse a nada, una segunda comprobación, la comprobación previa, busca lo que esta versión aún no admite y detiene la ejecución con un mensaje que lo nombra. Las [carencias conocidas](#carencias-conocidas) de más abajo son las excepciones: ahí una ejecución puede ignorar un ajuste o dar un resultado incorrecto sin ningún error.
 
 ## Comprobar un proyecto
 
 <Steps>
 
-1. Léelo sin ejecutarlo. Los listados y `--syntax-check` nunca se detienen ante un módulo o una palabra clave no admitidos, así que funcionan incluso con un playbook que esta versión todavía no puede ejecutar:
+1. Comprueba todos los playbooks a la vez, sin contactar con ningún host:
+
+   ```sh
+   volant check .
+   ```
+
+   Cada playbook recibe un veredicto: `ready`, `refused` con el motivo, el archivo y la línea, o `unknown` cuando solo una ejecución puede saberlo. No es `volant playbook --check`, que ejecuta el playbook en modo de comprobación contra los hosts. Consulta [`volant check`](/es/docs/reference/cli/check/).
+
+2. Léelo sin ejecutarlo. Los listados y `--syntax-check` nunca se detienen ante un módulo o una palabra clave no admitidos, así que funcionan incluso con un playbook que esta versión todavía no puede ejecutar:
 
    ```sh
    volant playbook -i inventory.ini site.yml --syntax-check
@@ -21,7 +29,7 @@ Para saber si un playbook se ejecuta, lanza `--syntax-check` sobre él y despué
 
    Si la lista de tareas coincide con lo que imprime `ansible-playbook --list-tasks`, Volant ha compilado tus roles, imports y etiquetas del mismo modo.
 
-2. Pide una ejecución real contra un host que puedas permitirte tocar. `--check --diff` deja el host como está, salvo por el agente en caché, así que es una primera ejecución segura:
+3. Pide una ejecución real contra un host que puedas permitirte tocar. `--check --diff` deja el host como está, salvo por el agente en caché, así que es una primera ejecución segura:
 
    ```sh
    volant playbook -i inventory.ini site.yml --limit test1 --check --diff
@@ -30,7 +38,7 @@ Para saber si un playbook se ejecuta, lanza `--syntax-check` sobre él y despué
 
    Casi todo lo que esta versión no puede ejecutar detiene la ejecución antes de conectarse. El mensaje nombra el módulo, la palabra clave o el valor, y la ejecución termina con el código 4. [Qué rechaza hoy](#qué-rechaza-hoy) enumera los mensajes.
 
-3. Corrige o espera. Lo que todavía no se admite está en [Palabras clave](/es/docs/reference/keywords/), [Módulos](/es/docs/reference/modules/) y las [carencias conocidas](#carencias-conocidas) de más abajo, y casi todo tiene una alternativa.
+4. Corrige o espera. Lo que todavía no se admite está en [Palabras clave](/es/docs/reference/keywords/), [Módulos](/es/docs/reference/modules/) y las [carencias conocidas](#carencias-conocidas) de más abajo, y casi todo tiene una alternativa.
 
 </Steps>
 
@@ -101,7 +109,6 @@ Estas diferencias con `ansible-playbook` aparecen sin ningún mensaje antes de l
 | Qué | Qué ocurre |
 |---|---|
 | `vars_plugins/` | Se ignoran. |
-| Los comandos `volant check` y `volant lint` | No existen. Ejecútalos con ansible-core o ansible-lint. |
 | Una tarea con `no_log: true` que falla | Es a propósito. Volant imprime `[ERROR]: Task failed: Action failed: <error censored due to no log>` y nada más sobre la causa. ansible-core 2.19.12 imprime la causa: `[ERROR]: Task failed: Action failed: <the msg of fail or assert>`, el error del módulo y los bloques `<<< caused by >>>`. Ese texto puede contener un secreto, como el `msg` de un `fail` que nombra una contraseña. La [política de seguridad](https://github.com/lorica-labs/volant/blob/main/SECURITY.md) considera una vulnerabilidad que un secreto llegue a un log o a un terminal donde `no_log` lo oculta en ansible-core, así que Volant lo oculta. La línea `fatal:`, el resultado registrado y el recap son iguales en ambos. Para leer la causa, ejecuta la tarea sin `no_log`. |
 | SIGTERM | Es a propósito. Volant se detiene limpiamente: cancela las tareas en curso, elimina el directorio que guarda la contraseña de conexión, imprime el recap y termina con el código 99, igual que con Ctrl-C. `ansible-playbook` no captura SIGTERM. Muere de inmediato con el código 143 y no imprime recap. Medido con `kill -TERM` durante un `command: sleep`: 99 con Volant, 143 con ansible-core 2.19.12. |
 | `_ansible_ansiballz_pydevd_config` | Es a propósito. Se ignora. ansible-core reserva este ajuste para su propio uso: conecta un depurador al wrapper de módulos. Volant ejecuta los módulos de Python con su propio ejecutor, y sus módulos nativos sin Python. |

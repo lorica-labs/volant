@@ -121,6 +121,10 @@ A file that exists but cannot be read is skipped, and the run continues with the
   The fact modules the play's fact gathering runs, `smart` (`setup`) unless set. A literal list in the plays, their tasks or the inventory (`ansible_facts_modules`) is read too; a module named only by a template cannot be run.
 </Option>
 
+<Option name="interpreter_python" id="defaults-interpreter-python" default="auto" env="ANSIBLE_PYTHON_INTERPRETER">
+  The Python a module runs under on a host whose `ansible_python_interpreter` is not set; the host variable beats this setting. `auto` and `auto_silent` find the interpreter on the host, and `auto_silent` leaves out the warning that names the one it found. `auto_legacy` and `auto_legacy_silent` act as `auto` and `auto_silent` and add ansible-core's deprecation. Any other value is the path of the interpreter.
+</Option>
+
 <Option name="module_strict_utf8_response" id="defaults-module-strict-utf8-response" default="true" env="ANSIBLE_MODULE_STRICT_UTF8_RESPONSE">
   Whether `from_json` refuses a string that holds a lone surrogate, such as `\udc80`. Off, the value keeps it and prints with `?` in its place, with a warning.
 </Option>

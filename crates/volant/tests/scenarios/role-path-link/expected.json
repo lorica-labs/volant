@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [linked : debug] **********************************************************\nok: [localhost] => {\n    \"msg\": \"checkout\"\n}\n\nTASK [linked : include_tasks] **************************************************\nincluded: <golden-tmp>/checkout/tasks/other.yml for localhost\n\nTASK [linked : debug] **********************************************************\nok: [localhost] => {\n    \"msg\": \"other\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

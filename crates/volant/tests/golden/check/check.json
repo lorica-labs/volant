@@ -1,0 +1,104 @@
+{
+  "v": 1,
+  "engine": "<version>",
+  "lens": [
+    "ready"
+  ],
+  "playbooks": [
+    {
+      "path": "collection.yml",
+      "verdict": "unknown",
+      "plays": 1,
+      "tasks": 1,
+      "reasons": [
+        {
+          "kind": "unknown",
+          "code": null,
+          "message": "module 'community.general.nosuch_module': --runtime-less starts no ansible-core to resolve it",
+          "file": "collection.yml",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "path": "invalid.yml",
+      "verdict": "refused",
+      "plays": 1,
+      "tasks": 0,
+      "reasons": [
+        {
+          "kind": "invalid",
+          "code": 1,
+          "message": "the role 'nosuchrole' was not found in <fixture>/roles:/nonexistent:<fixture>",
+          "file": "invalid.yml",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "path": "playbooks/all.yml",
+      "verdict": "ready",
+      "plays": 1,
+      "tasks": 2,
+      "reasons": []
+    },
+    {
+      "path": "site.yml",
+      "verdict": "ready",
+      "plays": 1,
+      "tasks": 2,
+      "reasons": []
+    },
+    {
+      "path": "templated.yml",
+      "verdict": "unknown",
+      "plays": 1,
+      "tasks": 1,
+      "reasons": [
+        {
+          "kind": "unknown",
+          "code": null,
+          "message": "include_tasks: what it names is checked when the run reaches it",
+          "file": "templated.yml",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "path": "unsupported.yml",
+      "verdict": "refused",
+      "plays": 1,
+      "tasks": 0,
+      "reasons": [
+        {
+          "kind": "unsupported",
+          "code": 4,
+          "message": "play 1: task 'Retry an include': keyword 'until' is not supported yet on 'include_tasks'",
+          "file": "unsupported.yml",
+          "line": 4
+        }
+      ]
+    },
+    {
+      "path": "vaulted-key.yml",
+      "verdict": "refused",
+      "plays": 1,
+      "tasks": 1,
+      "reasons": [
+        {
+          "kind": "unsupported",
+          "code": 4,
+          "message": "the private key file keys/id_vaulted is vault-encrypted, and this release cannot decrypt a private key",
+          "file": null,
+          "line": null
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "ready": 2,
+    "refused": 3,
+    "unknown": 2,
+    "skipped_files": 2
+  }
+}

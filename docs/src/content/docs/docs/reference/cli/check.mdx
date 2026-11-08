@@ -20,8 +20,9 @@ $ volant check --runtime-less
 collection.yml      unknown  collection.yml:4  module 'community.general.nosuch_module': --runtime-less starts no ansible-core to resolve it
 invalid.yml         refused  (invalid)  invalid.yml:4  the role 'nosuchrole' was not found in ./roles:...
 site.yml            ready
-templated.yml       unknown  templated.yml:4  include_tasks: what it names is checked when the run reaches it
-4 playbooks: 1 ready, 1 refused, 2 unknown
+static-include.yml  refused  tasks/bad.yml:1  task 'Retry an include inside an include': keyword 'retries' is not supported yet on 'include_tasks'
+templated.yml       unknown  templated.yml:4  include_tasks with a templated file name: checked when the run reaches it
+5 playbooks: 1 ready, 2 refused, 2 unknown
 ```
 
 Each line gives the playbook, the verdict, the file and line, and the reason. When a playbook has several reasons, the first one is on its line and the others follow on the lines below it.
@@ -40,9 +41,9 @@ Each playbook goes through the steps `volant playbook` runs before its first con
 |---|---|
 | `ready` | It loads, passes the pre-flight check and compiles, and every module it names is found. |
 | `refused` | `volant playbook` would stop before the first connection. The reason has a kind. `unsupported` is something Volant does not do yet. `invalid` is a playbook ansible-core rejects too, such as a role nobody can find or a module from a collection that is not installed. Both count as failures. |
-| `unknown` | Only a run can tell. Each reason is listed: an `include_tasks` or `include_role`, a module named by a template, or a collection's module with no ansible-core to ask. |
+| `unknown` | Only a run can tell. Each reason is listed: an `include_tasks` or `include_role` whose name is a template, a module named by a template, or a collection's module with no ansible-core to ask. |
 
-An `include_tasks` or `include_role` is read when a host reaches the statement, so what it names is not checked here and the playbook is `unknown`.
+An `include_tasks` or `include_role` with a plain name is followed: the file or role is read and checked as the run checks it when a host reaches the statement. A refusal inside it makes the playbook `refused`. A `when` on the statement is not evaluated, so a file that only some hosts read is checked all the same.
 
 A private key file that starts with `$ANSIBLE_VAULT` is `refused`: Volant cannot use a vault-encrypted key yet. The keys checked are `private_key_file` in `ansible.cfg`, `ansible_private_key_file` and `ansible_ssh_private_key_file` in a play's `vars`, and the same variables of the hosts of `-i`. The file is read, never decrypted.
 

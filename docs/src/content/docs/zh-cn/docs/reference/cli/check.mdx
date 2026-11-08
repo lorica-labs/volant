@@ -1,5 +1,5 @@
 ---
-sourceHash: 31aab9069080
+sourceHash: ddedde5e094d
 title: volant check
 description: 找出仓库中的 playbook，逐个说明 Volant 能否运行它，不连接任何主机。
 ---
@@ -21,8 +21,9 @@ $ volant check --runtime-less
 collection.yml      unknown  collection.yml:4  module 'community.general.nosuch_module': --runtime-less starts no ansible-core to resolve it
 invalid.yml         refused  (invalid)  invalid.yml:4  the role 'nosuchrole' was not found in ./roles:...
 site.yml            ready
-templated.yml       unknown  templated.yml:4  include_tasks: what it names is checked when the run reaches it
-4 playbooks: 1 ready, 1 refused, 2 unknown
+static-include.yml  refused  tasks/bad.yml:1  task 'Retry an include inside an include': keyword 'retries' is not supported yet on 'include_tasks'
+templated.yml       unknown  templated.yml:4  include_tasks with a templated file name: checked when the run reaches it
+5 playbooks: 1 ready, 2 refused, 2 unknown
 ```
 
 每行给出 playbook、结论、文件和行号，以及原因。一个 playbook 有多个原因时，第一个在它自己那一行，其余的列在下面几行。
@@ -41,9 +42,9 @@ templated.yml       unknown  templated.yml:4  include_tasks: what it names is ch
 |---|---|
 | `ready` | 它能加载、通过预检并完成编译，它用到的每个模块都能找到。 |
 | `refused` | `volant playbook` 会在第一次连接前停下。原因带有类型。`unsupported` 是 Volant 还做不到的事。`invalid` 是 ansible-core 也会拒绝的 playbook，例如找不到的角色，或者来自未安装集合的模块。两者都算失败。 |
-| `unknown` | 只有实际运行才能知道。每个原因都会列出：`include_tasks` 或 `include_role`、由模板给出名字的模块，或者没有 ansible-core 可询问时某个集合的模块。 |
+| `unknown` | 只有实际运行才能知道。每个原因都会列出：名字是模板的 `include_tasks` 或 `include_role`、由模板给出名字的模块，或者没有 ansible-core 可询问时某个集合的模块。 |
 
-`include_tasks` 或 `include_role` 在主机执行到该语句时才读取，所以它指向的内容不在这里检查，playbook 为 `unknown`。
+名字直接写出的 `include_tasks` 或 `include_role` 会被跟进：文件或角色会被读取并检查，方式和主机执行到这条语句时运行所做的检查一样。其中有拒绝，playbook 就是 `refused`。语句上的 `when` 不会求值，所以只有部分主机才读取的文件同样会被检查。
 
 以 `$ANSIBLE_VAULT` 开头的私钥文件是 `refused`：Volant 还不能使用经 vault 加密的私钥。检查的私钥有：`ansible.cfg` 中的 `private_key_file`，play 的 `vars` 中的 `ansible_private_key_file` 和 `ansible_ssh_private_key_file`，以及 `-i` 中各主机的同名变量。文件只读取，从不解密。
 

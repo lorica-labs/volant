@@ -97,7 +97,7 @@ fn a_missing_role_names_every_path_and_exits_1() {
     let search = RoleSearch::new(&dir, &config);
     assert_eq!(
         search.locate("base").unwrap(),
-        dir.join("roles/base"),
+        dir.join("roles/base").canonicalize().unwrap(),
         "a role beside the playbook is found first"
     );
     let err = search.locate("nosuchrole").unwrap_err();

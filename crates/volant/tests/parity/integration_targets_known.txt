@@ -6,5 +6,5 @@ cache-plugins                  #1282
 deprecations                   #1282
 filter_encryption              #1282
 protomatter                    #1282
-template                       #1355
+template                       #1446
 templating                     #1282

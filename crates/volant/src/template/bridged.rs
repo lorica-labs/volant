@@ -169,6 +169,10 @@ pub(super) fn lookup(
     let needs = bridge
         .lookup_needs(name)
         .map_err(|err| failed(kind, name, err))?;
+    // The reads below hand the plugin templates it renders itself: they leave nothing unrendered
+    // in the render that calls the lookup, so they are not its deferred reads.
+    let root = state.lookup(super::CONTEXT_KEY);
+    let deferred = root.as_ref().map(super::context::deferred);
     let mut vars = Map::new();
     let read = |vars: &mut Map<String, serde_json::Value>, key: &str| -> Result<(), Error> {
         if let Some(value) = state.lookup(key).filter(|v| !v.is_undefined()) {
@@ -187,8 +191,8 @@ pub(super) fn lookup(
         // A plugin that lists the variables gets every one the host has. One that cannot be
         // sent (an object only Jinja holds) is left out; one that does not render goes as its
         // template, which the plugin renders when it reads it and fails on as the reference does.
-        let names: Vec<String> = state
-            .lookup(super::CONTEXT_KEY)
+        let names: Vec<String> = root
+            .as_ref()
             .and_then(|root| root.try_iter().ok())
             .into_iter()
             .flatten()
@@ -203,6 +207,13 @@ pub(super) fn lookup(
                 vars.insert(key.clone(), serde_json::json!({ UNRENDERED: raw }));
             }
         }
+    }
+    if let Some(context) = root
+        .as_ref()
+        .and_then(|root| root.downcast_object_ref::<super::context::Context>())
+        && let Some(count) = deferred
+    {
+        context.restore_deferred(count);
     }
     if (needs.all || needs.names.iter().any(|n| n == "hostvars"))
         && let Some(hosts) = hostvars(state)

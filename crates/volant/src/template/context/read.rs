@@ -77,6 +77,12 @@ impl Deferred {
 }
 
 impl Context {
+    /// Puts the count of deferred reads back to `count`, for reads that left nothing unrendered
+    /// in the render under way.
+    pub(in crate::template) fn restore_deferred(&self, count: usize) {
+        self.deferred.count.store(count, Ordering::Relaxed);
+    }
+
     /// The untrusted names a render nested in this one starts from. Such a render tracks host
     /// text, so when this one does not, the inventory's names and the shared lists are data there.
     pub(in crate::template) fn untrusted_for_nested(&self) -> BTreeSet<String> {

@@ -1,0 +1,2 @@
+private: "{{ lookup('config', 'DEFAULT_PRIVATE_ROLE_VARS') }}"
+fresh: "{{ lookup('env', 'NO_SUCH_VARIABLE_HERE') == '' }}"

@@ -22,7 +22,7 @@ mod paths;
 mod settings;
 
 pub use callbacks::Callbacks;
-pub(crate) use locate::{defaults_value, is_world_writable};
+pub(crate) use locate::{defaults_value, interpreter_python, is_world_writable};
 use parse::parse;
 pub(crate) use parse::{error_tracebacks, strict_utf8};
 pub(crate) use paths::{configured_async_dir, expand_home};

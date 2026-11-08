@@ -191,7 +191,6 @@ pub fn is_trusted(id: TagSetId) -> bool {
     tables().sets[id.0 as usize].trusted
 }
 
-/// Whether the set `id` names says its value came from a managed host.
 /// The tags of the text a `!vault` value decrypts to: those of the encrypted value, without
 /// trust, and `VaultedValue`.
 pub fn vaulted(id: TagSetId, ciphertext: &str) -> TagSetId {
@@ -201,6 +200,7 @@ pub fn vaulted(id: TagSetId, ciphertext: &str) -> TagSetId {
     intern(set)
 }
 
+/// Whether the set `id` names says its value came from a managed host.
 pub fn is_from_host(id: TagSetId) -> bool {
     tables().sets[id.0 as usize].from_host
 }

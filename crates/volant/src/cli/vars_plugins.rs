@@ -6,9 +6,16 @@ use std::sync::Arc;
 
 use crate::bridge::{Bridge, BridgeError};
 use crate::config::VarsPlugins;
-use crate::inventory::Source;
+use crate::inventory::{PluginConfig, Source};
 use crate::stats::Refusal;
 use crate::vars::{HostGroupVars, VarStore};
+
+/// Tells the inventory's `constructed` sources what `use_vars_plugins` runs at the stage `all`:
+/// whether `host_group_vars` does, and whether `plugins` and `dirs` may load any other plugin.
+pub(super) fn for_inventory(inventory: &mut PluginConfig, plugins: &VarsPlugins, dirs: &[PathBuf]) {
+    inventory.host_group_vars_at_all = plugins.host_group_vars_runs("all");
+    inventory.other_vars_plugins = !plugins.found(dirs).is_empty();
+}
 
 /// [`load_at`] the task stage, as a playbook run reads its variables.
 pub(super) fn load(

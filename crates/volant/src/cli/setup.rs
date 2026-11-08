@@ -73,7 +73,7 @@ pub(super) fn set_up(
 fn load_inventory(
     args: &PlaybookArgs,
     out: &mut Renderer,
-    config: Config,
+    mut config: Config,
 ) -> anyhow::Result<Result<SetUp, i32>> {
     // Refused before anything is loaded, the way the reference refuses it, whether it comes
     // from the command line, the environment or `ansible.cfg`. Exit 2: `Cli::parse()` already
@@ -97,7 +97,7 @@ fn load_inventory(
     let bridge = Bridge::late();
     // The playbooks' own plugin directories come first, as `ansible-playbook` adds them before it
     // reads the inventory: an `inventory_plugins/` beside a playbook can parse it.
-    let playbook_dirs = args
+    let playbook_dirs: Vec<std::path::PathBuf> = args
         .playbooks
         .iter()
         .filter_map(|p| {
@@ -107,6 +107,8 @@ fn load_inventory(
                 .map(std::path::Path::to_path_buf)
         })
         .collect();
+    let vars_plugins = &config.vars_plugins;
+    super::vars_plugins::for_inventory(&mut config.inventory_plugins, vars_plugins, &playbook_dirs);
     bridge.set_plugin_dirs(playbook_dirs)?;
     let loaded = load_sources_with(&sources, &config.inventory_plugins, &|| Arc::clone(&bridge));
     for note in &loaded.notes {

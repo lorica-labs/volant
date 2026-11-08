@@ -34,18 +34,29 @@ pub(super) fn set_var(
     host: &str,
     name: &str,
     value: Value,
-    vars: &Map<String, Value>,
+    vars: &crate::tags::Tagged,
 ) {
     let mut originals = HashSet::new();
     for (key, v) in vars.iter().filter(|(k, _)| !MAGIC.contains(&k.as_str())) {
         if key != name {
-            leaves(v, &mut originals);
+            trusted_leaves(v, vars.tree(key), &mut originals);
         }
     }
     // An empty string is too often a literal to count as a copy, unless the whole value is one.
     originals.remove("");
+    // A variable passed through keeps its tags, which a string a vars plugin answered lacks.
+    let trusted = |key: &str, v: &Value| {
+        let (mut kept, mut every) = (HashSet::new(), HashSet::new());
+        trusted_leaves(v, vars.tree(key), &mut kept);
+        leaves(v, &mut every);
+        kept == every
+    };
+    let original = vars
+        .iter()
+        .filter(|(k, _)| !MAGIC.contains(&k.as_str()))
+        .any(|(k, v)| v == &value && trusted(k, v));
     let mut all = HashSet::new();
-    if !is_original(&value, vars) {
+    if !original {
         leaves(&value, &mut all);
     }
     let computed: HashSet<String> = all.difference(&originals).cloned().collect();
@@ -65,6 +76,32 @@ const MAGIC: [&str; 3] = [
     "inventory_hostname_short",
     "group_names",
 ];
+
+/// Every string in a value but those its tags do not trust, mapping keys left out: a copy of a
+/// string a vars plugin answered stays as untrusted as that string.
+fn trusted_leaves(value: &Value, tree: Option<&crate::tags::TagTree>, out: &mut HashSet<String>) {
+    match value {
+        Value::String(s) => {
+            let untrusted = tree.is_some_and(|tree| {
+                crate::tags::is_known(tree.own()) && !crate::tags::is_trusted(tree.own())
+            });
+            if !untrusted {
+                out.insert(s.clone());
+            }
+        }
+        Value::Array(items) => {
+            for (i, item) in items.iter().enumerate() {
+                trusted_leaves(item, tree.and_then(|t| t.index(i)), out);
+            }
+        }
+        Value::Object(map) => {
+            for (key, item) in map {
+                trusted_leaves(item, tree.and_then(|t| t.at(key)), out);
+            }
+        }
+        _ => {}
+    }
+}
 
 /// Every string in a value, mapping keys left out.
 fn leaves(value: &Value, out: &mut HashSet<String>) {
@@ -166,72 +203,4 @@ pub(in crate::inventory) fn reason(error: &str, expr: &str, vars: &Map<String, V
             || reason.to_string(),
             |name| format!("'{name}' is undefined"),
         )
-}
-
-/// What `use_vars_plugins` adds: the `group_vars` and `host_vars` files beside each source the
-/// inventory was read from and beside the plugin's own file, as `host_group_vars` reads them.
-#[derive(Default)]
-pub(super) struct PluginVars {
-    /// Per directory, in source order: the files of each group, then of each host.
-    dirs: Vec<(FileVars, FileVars)>,
-}
-
-type FileVars = std::collections::BTreeMap<String, crate::tags::Tagged>;
-
-impl PluginVars {
-    pub(super) fn read(inv: &Inventory, own: &crate::inventory::Source) -> anyhow::Result<Self> {
-        let mut roots: Vec<std::path::PathBuf> = Vec::new();
-        let sources = inv.hosts.iter().filter_map(|h| inv.source_of(&h.name));
-        for path in sources.chain([own.path()]) {
-            let root = if path.is_dir() {
-                Some(path)
-            } else {
-                path.parent()
-            };
-            if let Some(root) = root.map(std::path::Path::to_path_buf)
-                && !roots.contains(&root)
-            {
-                roots.push(root);
-            }
-        }
-        let mut dirs = Vec::new();
-        for root in roots {
-            dirs.push((
-                crate::vars::load_vars_dir(&root.join("group_vars"))?,
-                crate::vars::load_vars_dir(&root.join("host_vars"))?,
-            ));
-        }
-        Ok(Self { dirs })
-    }
-
-    /// `vars`, a host's inventory variables, with the files' under them: the reference layers
-    /// the groups' files over the groups' variables and the host's files over its own.
-    pub(super) fn over(
-        &self,
-        inv: &Inventory,
-        host: &str,
-        mut vars: crate::tags::Tagged,
-    ) -> crate::tags::Tagged {
-        if self.dirs.is_empty() {
-            return vars;
-        }
-        let mut groups = vec!["all".to_string()];
-        groups.extend(inv.layered_groups_of(host));
-        for (group_files, _) in &self.dirs {
-            for group in &groups {
-                if let Some(file) = group_files.get(group) {
-                    vars.extend(file);
-                }
-            }
-        }
-        if let Some(own) = inv.host_line_vars(host) {
-            vars.extend(own);
-        }
-        for (_, host_files) in &self.dirs {
-            if let Some(file) = host_files.get(host) {
-                vars.extend(file);
-            }
-        }
-        vars
-    }
 }

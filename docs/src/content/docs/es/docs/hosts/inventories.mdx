@@ -39,7 +39,7 @@ Una fuente que ningún plugin lee se omite con un aviso, como en Ansible. `-vvv`
 
 ### Fuentes dinámicas
 
-Un script imprime su inventario como JSON, en el formato que escribe `ansible-inventory --list`. `constructed` y `generator` crean grupos y hosts a partir de plantillas.
+Un script imprime su inventario como JSON, en el formato que escribe `ansible-inventory --list`. `constructed` y `generator` crean grupos y hosts a partir de plantillas. Con `use_vars_plugins: true`, `constructed` también lee lo que devuelven los plugins de vars para los directorios de las fuentes anteriores: los ficheros `group_vars` y `host_vars`, y cualquier otro plugin de vars, que se ejecuta a través de ansible-core. Como en ansible-core, un host de un fichero INI todavía no está en `all` en ese momento, así que `group_vars/all.yml` no llega a sus expresiones.
 
 El plugin de inventario de una colección (un proveedor de nube, por ejemplo) se ejecuta dentro de ansible-core, mediante un proceso de Python que Volant inicia solo cuando hay una fuente así, consulta [el camino de Python en caliente](/es/docs/internals/python/).
 

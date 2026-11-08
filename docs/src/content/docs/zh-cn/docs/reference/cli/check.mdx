@@ -1,0 +1,118 @@
+---
+sourceHash: 31aab9069080
+title: volant check
+description: 找出仓库中的 playbook，逐个说明 Volant 能否运行它，不连接任何主机。
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant check` 找出一个目录下的每个 playbook，并给出结论：`ready`、`refused` 或 `unknown`。它不连接任何主机，不为任何主机渲染模板，也不写任何文件。
+
+```sh
+volant check [路径...] [-i 清单] [-e 变量] [--json] [--strict] [--runtime-less]
+```
+
+它不是 `volant playbook --check`，后者以检查模式在主机上运行 playbook。`volant check` 问的是 Volant 到底能不能运行这个 playbook。
+
+请在你运行 `ansible-playbook` 的目录下运行它，通常是仓库根目录。那里的 `ansible.cfg` 会像 `ansible-playbook` 那样被读取，用于 `roles_path`、`collections_path` 等设置。不给路径时，它检查当前工作目录。
+
+```text
+$ volant check --runtime-less
+collection.yml      unknown  collection.yml:4  module 'community.general.nosuch_module': --runtime-less starts no ansible-core to resolve it
+invalid.yml         refused  (invalid)  invalid.yml:4  the role 'nosuchrole' was not found in ./roles:...
+site.yml            ready
+templated.yml       unknown  templated.yml:4  include_tasks: what it names is checked when the run reaches it
+4 playbooks: 1 ready, 1 refused, 2 unknown
+```
+
+每行给出 playbook、结论、文件和行号，以及原因。一个 playbook 有多个原因时，第一个在它自己那一行，其余的列在下面几行。
+
+## 哪些文件是 playbook
+
+一个 `.yml` 或 `.yaml` 文件如果是一个列表，并且其中有元素带 `hosts` 或 `import_playbook`，它就是 playbook。其他文件不列出：任务文件、变量文件、清单以及不是有效 YAML 的文件。加 `-v` 时，最后一行会统计它们。
+
+遍历不进入隐藏目录，也不进入 `roles`、`collections`、`group_vars`、`host_vars`、`templates`、`files`、`defaults`、`vars`、`handlers`、`meta`、`molecule`、`node_modules` 和 `target`，并且不跟随符号链接。命令行上给出的路径即使是链接也会跟随。被另一个 playbook 导入的 playbook 也会单独列出。
+
+## 结论
+
+每个 playbook 都按 `volant playbook` 在第一次连接前执行的步骤走一遍，顺序相同：加载、[预检](/zh-cn/docs/internals/preflight/)、编译角色和导入、解析模块。第一个拒绝就是结论。
+
+| 结论 | 含义 |
+|---|---|
+| `ready` | 它能加载、通过预检并完成编译，它用到的每个模块都能找到。 |
+| `refused` | `volant playbook` 会在第一次连接前停下。原因带有类型。`unsupported` 是 Volant 还做不到的事。`invalid` 是 ansible-core 也会拒绝的 playbook，例如找不到的角色，或者来自未安装集合的模块。两者都算失败。 |
+| `unknown` | 只有实际运行才能知道。每个原因都会列出：`include_tasks` 或 `include_role`、由模板给出名字的模块，或者没有 ansible-core 可询问时某个集合的模块。 |
+
+`include_tasks` 或 `include_role` 在主机执行到该语句时才读取，所以它指向的内容不在这里检查，playbook 为 `unknown`。
+
+以 `$ANSIBLE_VAULT` 开头的私钥文件是 `refused`：Volant 还不能使用经 vault 加密的私钥。检查的私钥有：`ansible.cfg` 中的 `private_key_file`，play 的 `vars` 中的 `ansible_private_key_file` 和 `ansible_ssh_private_key_file`，以及 `-i` 中各主机的同名变量。文件只读取，从不解密。
+
+通过 Python 运行的内置模块，例如 `pip`，算作已找到。集合的模块由控制节点上的 ansible-core 解析，和运行时的解析方式一样。没有 ansible-core，或者使用了 `--runtime-less` 时，该模块为 `unknown`。`volant check` 从不安装托管运行时；安装由 `volant runtime install` 完成。
+
+## 退出码
+
+| 退出码 | 何时 |
+|---|---|
+| 0 | 没有 playbook 是 `refused`。 |
+| 1 | 至少一个 playbook 是 `refused`，或者在 `--strict` 下是 `unknown`。 |
+| 2 | 用法错误、路径无法读取、配置或清单无法读取，或者文件数超过 `--max-files`。 |
+| 3 | 没有找到 playbook。 |
+
+## 不可信的仓库
+
+默认情况下，`volant check` 会启动控制节点上的 ansible-core 来解析集合的模块。这会导入 Python 代码：实测，解析一个集合的模块会导入该集合中同名的 action 插件。仓库内的集合路径或插件目录就是仓库带来的代码。对于你不信任的仓库，例如别人提交的 pull request，请使用 `--runtime-less`。它不启动任何 Python，因此集合的模块是 `unknown`，而不是已找到。带清单脚本或清单插件的 `-i` 也会运行那段代码。
+
+## JSON
+
+`--json` 输出一个文档：
+
+```json
+{
+  "v": 1,
+  "engine": "0.4.2",
+  "lens": ["ready"],
+  "playbooks": [
+    {"path": "site.yml", "verdict": "ready", "plays": 1, "tasks": 2, "reasons": []},
+    {"path": "invalid.yml", "verdict": "refused", "plays": 1, "tasks": 0, "reasons": [
+      {"kind": "invalid", "code": 1, "message": "the role 'nosuchrole' was not found in ...", "file": "invalid.yml", "line": 4}
+    ]}
+  ],
+  "summary": {"ready": 1, "refused": 1, "unknown": 0, "skipped_files": 3}
+}
+```
+
+`kind` 是 `unsupported`、`invalid` 或 `unknown`。`code` 是 `volant playbook` 停下时的退出码，`unknown` 原因为 `null`。拒绝没有指出位置时，`file` 和 `line` 为 `null`。`tasks` 统计编译后的任务，包括角色和导入带来的任务。可以增加字段而不改变 `v`。
+
+## 选项
+
+<Option name="-i, --inventory" arg="清单">
+  清单来源，只用于读取每台主机的私钥文件。不加 `-i` 时不读取任何清单。
+</Option>
+
+<Option name="-e, --extra-vars" arg="变量">
+  额外变量，和 `volant playbook` 一样。它们用于渲染 `import_playbook` 的名字和编译后的 `vars`。
+</Option>
+
+<Option name="--json">
+  输出 JSON 文档而不是文本。等同于 `--format json`。
+</Option>
+
+<Option name="--format" arg="text|json">
+  输出格式。默认：`text`。
+</Option>
+
+<Option name="--strict">
+  有 playbook 为 `unknown` 时以 1 退出，和有 `refused` 时一样。
+</Option>
+
+<Option name="--runtime-less">
+  不启动任何 Python。集合的模块为 `unknown`。
+</Option>
+
+<Option name="--max-files" arg="N">
+  遍历看到的文件数超过这个数字时报错停止。默认：5000。
+</Option>
+
+<Option name="-v, --verbose">
+  在最后一行统计不是 playbook 的 YAML 文件。
+</Option>

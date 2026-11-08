@@ -1,0 +1,5 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Use a collection module
+      community.general.nosuch_module: {}

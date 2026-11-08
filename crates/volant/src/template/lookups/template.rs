@@ -106,7 +106,8 @@ pub(super) fn render_template(
     // joins no piece of output into no value, and has no output to give the file's last newline
     // back to. One that prints an empty string is `''`, and plain text is itself.
     out.map(|(s, node)| {
-        if let Some(value) = node {
+        // Text gets the file's last newline back, and a value of any other type stays that value.
+        if let Some(value) = node.filter(|value| value.as_str().is_none()) {
             return value;
         }
         let written = if text.ends_with('\n') {

@@ -146,6 +146,10 @@ impl RoleSearch {
 
     /// The directory a role name points at.
     ///
+    /// A role found on the search path is named by its real path, links followed, as the
+    /// reference's `unfrackpath` names it: a `~/.ansible/roles/geerlingguy.nginx` link to a
+    /// checkout makes `included:` lines and `role_path` show the checkout.
+    ///
     /// A three-part name is a collection role and is looked for under
     /// `<collection path>/ansible_collections/<namespace>/<collection>/roles/<role>`; measured,
     /// a `collections/` directory beside the playbook is searched, and the paths a missing one
@@ -154,7 +158,7 @@ impl RoleSearch {
         for base in &self.paths {
             let candidate = base.join(name);
             if candidate.is_dir() {
-                return Ok(candidate);
+                return Ok(std::fs::canonicalize(&candidate).unwrap_or(candidate));
             }
         }
         let parts: Vec<&str> = name.split('.').collect();

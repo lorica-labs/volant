@@ -1,18 +1,26 @@
 ---
-sourceHash: 72e07b4420ea
+sourceHash: 5526981c261e
 title: Läuft mein Playbook?
 description: Prüfen Sie ein bestehendes Ansible-Projekt in wenigen Sekunden gegen dieses Release, ohne einen Host anzufassen.
 ---
 
 import { Steps, Aside } from '@astrojs/starlight/components';
 
-Um herauszufinden, ob ein Playbook läuft, führen Sie darauf `--syntax-check` aus und lassen es dann auf einem Host laufen. Volant liest die gesamte Grammatik von ansible-core 2.19, Ihr Playbook wird hier also so geparst wie unter Ansible. Bevor Volant sich mit irgendetwas verbindet, sucht eine zweite Prüfung, die Vorabprüfung, nach dem, was dieses Release noch nicht unterstützt, und bricht den Lauf mit einer Meldung ab, die es benennt. Die [bekannten Lücken](#bekannte-lücken) weiter unten sind die Ausnahmen: Dort kann ein Lauf eine Einstellung ignorieren oder ein falsches Ergebnis liefern, ohne einen Fehler zu melden.
+Um herauszufinden, ob ein Playbook läuft, führen Sie im Wurzelverzeichnis des Repositorys `volant check .` aus und lassen das Playbook dann auf einem Host laufen. Volant liest die gesamte Grammatik von ansible-core 2.19, Ihr Playbook wird hier also so geparst wie unter Ansible. Bevor Volant sich mit irgendetwas verbindet, sucht eine zweite Prüfung, die Vorabprüfung, nach dem, was dieses Release noch nicht unterstützt, und bricht den Lauf mit einer Meldung ab, die es benennt. Die [bekannten Lücken](#bekannte-lücken) weiter unten sind die Ausnahmen: Dort kann ein Lauf eine Einstellung ignorieren oder ein falsches Ergebnis liefern, ohne einen Fehler zu melden.
 
 ## Ein Projekt prüfen
 
 <Steps>
 
-1. Lesen Sie es, ohne es auszuführen. Auflistungen und `--syntax-check` brechen nie wegen eines nicht unterstützten Moduls oder Keywords ab, sie funktionieren also auch bei einem Playbook, das dieses Release noch nicht ausführen kann:
+1. Prüfen Sie alle Playbooks auf einmal, ohne einen Host zu kontaktieren:
+
+   ```sh
+   volant check .
+   ```
+
+   Jedes Playbook bekommt ein Urteil: `ready`, `refused` mit Grund, Datei und Zeile, oder `unknown`, wenn nur ein Lauf es zeigen kann. Das ist nicht `volant playbook --check`, das das Playbook im Prüfmodus gegen Hosts ausführt. Siehe [`volant check`](/de/docs/reference/cli/check/).
+
+2. Lesen Sie es, ohne es auszuführen. Auflistungen und `--syntax-check` brechen nie wegen eines nicht unterstützten Moduls oder Keywords ab, sie funktionieren also auch bei einem Playbook, das dieses Release noch nicht ausführen kann:
 
    ```sh
    volant playbook -i inventory.ini site.yml --syntax-check
@@ -21,7 +29,7 @@ Um herauszufinden, ob ein Playbook läuft, führen Sie darauf `--syntax-check` a
 
    Stimmt die Task-Liste mit der Ausgabe von `ansible-playbook --list-tasks` überein, hat Volant Ihre Rollen, Imports und Tags genauso kompiliert.
 
-2. Fordern Sie einen echten Lauf gegen einen Host an, den Sie gefahrlos anfassen können. `--check --diff` lässt den Host unverändert, bis auf den zwischengespeicherten Agent, und ist deshalb ein sicherer erster Lauf:
+3. Fordern Sie einen echten Lauf gegen einen Host an, den Sie gefahrlos anfassen können. `--check --diff` lässt den Host unverändert, bis auf den zwischengespeicherten Agent, und ist deshalb ein sicherer erster Lauf:
 
    ```sh
    volant playbook -i inventory.ini site.yml --limit test1 --check --diff
@@ -30,7 +38,7 @@ Um herauszufinden, ob ein Playbook läuft, führen Sie darauf `--syntax-check` a
 
    Das meiste, was dieses Release nicht ausführen kann, bricht den Lauf ab, bevor er sich verbindet. Die Meldung nennt das Modul, das Keyword oder den Wert, und der Lauf endet mit Exit-Code 4. [Was heute abgelehnt wird](#was-heute-abgelehnt-wird) listet die Meldungen auf.
 
-3. Beheben Sie es oder warten Sie. Was noch nicht unterstützt wird, steht in [Keywords](/de/docs/reference/keywords/), [Module](/de/docs/reference/modules/) und den [bekannten Lücken](#bekannte-lücken) weiter unten, und für das meiste gibt es einen Workaround.
+4. Beheben Sie es oder warten Sie. Was noch nicht unterstützt wird, steht in [Keywords](/de/docs/reference/keywords/), [Module](/de/docs/reference/modules/) und den [bekannten Lücken](#bekannte-lücken) weiter unten, und für das meiste gibt es einen Workaround.
 
 </Steps>
 
@@ -101,7 +109,6 @@ Diese Punkte weichen von `ansible-playbook` ab, ohne eine Meldung vor dem Lauf o
 | Was | Was geschieht |
 |---|---|
 | `vars_plugins/` | Werden ignoriert. |
-| `volant check` und `volant lint` | Sie existieren nicht. Führen Sie sie mit ansible-core oder ansible-lint aus. |
 | Ein Task mit `no_log: true`, der fehlschlägt | Absicht. Volant gibt `[ERROR]: Task failed: Action failed: <error censored due to no log>` aus und sonst nichts von der Ursache. ansible-core 2.19.12 gibt die Ursache aus: `[ERROR]: Task failed: Action failed: <the msg of fail or assert>`, den Fehler des Moduls und die Blöcke `<<< caused by >>>`. Dieser Text kann ein Geheimnis enthalten, etwa die `msg` eines `fail`, die ein Passwort nennt. Die [Sicherheitsrichtlinie](https://github.com/lorica-labs/volant/blob/main/SECURITY.md) wertet ein Geheimnis, das in einem Log oder Terminal landet, wo `no_log` es in ansible-core verbirgt, als Sicherheitslücke, deshalb verbirgt Volant es. Die Zeile `fatal:`, das registrierte Ergebnis und der Recap sind in beiden gleich. Um die Ursache zu lesen, führen Sie den Task ohne `no_log` aus. |
 | SIGTERM | Absicht. Volant beendet sich sauber: Es bricht die laufenden Tasks ab, entfernt das Verzeichnis mit dem Verbindungspasswort, gibt den Recap aus und endet mit Exit-Code 99, wie bei Strg-C. `ansible-playbook` fängt SIGTERM nicht ab. Es stirbt sofort mit Code 143 und gibt keinen Recap aus. Gemessen mit `kill -TERM` während eines `command: sleep`: 99 unter Volant, 143 unter ansible-core 2.19.12. |
 | `_ansible_ansiballz_pydevd_config` | Absicht. Wird ignoriert. ansible-core behält diese Einstellung dem eigenen Gebrauch vor: Sie hängt einen Debugger an den Modul-Wrapper. Volant führt Python-Module mit einem eigenen Runner aus und seine nativen Module ohne Python. |

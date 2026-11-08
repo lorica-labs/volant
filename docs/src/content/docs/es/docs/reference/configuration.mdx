@@ -126,6 +126,10 @@ Un archivo que existe pero no se puede leer se omite, y la ejecución continúa 
   Los módulos de facts que ejecuta la recogida de facts de una play, `smart` (`setup`) si no se indica otra cosa. También se lee una lista literal en las plays, sus tareas o el inventario (`ansible_facts_modules`); un módulo que solo nombra una plantilla no se puede ejecutar.
 </Option>
 
+<Option name="interpreter_python" id="defaults-interpreter-python" default="auto" env="ANSIBLE_PYTHON_INTERPRETER">
+  El Python con el que se ejecuta un módulo en un host que no define `ansible_python_interpreter`; la variable del host prevalece sobre este ajuste. `auto` y `auto_silent` buscan el intérprete en el host, y `auto_silent` omite el aviso que nombra el que encontró. `auto_legacy` y `auto_legacy_silent` funcionan como `auto` y `auto_silent` y añaden la deprecación de ansible-core. Cualquier otro valor es la ruta del intérprete.
+</Option>
+
 <Option name="module_strict_utf8_response" id="defaults-module-strict-utf8-response" default="true" env="ANSIBLE_MODULE_STRICT_UTF8_RESPONSE">
   Si `from_json` rechaza una cadena que contiene un sustituto suelto, como `\udc80`. Desactivado, el valor lo conserva y se muestra con `?` en su lugar, con una advertencia.
 </Option>

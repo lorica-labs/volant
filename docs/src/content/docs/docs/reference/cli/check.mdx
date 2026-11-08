@@ -1,0 +1,117 @@
+---
+title: volant check
+description: Find the playbooks of a repository and say for each one whether Volant can run it, without contacting a host.
+---
+
+import Option from '../../../../../components/Option.astro';
+
+`volant check` finds every playbook under a directory and gives each one a verdict: `ready`, `refused` or `unknown`. It contacts no host, renders no template for a host and writes no file.
+
+```sh
+volant check [PATH...] [-i INVENTORY] [-e VARS] [--json] [--strict] [--runtime-less]
+```
+
+`volant playbook --check` is a different command: it runs the playbook against hosts in check mode. `volant check` asks whether Volant can run the playbook at all.
+
+Run it from the directory you run `ansible-playbook` from, usually the root of the repository. The `ansible.cfg` there is read as `ansible-playbook` reads it, for `roles_path`, `collections_path` and the rest. Without a path it checks the working directory.
+
+```text
+$ volant check --runtime-less
+collection.yml      unknown  collection.yml:4  module 'community.general.nosuch_module': --runtime-less starts no ansible-core to resolve it
+invalid.yml         refused  (invalid)  invalid.yml:4  the role 'nosuchrole' was not found in ./roles:...
+site.yml            ready
+templated.yml       unknown  templated.yml:4  include_tasks: what it names is checked when the run reaches it
+4 playbooks: 1 ready, 1 refused, 2 unknown
+```
+
+Each line gives the playbook, the verdict, the file and line, and the reason. When a playbook has several reasons, the first one is on its line and the others follow on the lines below it.
+
+## Which files are playbooks
+
+A `.yml` or `.yaml` file is a playbook when it is a list with an element that has `hosts` or `import_playbook`. Other files are not listed: task files, variable files, inventories and files that are not valid YAML. With `-v` the last line counts them.
+
+The walk does not enter hidden directories, `roles`, `collections`, `group_vars`, `host_vars`, `templates`, `files`, `defaults`, `vars`, `handlers`, `meta`, `molecule`, `node_modules` or `target`, and it does not follow symbolic links. A path given on the command line is followed even when it is a link. A playbook that another one imports is listed on its own too.
+
+## Verdicts
+
+Each playbook goes through the steps `volant playbook` runs before its first connection, in the same order: loading, the [pre-flight check](/docs/internals/preflight/), the compilation of roles and imports, and the resolution of modules. The first refusal is the verdict.
+
+| Verdict | Meaning |
+|---|---|
+| `ready` | It loads, passes the pre-flight check and compiles, and every module it names is found. |
+| `refused` | `volant playbook` would stop before the first connection. The reason has a kind. `unsupported` is something Volant does not do yet. `invalid` is a playbook ansible-core rejects too, such as a role nobody can find or a module from a collection that is not installed. Both count as failures. |
+| `unknown` | Only a run can tell. Each reason is listed: an `include_tasks` or `include_role`, a module named by a template, or a collection's module with no ansible-core to ask. |
+
+An `include_tasks` or `include_role` is read when a host reaches the statement, so what it names is not checked here and the playbook is `unknown`.
+
+A private key file that starts with `$ANSIBLE_VAULT` is `refused`: Volant cannot use a vault-encrypted key yet. The keys checked are `private_key_file` in `ansible.cfg`, `ansible_private_key_file` and `ansible_ssh_private_key_file` in a play's `vars`, and the same variables of the hosts of `-i`. The file is read, never decrypted.
+
+A builtin module that runs through Python, such as `pip`, counts as found. A collection's module is resolved by the controller's ansible-core, as a run resolves it. When there is none, or with `--runtime-less`, the module is `unknown`. `volant check` never installs the managed runtime; `volant runtime install` does.
+
+## Exit codes
+
+| Code | When |
+|---|---|
+| 0 | No playbook is `refused`. |
+| 1 | At least one playbook is `refused`, or `unknown` under `--strict`. |
+| 2 | A usage error, an unreadable path, a configuration or inventory that cannot be read, or more files than `--max-files`. |
+| 3 | No playbook was found. |
+
+## Untrusted repositories
+
+By default `volant check` starts the controller's ansible-core to resolve the modules of collections. That imports Python code: measured, resolving a collection's module imports the collection's action plugin of the same name. A collection path or a plugin directory inside the repository is code the repository brings. For a repository you do not trust, a pull request from someone else for instance, use `--runtime-less`. It starts no Python, so a collection's module is `unknown` instead of found. `-i` with an inventory script or plugin runs that code too.
+
+## JSON
+
+`--json` prints one document:
+
+```json
+{
+  "v": 1,
+  "engine": "0.4.2",
+  "lens": ["ready"],
+  "playbooks": [
+    {"path": "site.yml", "verdict": "ready", "plays": 1, "tasks": 2, "reasons": []},
+    {"path": "invalid.yml", "verdict": "refused", "plays": 1, "tasks": 0, "reasons": [
+      {"kind": "invalid", "code": 1, "message": "the role 'nosuchrole' was not found in ...", "file": "invalid.yml", "line": 4}
+    ]}
+  ],
+  "summary": {"ready": 1, "refused": 1, "unknown": 0, "skipped_files": 3}
+}
+```
+
+`kind` is `unsupported`, `invalid` or `unknown`. `code` is the exit code `volant playbook` stops with, `null` for an `unknown` reason. `file` and `line` are `null` when the refusal names no place. `tasks` counts the compiled tasks, roles and imports included. Fields may be added without a change of `v`.
+
+## Options
+
+<Option name="-i, --inventory" arg="INVENTORY">
+  Inventory sources, read only for the private key file of each host. Without `-i`, no inventory is read.
+</Option>
+
+<Option name="-e, --extra-vars" arg="VARS">
+  Extra variables, as for `volant playbook`. They render the names of `import_playbook` and the compiled `vars`.
+</Option>
+
+<Option name="--json">
+  Print the JSON document instead of the text. The same as `--format json`.
+</Option>
+
+<Option name="--format" arg="text|json">
+  The output format. Default: `text`.
+</Option>
+
+<Option name="--strict">
+  Exit 1 when a playbook is `unknown`, as when one is `refused`.
+</Option>
+
+<Option name="--runtime-less">
+  Start no Python. A collection's module is `unknown`.
+</Option>
+
+<Option name="--max-files" arg="N">
+  Stop with an error when the walk sees more than this many files. Default: 5000.
+</Option>
+
+<Option name="-v, --verbose">
+  Count the YAML files that are not playbooks on the last line.
+</Option>

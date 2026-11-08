@@ -1,0 +1,3 @@
+- debug:
+    msg: "{{ role_path | basename }}"
+- include_tasks: other.yml

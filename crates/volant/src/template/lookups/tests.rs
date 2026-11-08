@@ -653,6 +653,35 @@ fn a_varnames_pattern_python_refuses_says_why_as_python() {
     );
 }
 
+/// A template of one node ending in a newline keeps it on text, and only there.
+#[test]
+fn a_template_of_one_node_keeps_its_last_newline_on_text() {
+    let role = Role::new();
+    role.write(
+        "role/templates/text.j2",
+        "{{ who }}
+",
+    )
+    .write(
+        "role/templates/list.j2",
+        "{{ [1] }}
+",
+    );
+    let t = templar(&role.dir);
+    let r = |name: &str| {
+        let text = format!("{{{{ lookup('template', '{name}') }}}}");
+        t.render(&text, &role.vars()).unwrap()
+    };
+    assert_eq!(
+        r("text.j2"),
+        json!(
+            "me
+"
+        )
+    );
+    assert_eq!(r("list.j2"), json!([1]));
+}
+
 /// A macro whose body is one node answers that node's value, and so does a template lookup whose
 /// template is one node: a mapping stays a mapping.
 #[test]

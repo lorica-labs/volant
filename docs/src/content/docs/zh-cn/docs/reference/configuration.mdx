@@ -126,6 +126,10 @@ Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第
   play 收集 facts 时运行的 fact 模块，未设置时为 `smart`（`setup`）。plays、其任务或清单中的字面列表（`ansible_facts_modules`）也会被读取；只由模板给出的模块无法运行。
 </Option>
 
+<Option name="interpreter_python" id="defaults-interpreter-python" default="auto" env="ANSIBLE_PYTHON_INTERPRETER">
+  在未设置 `ansible_python_interpreter` 的主机上运行模块所用的 Python；主机变量优先于此设置。`auto` 和 `auto_silent` 在主机上查找解释器，`auto_silent` 不打印指出所找到解释器的警告。`auto_legacy` 和 `auto_legacy_silent` 与 `auto` 和 `auto_silent` 相同，并附加 ansible-core 的弃用提示。其他任何值都是解释器的路径。
+</Option>
+
 <Option name="module_strict_utf8_response" id="defaults-module-strict-utf8-response" default="true" env="ANSIBLE_MODULE_STRICT_UTF8_RESPONSE">
   `from_json` 是否拒绝含有孤立代理字符(如 `\udc80`)的字符串。关闭时,值保留该字符,打印时以 `?` 代替,并给出警告。
 </Option>

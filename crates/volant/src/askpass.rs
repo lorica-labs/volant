@@ -4,7 +4,8 @@
 //! prints the file's text. The password is never in an argument list, in the environment of
 //! the program or in anything sent to the host: only the file's path is. A password a host
 //! names in `ansible_password` or one of its aliases takes the same way, in a file of its own
-//! in the same directory.
+//! in the same directory. A plugin the controller's helper runs reads the run's password off its
+//! play context, as the reference's plugins do.
 //!
 //! `ssh` closes every descriptor above 2 before it starts its askpass, so a descriptor the run
 //! holds cannot carry the password and a path has to. The files sit in a directory of their
@@ -244,6 +245,11 @@ pub fn remove_now() {
 fn owner_pid(name: &str) -> Option<i32> {
     let (pid, _) = name.strip_prefix(DIR_PREFIX)?.split_once('-')?;
     pid.parse().ok().filter(|pid| *pid > 0)
+}
+
+/// The password of `-k` or `--connection-password-file`, as a plugin's play context carries it.
+pub fn run_password() -> Option<String> {
+    std::fs::read_to_string(FILE.get()?).ok()
 }
 
 /// Whether an `ssh` call with this source has a password to offer.

@@ -2,7 +2,7 @@
 # in, as ansible-test's own containers give them: an `en_US.UTF-8` locale, which several targets set,
 # and the tools their scripts call. The interpreters come from the reference's virtualenv, mounted
 # at its own path.
-FROM ubuntu:26.04@sha256:065aa8626841f16057b78b027b464cd59c4fac36c204c72dcbf48d66f5fa8a96
+FROM ubuntu:26.04@sha256:d66b366dac61b575bee2aef07e9c26e8070096fbe84a3d4d3eb0da069b5d76db
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
  && apt-get install -y --no-install-recommends locales sudo acl git unzip zip rsync openssh-client python3 iproute2 ca-certificates curl file gnupg tzdata sshpass \
